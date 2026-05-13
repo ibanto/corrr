@@ -63,6 +63,42 @@ export default function PerfilScreen({ user, onLogout }: Props) {
     setRefreshing(false);
   };
 
+  const handleDeleteAccount = () => {
+    Alert.alert(
+      'Eliminar cuenta',
+      '¿Estás seguro? Se borrarán todas tus zonas, carreras y estadísticas. Esta acción no se puede deshacer.',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Eliminar',
+          style: 'destructive',
+          onPress: () => {
+            Alert.alert(
+              'Confirmación final',
+              'Escribe ELIMINAR mentalmente y pulsa OK para borrar tu cuenta permanentemente.',
+              [
+                { text: 'Cancelar', style: 'cancel' },
+                {
+                  text: 'OK, eliminar',
+                  style: 'destructive',
+                  onPress: async () => {
+                    try {
+                      await api.deleteAccount();
+                      Alert.alert('Cuenta eliminada', 'Tu cuenta ha sido eliminada correctamente.');
+                      onLogout();
+                    } catch {
+                      Alert.alert('Error', 'No se pudo eliminar la cuenta. Inténtalo de nuevo.');
+                    }
+                  },
+                },
+              ]
+            );
+          },
+        },
+      ]
+    );
+  };
+
   const handleConnectStrava = async () => {
     setStravaLoading(true);
     try {
@@ -225,7 +261,7 @@ export default function PerfilScreen({ user, onLogout }: Props) {
 
       <View style={styles.section}>
         {[
-          { icon: 'person-outline' as const, label: 'Cuenta', onPress: undefined },
+          { icon: 'trash-outline' as const, label: 'Eliminar cuenta', onPress: handleDeleteAccount },
           { icon: 'notifications-outline' as const, label: 'Notificaciones', onPress: undefined },
           { icon: 'lock-closed-outline' as const, label: 'Privacidad', onPress: () => Linking.openURL('https://ibanto.github.io/corrr/privacy.html') },
           { icon: 'bug-outline' as const, label: 'Reportar un bug', onPress: () => Linking.openURL('mailto:ibangarciacastrillon@gmail.com?subject=Bug%20en%20CORRR&body=Hola%2C%20he%20encontrado%20un%20problema%3A%0A%0A') },

@@ -134,6 +134,25 @@ app.post('/auth/login', async (req: any, reply) => {
   } catch (err) { return reply.status(500).send({ error: String(err) }); }
 });
 
+// ── Cuenta ───────────────────────────────────────────────────────────────────
+
+app.delete('/users/me', { preHandler: requireAuth }, async (req: any, reply) => {
+  const userId = req.userId;
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('DELETE FROM zones WHERE owner_id = $1', [userId]);
+    await client.query('DELETE FROM runs WHERE user_id = $1', [userId]);
+    await client.query('DELETE FROM user_stats WHERE user_id = $1', [userId]);
+    await client.query('DELETE FROM users WHERE id = $1', [userId]);
+    await client.query('COMMIT');
+    return reply.send({ ok: true });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    return reply.status(500).send({ error: String(err) });
+  } finally { client.release(); }
+});
+
 // ── Push Token ───────────────────────────────────────────────────────────────
 
 app.post('/users/push-token', { preHandler: requireAuth }, async (req: any, reply) => {

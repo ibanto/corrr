@@ -192,6 +192,10 @@ class ApiService {
     return this.request<RemoteZone[]>(`/zones/nearby?lat=${lat}&lng=${lng}&radius=0.05`);
   }
 
+  async deleteAccount(): Promise<void> {
+    await this.request('/users/me', { method: 'DELETE' });
+  }
+
   async savePushToken(token: string): Promise<void> {
     await this.request('/users/push-token', {
       method: 'POST',
