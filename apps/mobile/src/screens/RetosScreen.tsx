@@ -112,6 +112,16 @@ export default function RetosScreen() {
           if (id === 'welcome') setWelcomeAccepted(true);
           setSelectedReto(null);
         }}
+        onSimulateComplete={() => {
+          const reto = selectedReto;
+          setSelectedReto(null);
+          setResultScreen({ type: 'completed', reto });
+        }}
+        onSimulateFail={() => {
+          const reto = selectedReto;
+          setSelectedReto(null);
+          setResultScreen({ type: 'failed', reto });
+        }}
       />
     );
   }

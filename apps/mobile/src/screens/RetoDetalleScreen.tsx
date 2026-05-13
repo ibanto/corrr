@@ -29,9 +29,11 @@ interface Props {
   reto: RetoDetalle;
   onBack: () => void;
   onAccept: (id: string) => void;
+  onSimulateComplete?: () => void;
+  onSimulateFail?: () => void;
 }
 
-export default function RetoDetalleScreen({ reto, onBack, onAccept }: Props) {
+export default function RetoDetalleScreen({ reto, onBack, onAccept, onSimulateComplete, onSimulateFail }: Props) {
   return (
     <View style={styles.container}>
       {/* Header */}
@@ -122,6 +124,23 @@ export default function RetoDetalleScreen({ reto, onBack, onAccept }: Props) {
             <Text style={styles.acceptedText}>Desafío aceptado</Text>
           </View>
         )}
+
+        {/* DEV: botones de test para ver pantallas de resultado */}
+        {(onSimulateComplete || onSimulateFail) && (
+          <View style={styles.devRow}>
+            <Text style={styles.devLabel}>🧪 TEST</Text>
+            {onSimulateComplete && (
+              <TouchableOpacity style={styles.devBtnGreen} onPress={onSimulateComplete}>
+                <Text style={styles.devBtnText}>Completado</Text>
+              </TouchableOpacity>
+            )}
+            {onSimulateFail && (
+              <TouchableOpacity style={styles.devBtnRed} onPress={onSimulateFail}>
+                <Text style={styles.devBtnText}>Fallido</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
       </ScrollView>
     </View>
   );
@@ -201,6 +220,21 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: colors.success,
   },
   acceptedText: { fontSize: 15, fontWeight: '700', color: colors.success },
+  devRow: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
+    marginTop: spacing.xl, paddingTop: spacing.md,
+    borderTopWidth: 1, borderTopColor: colors.border,
+  },
+  devLabel: { fontSize: 12, color: colors.textMuted },
+  devBtnGreen: {
+    flex: 1, paddingVertical: 10, borderRadius: radius.full,
+    backgroundColor: '#22C55E', alignItems: 'center',
+  },
+  devBtnRed: {
+    flex: 1, paddingVertical: 10, borderRadius: radius.full,
+    backgroundColor: colors.danger, alignItems: 'center',
+  },
+  devBtnText: { fontSize: 13, fontWeight: '700', color: '#fff' },
 });
 
 export type { RetoDetalle };
