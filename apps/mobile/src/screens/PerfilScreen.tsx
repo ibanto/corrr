@@ -204,13 +204,13 @@ export default function PerfilScreen({ user, onLogout }: Props) {
 
       <View style={styles.statsRow}>
         {[
-          { value: String(s?.total_zones ?? 0), label: 'Zonas' },
-          { value: formatKm(s?.total_km ?? 0), label: 'km totales' },
-          { value: String(s?.total_runs ?? 0), label: 'Carreras' },
-          { value: String(s?.total_points ?? 0), label: 'Puntos', flame: true },
+          { value: String(s?.total_zones ?? 0), label: 'Zonas', icon: 'flag' as const },
+          { value: formatKm(s?.total_km ?? 0), label: 'km totales', icon: 'navigate' as const },
+          { value: String(s?.total_runs ?? 0), label: 'Carreras', icon: 'walk' as const },
+          { value: String(s?.total_points ?? 0), label: 'Puntos', icon: 'flame' as const },
         ].map((item, i) => (
           <View key={i} style={styles.statItem}>
-            {item.flame && <Ionicons name="flame" size={14} color={colors.orange} />}
+            <Ionicons name={item.icon} size={16} color={colors.orange} />
             <Text style={styles.statValue}>{item.value}</Text>
             <Text style={styles.statLabel}>{item.label}</Text>
           </View>
@@ -301,11 +301,10 @@ export default function PerfilScreen({ user, onLogout }: Props) {
             </View>
           ))}
         </View>
-        <TouchableOpacity style={styles.premiumBtn}>
+        <View style={[styles.premiumBtn, { opacity: 0.5 }]}>
           <Ionicons name="ribbon" size={16} color="#fff" />
-          <Text style={styles.premiumBtnText}>Probar 7 días gratis</Text>
-        </TouchableOpacity>
-        <Text style={styles.premiumFooter}>Cancela cuando quieras</Text>
+          <Text style={styles.premiumBtnText}>Próximamente</Text>
+        </View>
       </View>
 
       <View style={styles.section}>
