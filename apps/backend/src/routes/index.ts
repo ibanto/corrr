@@ -9,6 +9,12 @@ import { SignJWT, jwtVerify } from 'jose';
 dotenv.config();
 
 const app = Fastify({ logger: true });
+
+const STRAVA_CLIENT_ID     = process.env.STRAVA_CLIENT_ID;
+const STRAVA_CLIENT_SECRET = process.env.STRAVA_CLIENT_SECRET;
+const RAILWAY_URL = process.env.RAILWAY_PUBLIC_DOMAIN
+  ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
+  : (process.env.RAILWAY_URL ?? 'http://localhost:3000');
 const db = new Pool({ connectionString: process.env.DATABASE_URL });
 const redis = createClient({ url: process.env.REDIS_URL });
 redis.connect().catch(console.error);
@@ -149,6 +155,22 @@ app.get('/challenges', async (req, reply) => {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 interface Coord { latitude: number; longitude: number; }
+
+/** Decodifica un polyline codificado (formato Google/Strava). */
+function decodePolyline(encoded: string): Coord[] {
+  const coords: Coord[] = [];
+  let index = 0, lat = 0, lng = 0;
+  while (index < encoded.length) {
+    let b: number, shift = 0, result = 0;
+    do { b = encoded.charCodeAt(index++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
+    lat += (result & 1) ? ~(result >> 1) : (result >> 1);
+    shift = 0; result = 0;
+    do { b = encoded.charCodeAt(index++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
+    lng += (result & 1) ? ~(result >> 1) : (result >> 1);
+    coords.push({ latitude: lat / 1e5, longitude: lng / 1e5 });
+  }
+  return coords;
+}
 
 /** Ray-casting point-in-polygon. Devuelve true si (lat,lng) está dentro del polígono. */
 function pointInPolygon(lat: number, lng: number, polygon: Coord[]): boolean {
@@ -307,6 +329,111 @@ app.get('/zones/nearby', { preHandler: requireAuth }, async (req: any, reply) =>
   );
   return reply.send(rows);
 });
+
+// ── Strava OAuth ──────────────────────────────────────────────────────────────
+
+/** Devuelve la URL de autorización de Strava para el usuario autenticado. */
+app.get('/auth/strava', { preHandler: requireAuth }, async (req: any, reply) => {
+  const state   = Buffer.from(req.userId).toString('base64url');
+  const redirect = encodeURIComponent(`${RAILWAY_URL}/auth/strava/callback`);
+  const url = `https://www.strava.com/oauth/authorize?client_id=${STRAVA_CLIENT_ID}&response_type=code` +
+              `&redirect_uri=${redirect}&approval_prompt=auto&scope=activity:read_all&state=${state}`;
+  return reply.send({ url });
+});
+
+/** Callback OAuth: importa las 5 últimas carreras como zonas conquistadas. */
+app.get('/auth/strava/callback', async (req: any, reply) => {
+  const { code, state, error } = req.query as any;
+
+  if (error || !code) {
+    return reply.type('text/html').send(htmlPage('❌ Conexión cancelada',
+      'Cerraste la ventana sin conectar Strava. Vuelve a la app e inténtalo de nuevo.', '#FF3B30'));
+  }
+
+  let userId: string;
+  try { userId = Buffer.from(state, 'base64url').toString('utf8'); } catch {
+    return reply.type('text/html').send(htmlPage('❌ Error', 'Estado inválido.', '#FF3B30'));
+  }
+
+  // 1. Intercambiar code → access_token
+  const tokenRes  = await fetch('https://www.strava.com/oauth/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ client_id: STRAVA_CLIENT_ID, client_secret: STRAVA_CLIENT_SECRET,
+                           code, grant_type: 'authorization_code' }),
+  });
+  const tokenData = await tokenRes.json() as any;
+  if (!tokenData.access_token) {
+    return reply.type('text/html').send(htmlPage('❌ Error al conectar',
+      `Strava dijo: ${tokenData.message ?? 'token inválido'}`, '#FF3B30'));
+  }
+
+  // 2. Obtener últimas actividades
+  const actsRes  = await fetch('https://www.strava.com/api/v3/athlete/activities?per_page=10', {
+    headers: { Authorization: `Bearer ${tokenData.access_token}` },
+  });
+  const allActs  = await actsRes.json() as any[];
+  const runs     = allActs.filter((a: any) => a.type === 'Run' && a.map?.summary_polyline).slice(0, 5);
+
+  if (runs.length === 0) {
+    return reply.type('text/html').send(htmlPage('😕 Sin carreras',
+      'No encontramos carreras recientes con ruta GPS en tu cuenta de Strava.', '#FF9500'));
+  }
+
+  // 3. Guardar zonas en BD
+  const client = await db.connect();
+  let created = 0;
+  try {
+    await client.query('BEGIN');
+    for (const act of runs) {
+      const coords = decodePolyline(act.map.summary_polyline);
+      if (coords.length < 3) continue;
+      const centerLat = coords.reduce((s: number, c: Coord) => s + c.latitude,  0) / coords.length;
+      const centerLng = coords.reduce((s: number, c: Coord) => s + c.longitude, 0) / coords.length;
+      const distKm    = (act.distance ?? 0) / 1000;
+      const pts       = Math.max(10, Math.round(distKm * 15));
+      await client.query(
+        `INSERT INTO zones (owner_id, polygon, area_km2, points, center_lat, center_lng)
+         VALUES ($1,$2,$3,$4,$5,$6)`,
+        [userId, JSON.stringify(coords), distKm * 0.05, pts, centerLat, centerLng]
+      );
+      await client.query(
+        `UPDATE user_stats SET total_zones = total_zones + 1, total_points = total_points + $2 WHERE user_id = $1`,
+        [userId, pts]
+      );
+      created++;
+    }
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    return reply.type('text/html').send(htmlPage('❌ Error al importar',
+      `Error interno: ${String(err)}`, '#FF3B30'));
+  } finally { client.release(); }
+
+  return reply.type('text/html').send(htmlPage('✅ ¡Zonas importadas!',
+    `Se han conquistado <strong>${created} zona${created !== 1 ? 's' : ''}</strong> a partir de tus últimas carreras en Strava.<br><br>Cierra esta ventana y abre CORRR para verlas en el mapa.`,
+    '#FF6600'));
+});
+
+function htmlPage(title: string, body: string, accent: string): string {
+  return `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>CORRR × Strava</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{background:#0A0A0A;color:#fff;font-family:-apple-system,sans-serif;
+         display:flex;flex-direction:column;align-items:center;justify-content:center;
+         min-height:100vh;padding:32px;text-align:center}
+    .logo{font-size:36px;font-weight:900;letter-spacing:-1px;margin-bottom:24px;color:${accent}}
+    h2{font-size:22px;font-weight:800;margin-bottom:12px}
+    p{font-size:15px;color:#aaa;line-height:1.6}
+    strong{color:#fff}
+  </style></head><body>
+  <div class="logo">CORRR</div>
+  <h2>${title}</h2>
+  <p>${body}</p>
+  </body></html>`;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 

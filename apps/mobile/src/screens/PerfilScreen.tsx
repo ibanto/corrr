@@ -1,13 +1,17 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   ScrollView,
   TouchableOpacity,
+  Linking,
+  Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, radius } from '../theme';
+import { api } from '../services/api';
 
 interface Props {
   user: { username: string; id: string } | null;
@@ -16,6 +20,19 @@ interface Props {
 
 export default function PerfilScreen({ user, onLogout }: Props) {
   const displayName = user?.username ?? 'RunnerMadrid';
+  const [stravaLoading, setStravaLoading] = useState(false);
+
+  const handleConnectStrava = async () => {
+    setStravaLoading(true);
+    try {
+      const url = await api.getStravaAuthUrl();
+      await Linking.openURL(url);
+    } catch {
+      Alert.alert('Error', 'No se pudo conectar con Strava. Inténtalo de nuevo.');
+    } finally {
+      setStravaLoading(false);
+    }
+  };
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
@@ -112,6 +129,22 @@ export default function PerfilScreen({ user, onLogout }: Props) {
           </View>
         ))}
       </View>
+
+      {/* Strava Connect */}
+      <TouchableOpacity style={styles.stravaCard} onPress={handleConnectStrava} disabled={stravaLoading}>
+        <View style={styles.stravaLeft}>
+          <View style={styles.stravaIcon}>
+            <Text style={styles.stravaIconText}>S</Text>
+          </View>
+          <View>
+            <Text style={styles.stravaTitle}>Importar desde Strava</Text>
+            <Text style={styles.stravaSub}>Conquista zonas con tus últimas 5 carreras</Text>
+          </View>
+        </View>
+        {stravaLoading
+          ? <ActivityIndicator size="small" color="#FC4C02" />
+          : <Ionicons name="chevron-forward" size={20} color="#FC4C02" />}
+      </TouchableOpacity>
 
       <View style={styles.premiumCard}>
         <View style={styles.premiumTop}>
@@ -227,6 +260,28 @@ const styles = StyleSheet.create({
   runStats: { alignItems: 'flex-end' },
   runKm: { fontSize: 14, fontWeight: '700', color: colors.textPrimary },
   runPace: { fontSize: 12, color: colors.textSecondary },
+  stravaCard: {
+    marginHorizontal: spacing.md,
+    marginBottom: spacing.lg,
+    backgroundColor: '#1A0A00',
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: '#FC4C0260',
+    paddingVertical: 14,
+    paddingHorizontal: spacing.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  stravaLeft: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, flex: 1 },
+  stravaIcon: {
+    width: 40, height: 40, borderRadius: 20,
+    backgroundColor: '#FC4C02',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  stravaIconText: { color: '#fff', fontWeight: '900', fontSize: 20 },
+  stravaTitle: { fontSize: 15, fontWeight: '800', color: colors.textPrimary },
+  stravaSub: { fontSize: 12, color: colors.textSecondary, marginTop: 2 },
   premiumCard: {
     marginHorizontal: spacing.md, backgroundColor: '#120A00', borderRadius: radius.lg,
     padding: spacing.lg, borderWidth: 1, borderColor: `${colors.orange}50`, marginBottom: spacing.lg, gap: spacing.md,
