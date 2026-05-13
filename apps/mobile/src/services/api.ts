@@ -192,6 +192,17 @@ class ApiService {
     return this.request<RemoteZone[]>(`/zones/nearby?lat=${lat}&lng=${lng}&radius=0.05`);
   }
 
+  async getProfile(): Promise<{ id: string; email: string; display_name: string; city: string; avatar_url: string | null }> {
+    return this.request('/users/me');
+  }
+
+  async updateProfile(data: { displayName?: string; city?: string; avatarUrl?: string }): Promise<void> {
+    await this.request('/users/me', {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
   async deleteAccount(): Promise<void> {
     await this.request('/users/me', { method: 'DELETE' });
   }

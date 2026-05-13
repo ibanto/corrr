@@ -12,6 +12,8 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  ImageBackground,
+  ImageSourcePropType,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, radius } from '../theme';
@@ -19,30 +21,26 @@ import { api } from '../services/api';
 
 const { width, height } = Dimensions.get('window');
 
-const INTRO_PAGES = [
+const INTRO_PAGES: { image: ImageSourcePropType; buttonColor: string; buttonText: string }[] = [
   {
-    icon: '🏃',
-    title: 'Corre por tu ciudad',
-    desc: 'Sal a correr y traza rutas por las calles. Cada carrera cuenta para conquistar territorio.',
-    color: '#FF6600',
+    image: require('../../assets/onboarding/slide1.png'),
+    buttonColor: '#FF6600',
+    buttonText: 'SIGUIENTE',
   },
   {
-    icon: '🗺️',
-    title: 'Conquista zonas',
-    desc: 'Cierra un bucle mientras corres y el terreno que encierres será tuyo. Cuanto más grande, más puntos.',
-    color: '#FF8C00',
+    image: require('../../assets/onboarding/slide2.png'),
+    buttonColor: '#FF6600',
+    buttonText: 'SIGUIENTE',
   },
   {
-    icon: '⚔️',
-    title: 'Roba a tus rivales',
-    desc: 'Si tu ruta encierra la zona de otro corredor, ¡la conquistas! Defiende tu territorio o piérdelo.',
-    color: '#FF4500',
+    image: require('../../assets/onboarding/slide3.png'),
+    buttonColor: '#FF6600',
+    buttonText: 'SIGUIENTE',
   },
   {
-    icon: '🏆',
-    title: 'Sube en el ranking',
-    desc: 'Compite contra corredores de tu ciudad y de toda España. ¿Quién dominará más territorio?',
-    color: '#FFD700',
+    image: require('../../assets/onboarding/slide4.png'),
+    buttonColor: '#FFD700',
+    buttonText: '¡VAMOS!',
   },
 ];
 
@@ -105,6 +103,9 @@ export default function OnboardingScreen({ onAuthenticated }: Props) {
   const glowOpacity = glowAnim.interpolate({ inputRange: [0, 1], outputRange: [0.3, 0.8] });
 
   if (mode === 'intro') {
+    const currentPage = INTRO_PAGES[introPage];
+    const isLast = introPage === INTRO_PAGES.length - 1;
+
     return (
       <View style={styles.introContainer}>
         <FlatList
@@ -119,37 +120,37 @@ export default function OnboardingScreen({ onAuthenticated }: Props) {
             setIntroPage(page);
           }}
           renderItem={({ item }) => (
-            <View style={[styles.introPage, { width }]}>
-              <Text style={styles.introIcon}>{item.icon}</Text>
-              <Text style={[styles.introTitle, { color: item.color }]}>{item.title}</Text>
-              <Text style={styles.introDesc}>{item.desc}</Text>
-            </View>
+            <ImageBackground
+              source={item.image}
+              style={[styles.introPage, { width }]}
+              resizeMode="cover"
+            />
           )}
         />
-        <View style={styles.introBottom}>
+        <View style={styles.introOverlay}>
           <View style={styles.dots}>
             {INTRO_PAGES.map((_, i) => (
               <View key={i} style={[styles.dot, introPage === i && styles.dotActive]} />
             ))}
           </View>
-          {introPage === INTRO_PAGES.length - 1 ? (
-            <TouchableOpacity style={styles.btnPrimary} onPress={() => setMode('splash')}>
-              <Text style={styles.btnPrimaryText}>¡Vamos! →</Text>
-            </TouchableOpacity>
-          ) : (
-            <TouchableOpacity
-              style={styles.btnPrimary}
-              onPress={() => {
+          <TouchableOpacity
+            style={[styles.introBtn, { backgroundColor: currentPage.buttonColor }]}
+            onPress={() => {
+              if (isLast) {
+                setMode('splash');
+              } else {
                 const next = introPage + 1;
                 flatListRef.current?.scrollToIndex({ index: next, animated: true });
                 setIntroPage(next);
-              }}
-            >
-              <Text style={styles.btnPrimaryText}>Siguiente →</Text>
-            </TouchableOpacity>
-          )}
+              }
+            }}
+          >
+            <Text style={[styles.introBtnText, isLast && { color: '#000' }]}>
+              {currentPage.buttonText}  →
+            </Text>
+          </TouchableOpacity>
           <TouchableOpacity onPress={() => setMode('splash')} style={styles.skipBtn}>
-            <Text style={styles.skipText}>Saltar</Text>
+            <Text style={styles.skipText}>SALTAR</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -158,34 +159,21 @@ export default function OnboardingScreen({ onAuthenticated }: Props) {
 
   if (mode === 'splash') {
     return (
-      <View style={styles.splashContainer}>
-        <Animated.View style={[styles.logoGlow, { opacity: glowOpacity }]} />
-        <Animated.View style={[styles.logoContainer, { opacity: fadeAnim, transform: [{ scale: logoScale }] }]}>
-          <Text style={styles.flameEmoji}>🔥</Text>
-          <Text style={styles.logoText}>CORRR</Text>
-          <Text style={styles.logoTagline}>Corre. Conquista. Compite.</Text>
-        </Animated.View>
-        <Animated.View style={[styles.splashBottom, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
-          <View style={styles.featureRow}>
-            {[
-              { icon: 'map' as const, text: 'Conquista territorio' },
-              { icon: 'trophy' as const, text: 'Compite en España' },
-              { icon: 'star' as const, text: 'Supera retos' },
-            ].map((f, i) => (
-              <View key={i} style={styles.featureItem}>
-                <Ionicons name={f.icon} size={32} color={colors.orange} />
-                <Text style={styles.featureText}>{f.text}</Text>
-              </View>
-            ))}
-          </View>
+      <ImageBackground
+        source={require('../../assets/onboarding/splash.png')}
+        style={styles.splashContainer}
+        resizeMode="cover"
+      >
+        <View style={styles.splashSpacer} />
+        <View style={styles.splashBottom}>
           <TouchableOpacity style={styles.btnPrimary} onPress={() => setMode('register')}>
-            <Text style={styles.btnPrimaryText}>Empezar →</Text>
+            <Text style={styles.btnPrimaryText}>EMPEZAR  →</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.btnSecondary} onPress={() => setMode('login')}>
             <Text style={styles.btnSecondaryText}>Ya tengo cuenta</Text>
           </TouchableOpacity>
-        </Animated.View>
-      </View>
+        </View>
+      </ImageBackground>
     );
   }
 
@@ -270,88 +258,86 @@ export default function OnboardingScreen({ onAuthenticated }: Props) {
 const styles = StyleSheet.create({
   introContainer: {
     flex: 1,
-    backgroundColor: colors.bg,
+    backgroundColor: '#000',
   },
   introPage: {
     flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: spacing.xl,
+    width,
+    height,
   },
-  introIcon: {
-    fontSize: 80,
-    marginBottom: 24,
-  },
-  introTitle: {
-    fontSize: 28,
-    fontWeight: '900',
-    textAlign: 'center',
-    marginBottom: 16,
-  },
-  introDesc: {
-    fontSize: 17,
-    color: colors.textSecondary,
-    textAlign: 'center',
-    lineHeight: 26,
-    paddingHorizontal: spacing.md,
-  },
-  introBottom: {
+  introOverlay: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
     paddingHorizontal: spacing.lg,
-    paddingBottom: 60,
-    gap: 16,
+    paddingBottom: Platform.OS === 'ios' ? 50 : 40,
+    gap: 14,
   },
   dots: {
     flexDirection: 'row',
     justifyContent: 'center',
     gap: 8,
-    marginBottom: 8,
+    marginBottom: 4,
   },
   dot: {
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: colors.border,
+    backgroundColor: 'rgba(255,255,255,0.3)',
   },
   dotActive: {
-    backgroundColor: colors.orange,
+    backgroundColor: '#FF6600',
     width: 24,
+  },
+  introBtn: {
+    paddingVertical: 18,
+    borderRadius: radius.full,
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'center',
+    shadowColor: '#FF6600',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.5,
+    shadowRadius: 16,
+    elevation: 10,
+  },
+  introBtnText: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: '900',
+    letterSpacing: 2,
   },
   skipBtn: {
     alignItems: 'center',
     paddingVertical: 8,
   },
   skipText: {
-    color: colors.textMuted,
-    fontSize: 15,
-    fontWeight: '500',
+    color: 'rgba(255,255,255,0.4)',
+    fontSize: 14,
+    fontWeight: '600',
+    letterSpacing: 1,
   },
   splashContainer: {
-    flex: 1, backgroundColor: colors.bg, alignItems: 'center',
-    justifyContent: 'space-between', paddingTop: 100, paddingBottom: 60, paddingHorizontal: spacing.lg,
+    flex: 1,
+    backgroundColor: '#000',
   },
-  logoGlow: {
-    position: 'absolute', top: height * 0.15, width: 300, height: 300, borderRadius: 150,
-    backgroundColor: colors.orange, shadowColor: colors.orange,
-    shadowOffset: { width: 0, height: 0 }, shadowOpacity: 1, shadowRadius: 80, elevation: 20,
+  splashSpacer: { flex: 1 },
+  splashBottom: {
+    paddingHorizontal: spacing.lg,
+    paddingBottom: Platform.OS === 'ios' ? 50 : 40,
+    gap: 12,
   },
-  logoContainer: { alignItems: 'center', flex: 1, justifyContent: 'center' },
-  flameEmoji: { fontSize: 64, textAlign: 'center' },
-  logoText: { fontSize: 56, fontWeight: '900', color: colors.textPrimary, letterSpacing: -1 },
-  logoTagline: { fontSize: 16, color: colors.orange, fontWeight: '600', letterSpacing: 1, marginTop: spacing.xs },
-  splashBottom: { width: '100%' },
-  featureRow: { flexDirection: 'row', justifyContent: 'space-around', marginBottom: spacing.xl },
-  featureItem: { alignItems: 'center', gap: spacing.xs },
-  featureText: { fontSize: 11, color: colors.textSecondary, textAlign: 'center', fontWeight: '500', marginTop: 4 },
   btnPrimary: {
     backgroundColor: colors.orange, paddingVertical: 18, borderRadius: radius.full, alignItems: 'center',
-    shadowColor: colors.orange, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.4, shadowRadius: 12, elevation: 8,
+    shadowColor: colors.orange, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.5, shadowRadius: 16, elevation: 10,
   },
-  btnPrimaryText: { color: '#fff', fontSize: 17, fontWeight: '700', letterSpacing: 0.5 },
+  btnPrimaryText: { color: '#fff', fontSize: 18, fontWeight: '900', letterSpacing: 2 },
   btnSecondary: {
-    marginTop: spacing.md, paddingVertical: 16, borderRadius: radius.full,
-    alignItems: 'center', borderWidth: 1, borderColor: colors.border,
+    paddingVertical: 16, borderRadius: radius.full,
+    alignItems: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)',
   },
-  btnSecondaryText: { color: colors.textSecondary, fontSize: 16, fontWeight: '500' },
+  btnSecondaryText: { color: 'rgba(255,255,255,0.5)', fontSize: 16, fontWeight: '600' },
   authContainer: { flex: 1, backgroundColor: colors.bg, paddingHorizontal: spacing.lg, paddingTop: 60 },
   backBtn: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, marginBottom: spacing.xl },
   backBtnText: { color: colors.textSecondary, fontSize: 16 },

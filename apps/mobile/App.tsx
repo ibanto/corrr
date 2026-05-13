@@ -147,7 +147,7 @@ const styles = StyleSheet.create({
     fontSize: 48, fontWeight: '900', color: colors.orange, letterSpacing: 4,
   },
   root: { flex: 1, backgroundColor: colors.bg },
-  safeArea: { flex: 1, backgroundColor: colors.bg },
+  safeArea: { flex: 1, backgroundColor: colors.bg, paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight ?? 32) + 12 : 0 },
   screen: { flex: 1 },
   tabBarSafe: { backgroundColor: colors.bgCard },
   tabBar: {

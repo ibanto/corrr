@@ -9,8 +9,14 @@ import {
   Alert,
   ActivityIndicator,
   RefreshControl,
+  Image,
+  Modal,
+  TextInput,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
 import { colors, spacing, radius } from '../theme';
 import { api, MyStats, RunRecord } from '../services/api';
 
@@ -45,17 +51,52 @@ export default function PerfilScreen({ user, onLogout }: Props) {
   const [stravaLoading, setStravaLoading] = useState(false);
   const [stats, setStats] = useState<MyStats | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+  const [profileCity, setProfileCity] = useState(user?.city ?? '');
+  const [profileName, setProfileName] = useState(displayName);
+  const [editModal, setEditModal] = useState(false);
+  const [editName, setEditName] = useState(displayName);
+  const [editCity, setEditCity] = useState(user?.city ?? '');
 
   const loadStats = useCallback(async () => {
     try {
-      const data = await api.getMyStats();
+      const [data, profile] = await Promise.all([api.getMyStats(), api.getProfile()]);
       setStats(data);
+      if (profile.avatar_url) setAvatarUrl(profile.avatar_url);
+      if (profile.display_name) setProfileName(profile.display_name);
+      if (profile.city) setProfileCity(profile.city);
     } catch {
-      // silencioso — mantiene datos anteriores
+      // silencioso
     }
   }, []);
 
   useEffect(() => { loadStats(); }, [loadStats]);
+
+  const pickAvatar = async () => {
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.5,
+      base64: true,
+    });
+    if (!result.canceled && result.assets[0].base64) {
+      const dataUri = `data:image/jpeg;base64,${result.assets[0].base64}`;
+      setAvatarUrl(dataUri);
+      try { await api.updateProfile({ avatarUrl: dataUri }); } catch {}
+    }
+  };
+
+  const saveProfile = async () => {
+    try {
+      await api.updateProfile({ displayName: editName, city: editCity });
+      setProfileName(editName);
+      setProfileCity(editCity);
+      setEditModal(false);
+    } catch {
+      Alert.alert('Error', 'No se pudo guardar el perfil');
+    }
+  };
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -115,6 +156,7 @@ export default function PerfilScreen({ user, onLogout }: Props) {
   const runs: RunRecord[] = stats?.runs ?? [];
 
   return (
+    <>
     <ScrollView
       style={styles.container}
       contentContainerStyle={styles.content}
@@ -122,25 +164,32 @@ export default function PerfilScreen({ user, onLogout }: Props) {
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.orange} />}
     >
       <View style={styles.header}>
-        <View style={styles.avatarContainer}>
-          <View style={styles.avatar}>
-            <Text style={styles.avatarText}>{displayName.charAt(0).toUpperCase()}</Text>
+        <TouchableOpacity style={styles.avatarContainer} onPress={pickAvatar}>
+          {avatarUrl ? (
+            <Image source={{ uri: avatarUrl }} style={styles.avatar} />
+          ) : (
+            <View style={styles.avatar}>
+              <Text style={styles.avatarText}>{profileName.charAt(0).toUpperCase()}</Text>
+            </View>
+          )}
+          <View style={styles.avatarEditBadge}>
+            <Ionicons name="camera" size={12} color="#fff" />
           </View>
           <View style={styles.levelBadge}>
             <Text style={styles.levelText}>{Math.floor((s?.total_zones ?? 0) / 5) + 1}</Text>
           </View>
-        </View>
+        </TouchableOpacity>
         <View style={styles.userInfo}>
           <View style={styles.nameRow}>
-            <Text style={styles.username}>{displayName}</Text>
+            <Text style={styles.username}>{profileName}</Text>
             <Ionicons name="checkmark-circle" size={16} color={colors.orange} />
           </View>
-          {user?.city && (
+          {profileCity ? (
             <View style={styles.locationRow}>
               <Ionicons name="location" size={12} color={colors.textSecondary} />
-              <Text style={styles.location}>{user.city}</Text>
+              <Text style={styles.location}>{profileCity}</Text>
             </View>
-          )}
+          ) : null}
           <View style={styles.xpRow}>
             <View style={styles.xpBar}>
               <View style={[styles.xpFill, { width: `${Math.min(100, ((s?.total_points ?? 0) % 5000) / 50)}%` }]} />
@@ -148,8 +197,8 @@ export default function PerfilScreen({ user, onLogout }: Props) {
             <Text style={styles.xpText}>{(s?.total_points ?? 0).toLocaleString('es-ES')} pts totales</Text>
           </View>
         </View>
-        <TouchableOpacity>
-          <Ionicons name="settings-outline" size={22} color={colors.textSecondary} />
+        <TouchableOpacity onPress={() => { setEditName(profileName); setEditCity(profileCity); setEditModal(true); }}>
+          <Ionicons name="create-outline" size={22} color={colors.textSecondary} />
         </TouchableOpacity>
       </View>
 
@@ -280,6 +329,43 @@ export default function PerfilScreen({ user, onLogout }: Props) {
         </TouchableOpacity>
       </View>
     </ScrollView>
+
+    {/* Modal editar perfil */}
+    <Modal visible={editModal} animationType="slide" transparent>
+      <KeyboardAvoidingView style={styles.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <View style={styles.modalCard}>
+          <Text style={styles.modalTitle}>Editar perfil</Text>
+          <View style={styles.modalField}>
+            <Text style={styles.modalLabel}>NOMBRE</Text>
+            <TextInput
+              style={styles.modalInput}
+              value={editName}
+              onChangeText={setEditName}
+              placeholderTextColor={colors.textMuted}
+              placeholder="Tu nombre"
+            />
+          </View>
+          <View style={styles.modalField}>
+            <Text style={styles.modalLabel}>CIUDAD</Text>
+            <TextInput
+              style={styles.modalInput}
+              value={editCity}
+              onChangeText={setEditCity}
+              placeholderTextColor={colors.textMuted}
+              placeholder="Tu ciudad"
+              autoCapitalize="words"
+            />
+          </View>
+          <TouchableOpacity style={styles.modalSaveBtn} onPress={saveProfile}>
+            <Text style={styles.modalSaveBtnText}>Guardar</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.modalCancelBtn} onPress={() => setEditModal(false)}>
+            <Text style={styles.modalCancelText}>Cancelar</Text>
+          </TouchableOpacity>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+    </>
   );
 }
 
@@ -296,6 +382,11 @@ const styles = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
   },
   avatarText: { fontSize: 28, fontWeight: '900', color: '#fff' },
+  avatarEditBadge: {
+    position: 'absolute', bottom: -2, left: -2, width: 24, height: 24, borderRadius: 12,
+    backgroundColor: colors.textSecondary, alignItems: 'center', justifyContent: 'center',
+    borderWidth: 2, borderColor: colors.bg,
+  },
   levelBadge: {
     position: 'absolute', bottom: -4, right: -4, width: 22, height: 22, borderRadius: 11,
     backgroundColor: colors.orange, alignItems: 'center', justifyContent: 'center',
@@ -394,4 +485,27 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1, borderBottomColor: colors.border, gap: spacing.sm,
   },
   settingsRowLabel: { flex: 1, fontSize: 15, fontWeight: '500', color: colors.textPrimary },
+  modalOverlay: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'center', paddingHorizontal: spacing.lg,
+  },
+  modalCard: {
+    backgroundColor: colors.bgCard, borderRadius: radius.lg, padding: spacing.lg,
+    borderWidth: 1, borderColor: colors.border, gap: spacing.md,
+  },
+  modalTitle: { fontSize: 20, fontWeight: '800', color: colors.textPrimary, textAlign: 'center' },
+  modalField: { gap: spacing.xs },
+  modalLabel: { fontSize: 12, fontWeight: '600', color: colors.textSecondary, letterSpacing: 0.5 },
+  modalInput: {
+    backgroundColor: colors.bg, borderWidth: 1, borderColor: colors.border,
+    borderRadius: radius.md, paddingHorizontal: spacing.md, paddingVertical: 14,
+    color: colors.textPrimary, fontSize: 16,
+  },
+  modalSaveBtn: {
+    backgroundColor: colors.orange, paddingVertical: 16, borderRadius: radius.full,
+    alignItems: 'center', marginTop: spacing.sm,
+  },
+  modalSaveBtnText: { color: '#fff', fontSize: 16, fontWeight: '800' },
+  modalCancelBtn: { alignItems: 'center', paddingVertical: 8 },
+  modalCancelText: { color: colors.textSecondary, fontSize: 15 },
 });

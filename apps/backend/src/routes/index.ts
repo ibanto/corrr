@@ -58,8 +58,9 @@ async function initDB() {
   await db.query(`CREATE INDEX IF NOT EXISTS zones_owner_idx ON zones(owner_id)`);
   await db.query(`CREATE INDEX IF NOT EXISTS zones_center_idx ON zones(center_lat, center_lng)`);
 
-  // Push tokens
+  // Push tokens + avatar
   await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS push_token TEXT`);
+  await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT`);
 
   // Activar Row Level Security en todas las tablas (bloquea acceso directo vía Supabase API)
   for (const table of ['users', 'user_stats', 'runs', 'zones']) {
@@ -156,6 +157,33 @@ app.delete('/users/me', { preHandler: requireAuth }, async (req: any, reply) => 
     await client.query('ROLLBACK');
     return reply.status(500).send({ error: String(err) });
   } finally { client.release(); }
+});
+
+// ── Perfil ───────────────────────────────────────────────────────────────────
+
+app.get('/users/me', { preHandler: requireAuth }, async (req: any, reply) => {
+  const { rows } = await db.query(
+    'SELECT id, email, display_name, city, avatar_url FROM users WHERE id = $1', [req.userId]
+  );
+  if (!rows.length) return reply.status(404).send({ error: 'Usuario no encontrado' });
+  return reply.send(rows[0]);
+});
+
+app.put('/users/me', { preHandler: requireAuth }, async (req: any, reply) => {
+  const { displayName, city, avatarUrl } = req.body;
+  const updates: string[] = [];
+  const values: any[] = [];
+  let idx = 1;
+
+  if (displayName !== undefined) { updates.push(`display_name = $${idx++}`); values.push(displayName); }
+  if (city !== undefined) { updates.push(`city = $${idx++}`); values.push(city); }
+  if (avatarUrl !== undefined) { updates.push(`avatar_url = $${idx++}`); values.push(avatarUrl); }
+
+  if (updates.length === 0) return reply.status(400).send({ error: 'Nada que actualizar' });
+
+  values.push(req.userId);
+  await db.query(`UPDATE users SET ${updates.join(', ')} WHERE id = $${idx}`, values);
+  return reply.send({ ok: true });
 });
 
 // ── Push Token ───────────────────────────────────────────────────────────────
