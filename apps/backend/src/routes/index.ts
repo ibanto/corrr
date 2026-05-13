@@ -1,7 +1,6 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import { Pool } from 'pg';
-import { createClient } from 'redis';
 import * as dotenv from 'dotenv';
 import { hash, verify } from 'argon2';
 import { SignJWT, jwtVerify } from 'jose';
@@ -16,9 +15,6 @@ const RAILWAY_URL = process.env.RAILWAY_PUBLIC_DOMAIN
   ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
   : (process.env.RAILWAY_URL ?? 'http://localhost:3000');
 const db = new Pool({ connectionString: process.env.DATABASE_URL });
-const redis = createClient({ url: process.env.REDIS_URL });
-redis.connect().catch(console.error);
-
 const SECRET = new TextEncoder().encode(process.env.JWT_ACCESS_SECRET);
 
 app.register(cors, { origin: '*' });
