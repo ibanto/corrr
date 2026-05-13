@@ -192,6 +192,13 @@ class ApiService {
     return this.request<RemoteZone[]>(`/zones/nearby?lat=${lat}&lng=${lng}&radius=0.05`);
   }
 
+  async savePushToken(token: string): Promise<void> {
+    await this.request('/users/push-token', {
+      method: 'POST',
+      body: JSON.stringify({ pushToken: token }),
+    });
+  }
+
   async getStravaAuthUrl(): Promise<string> {
     const data = await this.request<{ url: string }>('/auth/strava');
     return data.url;

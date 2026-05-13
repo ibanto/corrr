@@ -225,12 +225,13 @@ export default function PerfilScreen({ user, onLogout }: Props) {
 
       <View style={styles.section}>
         {[
-          { icon: 'person-outline' as const, label: 'Cuenta' },
-          { icon: 'notifications-outline' as const, label: 'Notificaciones' },
-          { icon: 'lock-closed-outline' as const, label: 'Privacidad' },
-          { icon: 'help-circle-outline' as const, label: 'Centro de ayuda' },
+          { icon: 'person-outline' as const, label: 'Cuenta', onPress: undefined },
+          { icon: 'notifications-outline' as const, label: 'Notificaciones', onPress: undefined },
+          { icon: 'lock-closed-outline' as const, label: 'Privacidad', onPress: () => Linking.openURL('https://ibanto.github.io/corrr/privacy.html') },
+          { icon: 'bug-outline' as const, label: 'Reportar un bug', onPress: () => Linking.openURL('mailto:ibangarciacastrillon@gmail.com?subject=Bug%20en%20CORRR&body=Hola%2C%20he%20encontrado%20un%20problema%3A%0A%0A') },
+          { icon: 'help-circle-outline' as const, label: 'Centro de ayuda', onPress: () => Linking.openURL('mailto:ibangarciacastrillon@gmail.com?subject=Ayuda%20CORRR') },
         ].map((item, i) => (
-          <TouchableOpacity key={i} style={styles.settingsRow}>
+          <TouchableOpacity key={i} style={styles.settingsRow} onPress={item.onPress}>
             <Ionicons name={item.icon} size={20} color={colors.textSecondary} style={{ width: 28 }} />
             <Text style={styles.settingsRowLabel}>{item.label}</Text>
             <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />

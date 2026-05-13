@@ -19,6 +19,7 @@ import StatsScreen from './src/screens/StatsScreen';
 import RankingScreen from './src/screens/RankingScreen';
 import RetosScreen from './src/screens/RetosScreen';
 import PerfilScreen from './src/screens/PerfilScreen';
+import { registerForPushNotifications } from './src/services/notifications';
 
 type Tab = 'Mapa' | 'Stats' | 'Ranking' | 'Retos' | 'Perfil';
 
@@ -49,6 +50,7 @@ export default function App() {
           api.setToken(session.token);
           api.setUserId(session.user.id);
           setUser(session.user);
+          registerForPushNotifications().catch(() => {});
         }
       } catch {}
       setLoading(false);
@@ -59,6 +61,8 @@ export default function App() {
     // Guardar sesión en storage
     await AsyncStorage.setItem(SESSION_KEY, JSON.stringify({ token, user: userData }));
     setUser(userData);
+    // Registrar push notifications
+    registerForPushNotifications().catch(() => {});
   };
 
   const handleLogout = async () => {

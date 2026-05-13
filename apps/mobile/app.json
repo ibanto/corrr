@@ -42,7 +42,14 @@
     },
     "plugins": [
       "expo-secure-store",
-      "expo-asset"
+      "expo-asset",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#FF6600"
+        }
+      ]
     ],
     "extra": {
       "eas": {

@@ -57,6 +57,28 @@ async function initDB() {
   `);
   await db.query(`CREATE INDEX IF NOT EXISTS zones_owner_idx ON zones(owner_id)`);
   await db.query(`CREATE INDEX IF NOT EXISTS zones_center_idx ON zones(center_lat, center_lng)`);
+
+  // Push tokens
+  await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS push_token TEXT`);
+}
+
+/** Envía una push notification via Expo Push Service. */
+async function sendPushNotification(pushToken: string, title: string, body: string) {
+  try {
+    await fetch('https://exp.host/--/api/v2/push/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        to: pushToken,
+        sound: 'default',
+        title,
+        body,
+        channelId: 'zones',
+      }),
+    });
+  } catch (e) {
+    console.error('[Push] Error:', e);
+  }
 }
 
 const requireAuth = async (req: any, reply: any) => {
@@ -110,6 +132,15 @@ app.post('/auth/login', async (req: any, reply) => {
       .sign(SECRET);
     return reply.send({ userId: rows[0].id, accessToken: token });
   } catch (err) { return reply.status(500).send({ error: String(err) }); }
+});
+
+// ── Push Token ───────────────────────────────────────────────────────────────
+
+app.post('/users/push-token', { preHandler: requireAuth }, async (req: any, reply) => {
+  const { pushToken } = req.body;
+  if (!pushToken) return reply.status(400).send({ error: 'pushToken requerido' });
+  await db.query('UPDATE users SET push_token = $1 WHERE id = $2', [pushToken, req.userId]);
+  return reply.send({ ok: true });
 });
 
 // ── Ranking ───────────────────────────────────────────────────────────────────
@@ -214,7 +245,7 @@ app.post('/runs', { preHandler: requireAuth }, async (req: any, reply) => {
         // Zonas de otros usuarios cuyo centro cae en el bounding box
         const { rows: candidates } = await client.query(
           `SELECT z.id, z.owner_id, z.polygon, z.points, z.center_lat, z.center_lng,
-                  u.display_name AS owner_name
+                  u.display_name AS owner_name, u.push_token AS owner_push_token
            FROM zones z
            JOIN users u ON u.id = z.owner_id
            WHERE z.owner_id != $1
@@ -240,6 +271,16 @@ app.post('/runs', { preHandler: requireAuth }, async (req: any, reply) => {
             );
 
             stolenZones.push({ id: rival.id, ownerName: rival.owner_name, points: rival.points });
+
+            // Notificar al usuario robado
+            if (rival.owner_push_token) {
+              const thiefName = (await client.query('SELECT display_name FROM users WHERE id = $1', [userId])).rows[0]?.display_name ?? 'Alguien';
+              sendPushNotification(
+                rival.owner_push_token,
+                '😱 ¡Te han robado una zona!',
+                `${thiefName} ha conquistado una de tus zonas (${rival.points} pts). ¡Sal a recuperarla!`
+              );
+            }
           }
         }
 
