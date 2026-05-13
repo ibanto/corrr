@@ -11,21 +11,51 @@ import {
   Platform,
   ActivityIndicator,
   Alert,
+  FlatList,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, radius } from '../theme';
 import { api } from '../services/api';
 
-const { height } = Dimensions.get('window');
+const { width, height } = Dimensions.get('window');
+
+const INTRO_PAGES = [
+  {
+    icon: '🏃',
+    title: 'Corre por tu ciudad',
+    desc: 'Sal a correr y traza rutas por las calles. Cada carrera cuenta para conquistar territorio.',
+    color: '#FF6600',
+  },
+  {
+    icon: '🗺️',
+    title: 'Conquista zonas',
+    desc: 'Cierra un bucle mientras corres y el terreno que encierres será tuyo. Cuanto más grande, más puntos.',
+    color: '#FF8C00',
+  },
+  {
+    icon: '⚔️',
+    title: 'Roba a tus rivales',
+    desc: 'Si tu ruta encierra la zona de otro corredor, ¡la conquistas! Defiende tu territorio o piérdelo.',
+    color: '#FF4500',
+  },
+  {
+    icon: '🏆',
+    title: 'Sube en el ranking',
+    desc: 'Compite contra corredores de tu ciudad y de toda España. ¿Quién dominará más territorio?',
+    color: '#FFD700',
+  },
+];
 
 interface Props {
   onAuthenticated: (token: string, user: any) => void;
 }
 
-type Mode = 'splash' | 'login' | 'register';
+type Mode = 'intro' | 'splash' | 'login' | 'register';
 
 export default function OnboardingScreen({ onAuthenticated }: Props) {
-  const [mode, setMode] = useState<Mode>('splash');
+  const [mode, setMode] = useState<Mode>('intro');
+  const [introPage, setIntroPage] = useState(0);
+  const flatListRef = useRef<FlatList>(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [username, setUsername] = useState('');
@@ -73,6 +103,58 @@ export default function OnboardingScreen({ onAuthenticated }: Props) {
   };
 
   const glowOpacity = glowAnim.interpolate({ inputRange: [0, 1], outputRange: [0.3, 0.8] });
+
+  if (mode === 'intro') {
+    return (
+      <View style={styles.introContainer}>
+        <FlatList
+          ref={flatListRef}
+          data={INTRO_PAGES}
+          horizontal
+          pagingEnabled
+          showsHorizontalScrollIndicator={false}
+          keyExtractor={(_, i) => String(i)}
+          onMomentumScrollEnd={(e) => {
+            const page = Math.round(e.nativeEvent.contentOffset.x / width);
+            setIntroPage(page);
+          }}
+          renderItem={({ item }) => (
+            <View style={[styles.introPage, { width }]}>
+              <Text style={styles.introIcon}>{item.icon}</Text>
+              <Text style={[styles.introTitle, { color: item.color }]}>{item.title}</Text>
+              <Text style={styles.introDesc}>{item.desc}</Text>
+            </View>
+          )}
+        />
+        <View style={styles.introBottom}>
+          <View style={styles.dots}>
+            {INTRO_PAGES.map((_, i) => (
+              <View key={i} style={[styles.dot, introPage === i && styles.dotActive]} />
+            ))}
+          </View>
+          {introPage === INTRO_PAGES.length - 1 ? (
+            <TouchableOpacity style={styles.btnPrimary} onPress={() => setMode('splash')}>
+              <Text style={styles.btnPrimaryText}>¡Vamos! →</Text>
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity
+              style={styles.btnPrimary}
+              onPress={() => {
+                const next = introPage + 1;
+                flatListRef.current?.scrollToIndex({ index: next, animated: true });
+                setIntroPage(next);
+              }}
+            >
+              <Text style={styles.btnPrimaryText}>Siguiente →</Text>
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity onPress={() => setMode('splash')} style={styles.skipBtn}>
+            <Text style={styles.skipText}>Saltar</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
 
   if (mode === 'splash') {
     return (
@@ -186,6 +268,63 @@ export default function OnboardingScreen({ onAuthenticated }: Props) {
 }
 
 const styles = StyleSheet.create({
+  introContainer: {
+    flex: 1,
+    backgroundColor: colors.bg,
+  },
+  introPage: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: spacing.xl,
+  },
+  introIcon: {
+    fontSize: 80,
+    marginBottom: 24,
+  },
+  introTitle: {
+    fontSize: 28,
+    fontWeight: '900',
+    textAlign: 'center',
+    marginBottom: 16,
+  },
+  introDesc: {
+    fontSize: 17,
+    color: colors.textSecondary,
+    textAlign: 'center',
+    lineHeight: 26,
+    paddingHorizontal: spacing.md,
+  },
+  introBottom: {
+    paddingHorizontal: spacing.lg,
+    paddingBottom: 60,
+    gap: 16,
+  },
+  dots: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 8,
+    marginBottom: 8,
+  },
+  dot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: colors.border,
+  },
+  dotActive: {
+    backgroundColor: colors.orange,
+    width: 24,
+  },
+  skipBtn: {
+    alignItems: 'center',
+    paddingVertical: 8,
+  },
+  skipText: {
+    color: colors.textMuted,
+    fontSize: 15,
+    fontWeight: '500',
+  },
   splashContainer: {
     flex: 1, backgroundColor: colors.bg, alignItems: 'center',
     justifyContent: 'space-between', paddingTop: 100, paddingBottom: 60, paddingHorizontal: spacing.lg,
