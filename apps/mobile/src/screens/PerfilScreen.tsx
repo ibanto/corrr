@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -8,19 +8,60 @@ import {
   Linking,
   Alert,
   ActivityIndicator,
+  RefreshControl,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, radius } from '../theme';
-import { api } from '../services/api';
+import { api, MyStats, RunRecord } from '../services/api';
 
 interface Props {
-  user: { username: string; id: string } | null;
+  user: { username: string; id: string; city?: string } | null;
   onLogout: () => void;
+}
+
+function formatDate(iso: string): string {
+  const d = new Date(iso);
+  const now = new Date();
+  const diff = now.getTime() - d.getTime();
+  if (diff < 86400000) return 'Hoy';
+  if (diff < 172800000) return 'Ayer';
+  return d.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' });
+}
+
+function formatPace(distKm: number, secs: number): string {
+  if (!distKm || !secs) return '--:--';
+  const secsPerKm = secs / distKm;
+  const m = Math.floor(secsPerKm / 60);
+  const s = Math.floor(secsPerKm % 60);
+  return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+function formatKm(km: number): string {
+  return km >= 1000 ? `${(km / 1000).toFixed(1)}k` : km.toFixed(1);
 }
 
 export default function PerfilScreen({ user, onLogout }: Props) {
   const displayName = user?.username ?? 'RunnerMadrid';
   const [stravaLoading, setStravaLoading] = useState(false);
+  const [stats, setStats] = useState<MyStats | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const loadStats = useCallback(async () => {
+    try {
+      const data = await api.getMyStats();
+      setStats(data);
+    } catch {
+      // silencioso — mantiene datos anteriores
+    }
+  }, []);
+
+  useEffect(() => { loadStats(); }, [loadStats]);
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await loadStats();
+    setRefreshing(false);
+  };
 
   const handleConnectStrava = async () => {
     setStravaLoading(true);
@@ -34,15 +75,23 @@ export default function PerfilScreen({ user, onLogout }: Props) {
     }
   };
 
+  const s = stats?.stats;
+  const runs: RunRecord[] = stats?.runs ?? [];
+
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={styles.content}
+      showsVerticalScrollIndicator={false}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.orange} />}
+    >
       <View style={styles.header}>
         <View style={styles.avatarContainer}>
           <View style={styles.avatar}>
             <Text style={styles.avatarText}>{displayName.charAt(0).toUpperCase()}</Text>
           </View>
           <View style={styles.levelBadge}>
-            <Text style={styles.levelText}>24</Text>
+            <Text style={styles.levelText}>{Math.floor((s?.total_zones ?? 0) / 5) + 1}</Text>
           </View>
         </View>
         <View style={styles.userInfo}>
@@ -50,15 +99,17 @@ export default function PerfilScreen({ user, onLogout }: Props) {
             <Text style={styles.username}>{displayName}</Text>
             <Ionicons name="checkmark-circle" size={16} color={colors.orange} />
           </View>
-          <View style={styles.locationRow}>
-            <Ionicons name="location" size={12} color={colors.textSecondary} />
-            <Text style={styles.location}>Madrid, España</Text>
-          </View>
+          {user?.city && (
+            <View style={styles.locationRow}>
+              <Ionicons name="location" size={12} color={colors.textSecondary} />
+              <Text style={styles.location}>{user.city}</Text>
+            </View>
+          )}
           <View style={styles.xpRow}>
             <View style={styles.xpBar}>
-              <View style={[styles.xpFill, { width: '65%' }]} />
+              <View style={[styles.xpFill, { width: `${Math.min(100, ((s?.total_points ?? 0) % 5000) / 50)}%` }]} />
             </View>
-            <Text style={styles.xpText}>16.460 / 26.000 XP</Text>
+            <Text style={styles.xpText}>{(s?.total_points ?? 0).toLocaleString('es-ES')} pts totales</Text>
           </View>
         </View>
         <TouchableOpacity>
@@ -68,15 +119,15 @@ export default function PerfilScreen({ user, onLogout }: Props) {
 
       <View style={styles.statsRow}>
         {[
-          { value: '87', label: 'Zonas' },
-          { value: '1.248', label: 'km totales' },
-          { value: '43', label: 'Carreras' },
-          { value: '18', label: 'Racha' },
-        ].map((s, i) => (
+          { value: String(s?.total_zones ?? 0), label: 'Zonas' },
+          { value: formatKm(s?.total_km ?? 0), label: 'km totales' },
+          { value: String(s?.total_runs ?? 0), label: 'Carreras' },
+          { value: String(s?.total_points ?? 0), label: 'Puntos', flame: true },
+        ].map((item, i) => (
           <View key={i} style={styles.statItem}>
-            {i === 3 && <Ionicons name="flame" size={14} color={colors.orange} />}
-            <Text style={styles.statValue}>{s.value}</Text>
-            <Text style={styles.statLabel}>{s.label}</Text>
+            {item.flame && <Ionicons name="flame" size={14} color={colors.orange} />}
+            <Text style={styles.statValue}>{item.value}</Text>
+            <Text style={styles.statLabel}>{item.label}</Text>
           </View>
         ))}
       </View>
@@ -107,24 +158,21 @@ export default function PerfilScreen({ user, onLogout }: Props) {
       <View style={styles.section}>
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Actividad reciente</Text>
-          <TouchableOpacity><Text style={styles.sectionLink}>Ver todo</Text></TouchableOpacity>
         </View>
-        {[
-          { date: 'Hoy', place: 'Madrid Centro', km: 8.42, pace: '5:18' },
-          { date: 'Ayer', place: 'Casa de Campo', km: 6.21, pace: '5:05' },
-          { date: '19 may.', place: 'El Retiro', km: 10.03, pace: '5:24' },
-        ].map((run, i) => (
-          <View key={i} style={styles.runRow}>
+        {runs.length === 0 ? (
+          <Text style={styles.emptyText}>Aún no tienes carreras. ¡A correr!</Text>
+        ) : runs.map((run, i) => (
+          <View key={run.id ?? i} style={styles.runRow}>
             <View style={styles.runIcon}>
               <Ionicons name="walk" size={18} color={colors.orange} />
             </View>
             <View style={styles.runInfo}>
-              <Text style={styles.runPlace}>{run.place}</Text>
-              <Text style={styles.runDate}>{run.date}</Text>
+              <Text style={styles.runPlace}>{run.distance_km.toFixed(2)} km · {run.zones_count} zona{run.zones_count !== 1 ? 's' : ''}</Text>
+              <Text style={styles.runDate}>{formatDate(run.created_at)}</Text>
             </View>
             <View style={styles.runStats}>
-              <Text style={styles.runKm}>{run.km} km</Text>
-              <Text style={styles.runPace}>{run.pace} /km</Text>
+              <Text style={styles.runKm}>{run.points} pts</Text>
+              <Text style={styles.runPace}>{formatPace(run.distance_km, run.duration_secs)} /km</Text>
             </View>
           </View>
         ))}
@@ -246,6 +294,7 @@ const styles = StyleSheet.create({
   },
   achievementLabel: { fontSize: 11, fontWeight: '700', color: colors.textPrimary, textAlign: 'center' },
   achievementSub: { fontSize: 10, color: colors.textSecondary, textAlign: 'center' },
+  emptyText: { fontSize: 14, color: colors.textSecondary, textAlign: 'center', paddingVertical: spacing.md },
   runRow: {
     flexDirection: 'row', alignItems: 'center', paddingVertical: spacing.sm,
     borderBottomWidth: 1, borderBottomColor: colors.border, gap: spacing.sm,
