@@ -60,6 +60,11 @@ async function initDB() {
 
   // Push tokens
   await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS push_token TEXT`);
+
+  // Activar Row Level Security en todas las tablas (bloquea acceso directo vía Supabase API)
+  for (const table of ['users', 'user_stats', 'runs', 'zones']) {
+    await db.query(`ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY`).catch(() => {});
+  }
 }
 
 /** Envía una push notification via Expo Push Service. */
