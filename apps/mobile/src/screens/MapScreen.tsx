@@ -11,6 +11,7 @@ import * as Location from 'expo-location';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, radius } from '../theme';
 import { api, RemoteZone } from '../services/api';
+import ZonePopup, { PopupType } from '../components/ZonePopup';
 
 const GOOGLE_API_KEY = 'AIzaSyC_1Y2Fo6S9X6GJU5Upx4EZxrw4JFf_xNU';
 
@@ -109,6 +110,9 @@ export default function MapScreen({ user }: Props) {
   const [loopDetected, setLoopDetected] = useState(false);
   const [remoteZones, setRemoteZones] = useState<RemoteZone[]>([]);
   const [mapRegion, setMapRegion] = useState(DEFAULT_REGION);
+  const [popup, setPopup] = useState<{ visible: boolean; type: PopupType; points: number; rivalName?: string }>({
+    visible: false, type: 'conquered', points: 0,
+  });
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const locationRef = useRef<any>(null);
@@ -178,19 +182,16 @@ export default function MapScreen({ user }: Props) {
     const isSteal = rivalsCaptured.length > 0;
     const stolenNames = [...new Set(rivalsCaptured.map(r => r.owner_name))];
 
-    const title    = isSteal ? '🎭 ¡ROBO!' : '🏆 ¡Zona conquistada!';
-    const subtitle = isSteal
-      ? `¡Le has robado ${rivalsCaptured.length} zona${rivalsCaptured.length > 1 ? 's' : ''} a ${stolenNames.join(', ')}!\n+${finalPoints} puntos`
-      : `Has encerrado ${area.toFixed(3)} km²\n+${finalPoints} puntos`;
+    setPopup({
+      visible: true,
+      type: isSteal ? 'stolen_by_you' : 'conquered',
+      points: finalPoints,
+      rivalName: isSteal ? stolenNames.join(', ') : undefined,
+    });
 
-    Alert.alert(title, subtitle, [{
-      text: isSteal ? '😈 ¡Seguir robando!' : '¡Seguir corriendo!',
-      onPress: () => {
-        pathRef.current = [path[path.length - 1]];
-        setCurrentPath([path[path.length - 1]]);
-        setLoopDetected(false);
-      },
-    }]);
+    pathRef.current = [path[path.length - 1]];
+    setCurrentPath([path[path.length - 1]]);
+    setLoopDetected(false);
   };
 
   const startRun = async () => {
@@ -267,11 +268,13 @@ export default function MapScreen({ user }: Props) {
         loadZones();
         if (res.stolenZones && res.stolenZones.length > 0) {
           const names = [...new Set(res.stolenZones.map((s: any) => s.ownerName))];
-          Alert.alert(
-            '🎭 Resumen de robos',
-            `Has robado ${res.stolenZones.length} zona${res.stolenZones.length > 1 ? 's' : ''} a ${names.join(', ')}.\n¡Aparecen en el ranking como tuyas!`,
-            [{ text: '💪 ¡Genial!' }]
-          );
+          const totalStolenPts = res.stolenZones.reduce((a: number, s: any) => a + (s.points || 0), 0);
+          setPopup({
+            visible: true,
+            type: 'stolen_by_you',
+            points: totalStolenPts,
+            rivalName: names.join(', '),
+          });
         }
       }).catch(() => {});
     }
@@ -301,6 +304,14 @@ export default function MapScreen({ user }: Props) {
 
   return (
     <View style={styles.container}>
+      <ZonePopup
+        visible={popup.visible}
+        type={popup.type}
+        points={popup.points}
+        rivalName={popup.rivalName}
+        onClose={() => setPopup(p => ({ ...p, visible: false }))}
+      />
+
       <View style={styles.header}>
         <View>
           <Text style={styles.cityLabel}>MADRID</Text>

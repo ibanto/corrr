@@ -20,6 +20,8 @@ import RankingScreen from './src/screens/RankingScreen';
 import RetosScreen from './src/screens/RetosScreen';
 import PerfilScreen from './src/screens/PerfilScreen';
 import { registerForPushNotifications } from './src/services/notifications';
+import ZonePopup, { PopupType } from './src/components/ZonePopup';
+import * as Notifications from 'expo-notifications';
 
 type Tab = 'Mapa' | 'Stats' | 'Ranking' | 'Retos' | 'Perfil';
 
@@ -38,7 +40,23 @@ interface Session { token: string; user: User; }
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>('Mapa');
-  const [loading, setLoading] = useState(true); // arranca en true mientras leemos storage
+  const [loading, setLoading] = useState(true);
+  const [stolenPopup, setStolenPopup] = useState<{ visible: boolean; rivalName?: string; points?: number }>({ visible: false });
+
+  // Escuchar notificaciones push (te han robado una zona)
+  useEffect(() => {
+    const sub = Notifications.addNotificationReceivedListener(notification => {
+      const data = notification.request.content.data as any;
+      if (data?.type === 'zone_stolen') {
+        setStolenPopup({
+          visible: true,
+          rivalName: data.rivalName ?? 'Un rival',
+          points: data.points ?? 0,
+        });
+      }
+    });
+    return () => sub.remove();
+  }, []);
 
   // Al montar, intentar restaurar sesión guardada
   useEffect(() => {
@@ -106,6 +124,13 @@ export default function App() {
   return (
     <View style={styles.root}>
       <StatusBar barStyle="light-content" backgroundColor={colors.bg} />
+      <ZonePopup
+        visible={stolenPopup.visible}
+        type="stolen_from_you"
+        points={stolenPopup.points}
+        rivalName={stolenPopup.rivalName}
+        onClose={() => setStolenPopup({ visible: false })}
+      />
       <SafeAreaView style={styles.safeArea}>
         <View style={styles.screen}>{renderScreen()}</View>
       </SafeAreaView>

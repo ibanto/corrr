@@ -19,6 +19,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { colors, spacing, radius } from '../theme';
 import { api, MyStats, RunRecord } from '../services/api';
+import ZonePopup, { PopupType } from '../components/ZonePopup';
 
 interface Props {
   user: { username: string; id: string; city?: string } | null;
@@ -57,6 +58,7 @@ export default function PerfilScreen({ user, onLogout }: Props) {
   const [editModal, setEditModal] = useState(false);
   const [editName, setEditName] = useState(displayName);
   const [editCity, setEditCity] = useState(user?.city ?? '');
+  const [testPopup, setTestPopup] = useState<PopupType | null>(null);
 
   const loadStats = useCallback(async () => {
     try {
@@ -307,6 +309,20 @@ export default function PerfilScreen({ user, onLogout }: Props) {
         </View>
       </View>
 
+      {/* DEV: test popups de zona */}
+      <View style={[styles.section, { gap: spacing.xs }]}>
+        <Text style={{ fontSize: 12, color: colors.textMuted, marginBottom: 4 }}>🧪 TEST POPUPS</Text>
+        <TouchableOpacity style={{ backgroundColor: '#22C55E', paddingVertical: 10, borderRadius: radius.full, alignItems: 'center' }} onPress={() => setTestPopup('conquered')}>
+          <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>Zona conquistada</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={{ backgroundColor: colors.orange, paddingVertical: 10, borderRadius: radius.full, alignItems: 'center' }} onPress={() => setTestPopup('stolen_by_you')}>
+          <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>Zona robada</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={{ backgroundColor: '#FB0E01', paddingVertical: 10, borderRadius: radius.full, alignItems: 'center' }} onPress={() => setTestPopup('stolen_from_you')}>
+          <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>Te han robado</Text>
+        </TouchableOpacity>
+      </View>
+
       <View style={styles.section}>
         {[
           { icon: 'trash-outline' as const, label: 'Eliminar cuenta', onPress: handleDeleteAccount },
@@ -364,6 +380,15 @@ export default function PerfilScreen({ user, onLogout }: Props) {
         </View>
       </KeyboardAvoidingView>
     </Modal>
+
+    {/* Test popup de zona */}
+    {testPopup && (
+      <ZonePopup
+        visible={true}
+        type={testPopup}
+        onClose={() => setTestPopup(null)}
+      />
+    )}
     </>
   );
 }

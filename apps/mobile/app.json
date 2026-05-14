@@ -31,6 +31,11 @@
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION"
+      ],
       "config": {
         "googleMaps": {
           "apiKey": "AIzaSyC_1Y2Fo6S9X6GJU5Upx4EZxrw4JFf_xNU"
@@ -43,6 +48,13 @@
     "plugins": [
       "expo-secure-store",
       "expo-asset",
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "CORRR necesita tu ubicación para rastrear tu carrera y conquistar territorios.",
+          "locationWhenInUsePermission": "CORRR necesita tu ubicación para rastrear tu carrera y conquistar territorios."
+        }
+      ],
       [
         "expo-notifications",
         {
