@@ -23,16 +23,16 @@ const DEFAULT_REGION = {
 };
 
 const MAP_STYLE = [
-  { elementType: 'geometry', stylers: [{ color: '#0d1117' }] },
-  { elementType: 'labels.text.fill', stylers: [{ color: '#888888' }] },
-  { elementType: 'labels.text.stroke', stylers: [{ color: '#0d1117' }] },
-  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#1a1f2e' }] },
-  { featureType: 'road.arterial', elementType: 'geometry', stylers: [{ color: '#222836' }] },
-  { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#2d3748' }] },
-  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0f172a' }] },
+  { elementType: 'geometry', stylers: [{ color: '#1a1a2e' }] },
+  { elementType: 'labels.text.fill', stylers: [{ color: '#999999' }] },
+  { elementType: 'labels.text.stroke', stylers: [{ color: '#1a1a2e' }] },
+  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#2a2a4a' }] },
+  { featureType: 'road.arterial', elementType: 'geometry', stylers: [{ color: '#333355' }] },
+  { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#3d3d66' }] },
+  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#161633' }] },
   { featureType: 'poi', stylers: [{ visibility: 'off' }] },
   { featureType: 'transit', stylers: [{ visibility: 'off' }] },
-  { featureType: 'landscape', elementType: 'geometry', stylers: [{ color: '#111827' }] },
+  { featureType: 'landscape', elementType: 'geometry', stylers: [{ color: '#16213e' }] },
 ];
 
 interface Coord { latitude: number; longitude: number; }
@@ -123,16 +123,40 @@ export default function MapScreen({ user }: Props) {
     (async () => {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status === 'granted') {
-        const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-        const region = {
-          latitude: loc.coords.latitude,
-          longitude: loc.coords.longitude,
-          latitudeDelta: 0.06,
-          longitudeDelta: 0.06,
-        };
-        setMapRegion(region);
-        loadZones(loc.coords.latitude, loc.coords.longitude);
+        try {
+          // Primero intentar última ubicación conocida (instantáneo)
+          const lastKnown = await Location.getLastKnownPositionAsync();
+          if (lastKnown) {
+            const region = {
+              latitude: lastKnown.coords.latitude,
+              longitude: lastKnown.coords.longitude,
+              latitudeDelta: 0.06,
+              longitudeDelta: 0.06,
+            };
+            setMapRegion(region);
+            mapRef.current?.animateToRegion(region, 500);
+            loadZones(lastKnown.coords.latitude, lastKnown.coords.longitude);
+          }
+          // Luego obtener ubicación precisa
+          const loc = await Location.getCurrentPositionAsync({
+            accuracy: Location.Accuracy.High,
+            timeInterval: 10000,
+          });
+          const region = {
+            latitude: loc.coords.latitude,
+            longitude: loc.coords.longitude,
+            latitudeDelta: 0.06,
+            longitudeDelta: 0.06,
+          };
+          setMapRegion(region);
+          mapRef.current?.animateToRegion(region, 800);
+          loadZones(loc.coords.latitude, loc.coords.longitude);
+        } catch (e) {
+          console.warn('[Location] Error getting position:', e);
+          loadZones(DEFAULT_REGION.latitude, DEFAULT_REGION.longitude);
+        }
       } else {
+        console.warn('[Location] Permission denied');
         loadZones(DEFAULT_REGION.latitude, DEFAULT_REGION.longitude);
       }
     })();
