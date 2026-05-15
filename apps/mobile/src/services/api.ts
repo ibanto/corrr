@@ -12,6 +12,7 @@ interface LoginResponse {
 
 interface RankingEntry {
   position: number;
+  userId?: string;
   username: string;
   city: string;
   points: number;
@@ -140,6 +141,7 @@ class ApiService {
       const rows = await this.request<any[]>(`/ranking/city?city=${encodeURIComponent(city)}`);
       return rows.map((r, i) => ({
         position: i + 1,
+        userId: r.user_id,
         username: r.display_name ?? 'Runner',
         city: r.city ?? city,
         points: r.total_points ?? 0,
@@ -156,6 +158,7 @@ class ApiService {
       const rows = await this.request<any[]>('/ranking/global');
       return rows.map((r, i) => ({
         position: i + 1,
+        userId: r.user_id,
         username: r.display_name ?? 'Runner',
         city: r.city ?? 'España',
         points: r.total_points ?? 0,
@@ -242,6 +245,10 @@ class ApiService {
 
   async getFriends(): Promise<Friend[]> {
     return this.request('/friends');
+  }
+
+  async removeFriend(userId: string): Promise<void> {
+    await this.request(`/friends/${userId}`, { method: 'DELETE' });
   }
 }
 

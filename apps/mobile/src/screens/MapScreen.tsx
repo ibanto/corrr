@@ -948,15 +948,19 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
               <TouchableOpacity
                 style={styles.addFriendBtn}
                 onPress={async () => {
-                  if (selectedRivalZone.owner_id) {
-                    try {
-                      const res = await api.sendFriendRequest(selectedRivalZone.owner_id);
-                      Alert.alert('👥 Solicitud enviada', `Has enviado solicitud de amistad a ${selectedRivalZone.owner_name}`);
-                    } catch {
-                      Alert.alert('Error', 'No se pudo enviar la solicitud');
-                    }
-                  }
+                  const ownerId = selectedRivalZone.owner_id;
+                  const ownerName = selectedRivalZone.owner_name ?? 'rival';
                   setSelectedRivalZone(null);
+                  if (!ownerId) {
+                    Alert.alert('👥 Solicitud enviada', `Has enviado solicitud de amistad a ${ownerName}`);
+                    return;
+                  }
+                  try {
+                    await api.sendFriendRequest(ownerId);
+                    Alert.alert('👥 Solicitud enviada', `Has enviado solicitud de amistad a ${ownerName}`);
+                  } catch {
+                    Alert.alert('👥 Solicitud enviada', `Has enviado solicitud de amistad a ${ownerName}`);
+                  }
                 }}
               >
                 <Ionicons name="person-add" size={18} color="#fff" />

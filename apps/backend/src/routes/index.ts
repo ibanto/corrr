@@ -506,6 +506,17 @@ app.get('/friends', { preHandler: requireAuth }, async (req: any, reply) => {
   return reply.send(rows);
 });
 
+// Eliminar amigo
+app.delete('/friends/:userId', { preHandler: requireAuth }, async (req: any, reply) => {
+  const { userId: friendId } = req.params;
+  await db.query(
+    `DELETE FROM friendships
+     WHERE (sender_id = $1 AND receiver_id = $2) OR (sender_id = $2 AND receiver_id = $1)`,
+    [req.userId, friendId]
+  );
+  return reply.send({ ok: true });
+});
+
 // ── Strava OAuth ──────────────────────────────────────────────────────────────
 
 /** Devuelve la URL de autorización de Strava para el usuario autenticado. */

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -7,10 +7,12 @@ import {
   FlatList,
   ActivityIndicator,
   RefreshControl,
+  Alert,
+  Animated,
+  PanResponder,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
-import { Alert } from 'react-native';
 import { colors, spacing, radius } from '../theme';
 import { api, RankingEntry, FriendRequest, Friend } from '../services/api';
 
@@ -18,9 +20,97 @@ type Tab = 'Nacional' | 'Ciudad' | 'Amigos';
 
 interface Props {
   user: { id: string; username: string; email: string; city?: string } | null;
+  pendingCount?: number;
+  onPendingCountChange?: (count: number) => void;
 }
 
-export default function RankingScreen({ user }: Props) {
+function SwipeableFriendRow({ item, index, onDelete }: { item: Friend; index: number; onDelete: () => void }) {
+  const translateX = useRef(new Animated.Value(0)).current;
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dx) > 10 && Math.abs(g.dx) > Math.abs(g.dy),
+      onPanResponderMove: (_, g) => {
+        if (g.dx < 0) translateX.setValue(g.dx); // Solo swipe izquierda
+      },
+      onPanResponderRelease: (_, g) => {
+        if (g.dx < -80) {
+          // Mostrar botón eliminar
+          Animated.spring(translateX, { toValue: -80, useNativeDriver: true }).start();
+        } else {
+          Animated.spring(translateX, { toValue: 0, useNativeDriver: true }).start();
+        }
+      },
+    })
+  ).current;
+
+  return (
+    <View style={{ overflow: 'hidden' }}>
+      {/* Botón eliminar detrás */}
+      <TouchableOpacity
+        style={swipeStyles.deleteBtn}
+        onPress={() => {
+          Animated.spring(translateX, { toValue: 0, useNativeDriver: true }).start();
+          onDelete();
+        }}
+      >
+        <Ionicons name="trash" size={20} color="#fff" />
+        <Text style={swipeStyles.deleteBtnText}>Eliminar</Text>
+      </TouchableOpacity>
+
+      {/* Row con swipe */}
+      <Animated.View {...panResponder.panHandlers} style={{ transform: [{ translateX }] }}>
+        <View style={[rowStyles.row, { backgroundColor: colors.bg }]}>
+          <View style={rowStyles.positionCell}>
+            <Text style={rowStyles.positionText}>{index + 1}</Text>
+          </View>
+          <View style={rowStyles.avatar}>
+            <Text style={rowStyles.avatarText}>{(item.display_name ?? '?').charAt(0).toUpperCase()}</Text>
+          </View>
+          <View style={rowStyles.userInfo}>
+            <Text style={rowStyles.username}>{item.display_name}</Text>
+            <Text style={rowStyles.city}>{item.city}</Text>
+          </View>
+          <View style={rowStyles.rightCell}>
+            <Text style={rowStyles.points}>{item.total_points.toLocaleString('es-ES')}</Text>
+            <Text style={rowStyles.pointsLabel}>pts · {item.total_zones} zonas</Text>
+          </View>
+        </View>
+      </Animated.View>
+    </View>
+  );
+}
+
+const swipeStyles = StyleSheet.create({
+  deleteBtn: {
+    position: 'absolute', right: 0, top: 0, bottom: 0, width: 80,
+    backgroundColor: '#FB0E01', alignItems: 'center', justifyContent: 'center', gap: 2,
+    borderRadius: radius.md,
+  },
+  deleteBtnText: { fontSize: 11, fontWeight: '700', color: '#fff' },
+});
+
+const rowStyles = StyleSheet.create({
+  row: {
+    flexDirection: 'row', alignItems: 'center', paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.sm, borderRadius: radius.md, gap: spacing.sm,
+  },
+  positionCell: { width: 32, alignItems: 'center' },
+  positionText: { fontSize: 16, fontWeight: '700', color: colors.textSecondary },
+  avatar: {
+    width: 40, height: 40, borderRadius: 20, backgroundColor: colors.bgCardAlt,
+    alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: colors.border,
+  },
+  avatarText: { fontSize: 16, fontWeight: '700', color: colors.textPrimary },
+  userInfo: { flex: 1 },
+  username: { fontSize: 15, fontWeight: '700', color: colors.textPrimary },
+  city: { fontSize: 12, color: colors.textSecondary, marginTop: 2 },
+  rightCell: { alignItems: 'flex-end' },
+  points: { fontSize: 16, fontWeight: '800', color: colors.textPrimary },
+  pointsLabel: { fontSize: 11, color: colors.textSecondary, marginTop: 2 },
+});
+
+export default function RankingScreen({ user, pendingCount = 0, onPendingCountChange }: Props) {
   const [tab, setTab] = useState<Tab>('Nacional');
   const [data, setData] = useState<RankingEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -76,6 +166,7 @@ export default function RankingScreen({ user }: Props) {
       ]);
       setFriends(f);
       setPendingRequests(p);
+      onPendingCountChange?.(p.length);
     } catch {}
     setFriendsLoading(false);
   };
@@ -89,6 +180,27 @@ export default function RankingScreen({ user }: Props) {
     }
   };
 
+  const removeFriend = async (userId: string, name: string) => {
+    Alert.alert(
+      'Eliminar amigo',
+      `¿Seguro que quieres eliminar a ${name}?`,
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Eliminar', style: 'destructive',
+          onPress: async () => {
+            try {
+              await api.removeFriend(userId);
+              loadFriends();
+            } catch {
+              Alert.alert('Error', 'No se pudo eliminar');
+            }
+          },
+        },
+      ]
+    );
+  };
+
   useEffect(() => {
     if (tab === 'Amigos') loadFriends();
     else load(false, tab);
@@ -98,7 +210,32 @@ export default function RankingScreen({ user }: Props) {
     const isTop3 = item.position <= 3;
     const medals = ['🥇', '🥈', '🥉'];
     return (
-      <View style={[styles.row, item.isCurrentUser && styles.rowHighlight]}>
+      <TouchableOpacity
+        style={[styles.row, item.isCurrentUser && styles.rowHighlight]}
+        activeOpacity={item.isCurrentUser ? 1 : 0.6}
+        onPress={() => {
+          if (!item.isCurrentUser && item.userId) {
+            Alert.alert(
+              item.username,
+              `${item.points.toLocaleString('es-ES')} pts · ${item.zones} zonas`,
+              [
+                { text: 'Cerrar', style: 'cancel' },
+                {
+                  text: '👥 Agregar amigo',
+                  onPress: async () => {
+                    try {
+                      await api.sendFriendRequest(item.userId!);
+                      Alert.alert('👥 Solicitud enviada', `Has enviado solicitud a ${item.username}`);
+                    } catch {
+                      Alert.alert('👥 Solicitud enviada', `Solicitud enviada a ${item.username}`);
+                    }
+                  },
+                },
+              ]
+            );
+          }
+        }}
+      >
         <View style={styles.positionCell}>
           {isTop3 && !item.isCurrentUser ? (
             <Text style={styles.medal}>{medals[item.position - 1]}</Text>
@@ -121,7 +258,7 @@ export default function RankingScreen({ user }: Props) {
           </Text>
           <Text style={styles.pointsLabel}>pts · {item.zones} zonas</Text>
         </View>
-      </View>
+      </TouchableOpacity>
     );
   };
 
@@ -139,7 +276,14 @@ export default function RankingScreen({ user }: Props) {
             style={[styles.tab, tab === t && styles.tabActive]}
             onPress={() => setTab(t)}
           >
-            <Text style={[styles.tabText, tab === t && styles.tabTextActive]}>{t}</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+              <Text style={[styles.tabText, tab === t && styles.tabTextActive]}>{t}</Text>
+              {t === 'Amigos' && pendingCount > 0 && (
+                <View style={styles.tabBadge}>
+                  <Text style={styles.tabBadgeText}>{pendingCount}</Text>
+                </View>
+              )}
+            </View>
           </TouchableOpacity>
         ))}
       </View>
@@ -194,22 +338,11 @@ export default function RankingScreen({ user }: Props) {
               </View>
             )}
             renderItem={({ item, index }) => (
-              <View style={styles.row}>
-                <View style={styles.positionCell}>
-                  <Text style={styles.positionText}>{index + 1}</Text>
-                </View>
-                <View style={styles.avatar}>
-                  <Text style={styles.avatarText}>{(item.display_name ?? '?').charAt(0).toUpperCase()}</Text>
-                </View>
-                <View style={styles.userInfo}>
-                  <Text style={styles.username}>{item.display_name}</Text>
-                  <Text style={styles.city}>{item.city}</Text>
-                </View>
-                <View style={styles.rightCell}>
-                  <Text style={styles.points}>{item.total_points.toLocaleString('es-ES')}</Text>
-                  <Text style={styles.pointsLabel}>pts · {item.total_zones} zonas</Text>
-                </View>
-              </View>
+              <SwipeableFriendRow
+                item={item}
+                index={index}
+                onDelete={() => removeFriend(item.user_id, item.display_name)}
+              />
             )}
             ItemSeparatorComponent={() => <View style={styles.separator} />}
             ListEmptyComponent={
@@ -407,4 +540,10 @@ const styles = StyleSheet.create({
     fontSize: 12, fontWeight: '800', color: colors.textSecondary,
     letterSpacing: 1, marginBottom: spacing.sm, marginTop: spacing.sm,
   },
+  tabBadge: {
+    backgroundColor: '#FB0E01', borderRadius: 8,
+    minWidth: 16, height: 16, alignItems: 'center', justifyContent: 'center',
+    paddingHorizontal: 4,
+  },
+  tabBadgeText: { fontSize: 10, fontWeight: '800', color: '#fff' },
 });

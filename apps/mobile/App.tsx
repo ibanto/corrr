@@ -53,6 +53,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<Tab>('Mapa');
   const [loading, setLoading] = useState(true);
   const [stolenPopup, setStolenPopup] = useState<{ visible: boolean; rivalName?: string; points?: number }>({ visible: false });
+  const [pendingFriends, setPendingFriends] = useState(0);
 
   // Escuchar notificaciones push (te han robado una zona)
   useEffect(() => {
@@ -80,6 +81,8 @@ export default function App() {
           api.setUserId(session.user.id);
           setUser(session.user);
           registerForPushNotifications().catch(() => {});
+          // Cargar solicitudes de amistad pendientes
+          api.getPendingFriendRequests().then(r => setPendingFriends(r.length)).catch(() => {});
         }
       } catch {}
       setLoading(false);
@@ -87,11 +90,10 @@ export default function App() {
   }, []);
 
   const handleAuthenticated = async (token: string, userData: User) => {
-    // Guardar sesión en storage
     await AsyncStorage.setItem(SESSION_KEY, JSON.stringify({ token, user: userData }));
     setUser(userData);
-    // Registrar push notifications
     registerForPushNotifications().catch(() => {});
+    api.getPendingFriendRequests().then(r => setPendingFriends(r.length)).catch(() => {});
   };
 
   const handleLogout = async () => {
@@ -126,7 +128,7 @@ export default function App() {
     switch (activeTab) {
       case 'Mapa':    return <MapScreen user={user} onNavigateToShop={() => setActiveTab('Retos')} />;
       case 'Stats':   return <StatsScreen user={user} />;
-      case 'Ranking': return <RankingScreen user={user} />;
+      case 'Ranking': return <RankingScreen user={user} pendingCount={pendingFriends} onPendingCountChange={setPendingFriends} />;
       case 'Retos':   return <RetosScreen />;
       case 'Perfil':  return <PerfilScreen user={user} onLogout={handleLogout} />;
     }
@@ -157,11 +159,18 @@ export default function App() {
                 onPress={() => setActiveTab(tab.key)}
                 activeOpacity={0.7}
               >
-                <Image
-                  source={isActive ? icons.active : icons.inactive}
-                  style={styles.tabIcon}
-                  resizeMode="contain"
-                />
+                <View>
+                  <Image
+                    source={isActive ? icons.active : icons.inactive}
+                    style={styles.tabIcon}
+                    resizeMode="contain"
+                  />
+                  {tab.key === 'Ranking' && pendingFriends > 0 && (
+                    <View style={styles.badge}>
+                      <Text style={styles.badgeText}>{pendingFriends}</Text>
+                    </View>
+                  )}
+                </View>
               </TouchableOpacity>
             );
           })}
@@ -190,4 +199,11 @@ const styles = StyleSheet.create({
   },
   tabItem: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 2 },
   tabIcon: { width: 60, height: 92 },
+  badge: {
+    position: 'absolute', top: 2, right: -4,
+    backgroundColor: '#FB0E01', borderRadius: 10,
+    minWidth: 20, height: 20, alignItems: 'center', justifyContent: 'center',
+    paddingHorizontal: 5, borderWidth: 2, borderColor: colors.bgCard,
+  },
+  badgeText: { fontSize: 11, fontWeight: '800', color: '#fff' },
 });
