@@ -10,6 +10,7 @@ import {
 import MapView, { Polygon, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { Ionicons } from '@expo/vector-icons';
+import polygonClipping from 'polygon-clipping';
 import { colors, spacing, radius } from '../theme';
 import { api, RemoteZone } from '../services/api';
 import ZonePopup, { PopupType } from '../components/ZonePopup';
@@ -36,6 +37,30 @@ const MAP_STYLE = [
   { featureType: 'landscape', elementType: 'geometry', stylers: [{ color: '#16213e' }] },
 ];
 
+// 10 colores para rivales — distintos entre sí y del naranja (tuyo)
+const RIVAL_COLORS = [
+  '#3B82F6', // azul
+  '#8B5CF6', // violeta
+  '#EC4899', // rosa
+  '#14B8A6', // turquesa
+  '#EF4444', // rojo
+  '#22C55E', // verde
+  '#F59E0B', // ámbar
+  '#06B6D4', // cyan
+  '#A855F7', // púrpura
+  '#64748B', // gris azulado
+];
+
+function getRivalColor(ownerName: string): string {
+  // Hash simple del nombre para asignar color consistente
+  let hash = 0;
+  for (let i = 0; i < (ownerName || '').length; i++) {
+    hash = ((hash << 5) - hash) + ownerName.charCodeAt(i);
+    hash |= 0;
+  }
+  return RIVAL_COLORS[Math.abs(hash) % RIVAL_COLORS.length];
+}
+
 interface Coord { latitude: number; longitude: number; }
 interface ConqueredZone { coords: Coord[]; area: number; points: number; }
 
@@ -44,7 +69,87 @@ interface Props {
   onNavigateToShop?: () => void;
 }
 
-/** Sutherland-Hodgman polygon clipping — intersección de dos polígonos */
+// Conversiones Coord[] <-> polygon-clipping format [lng, lat][]
+type Ring = [number, number][];
+function coordsToRing(coords: Coord[]): Ring {
+  return coords.map(c => [c.longitude, c.latitude]);
+}
+function ringToCoords(ring: Ring): Coord[] {
+  return ring.map(([lng, lat]) => ({ latitude: lat, longitude: lng }));
+}
+
+/** Intersección de dos polígonos usando polygon-clipping */
+function polyIntersection(a: Coord[], b: Coord[]): Coord[][] {
+  try {
+    const result = polygonClipping.intersection(
+      [coordsToRing(a)],
+      [coordsToRing(b)]
+    );
+    return result.map(poly => ringToCoords(poly[0]));
+  } catch { return []; }
+}
+
+/** Diferencia a - b (lo que queda de A después de quitar B) */
+function polyDifference(a: Coord[], b: Coord[]): Coord[][] {
+  try {
+    const result = polygonClipping.difference(
+      [coordsToRing(a)],
+      [coordsToRing(b)]
+    );
+    return result.map(poly => ringToCoords(poly[0]));
+  } catch { return [ringToCoords(coordsToRing(a))]; }
+}
+
+/**
+ * Deconflicta zonas cargadas del servidor:
+ * Si dos zonas de distinto dueño se solapan, la más reciente recorta a la más antigua.
+ * Así el mapa siempre muestra las zonas sin superposiciones.
+ */
+function deconflictZones(zones: RemoteZone[]): RemoteZone[] {
+  if (zones.length < 2) return zones;
+
+  // Ordenar por fecha: más antiguas primero → las recientes recortan a las viejas
+  const sorted = [...zones].sort((a, b) => {
+    const dateA = a.conquered_at ? new Date(a.conquered_at).getTime() : 0;
+    const dateB = b.conquered_at ? new Date(b.conquered_at).getTime() : 0;
+    return dateA - dateB;
+  });
+
+  const result: RemoteZone[] = [];
+
+  for (let i = 0; i < sorted.length; i++) {
+    let current = sorted[i];
+    let currentPolygon = current.polygon;
+
+    // Cada zona posterior (más reciente) recorta a esta si se solapan
+    for (let j = i + 1; j < sorted.length; j++) {
+      const newer = sorted[j];
+      // Solo recortar si son de distinto dueño
+      if (newer.owner_name === current.owner_name && newer.is_mine === current.is_mine) continue;
+      if (newer.polygon.length < 3 || currentPolygon.length < 3) continue;
+
+      try {
+        const remaining = polyDifference(currentPolygon, newer.polygon);
+        if (remaining.length > 0 && remaining[0].length >= 3) {
+          currentPolygon = remaining[0];
+        } else {
+          currentPolygon = []; // Zona completamente absorbida
+          break;
+        }
+      } catch {
+        // Si falla el clipping, mantener la zona original
+      }
+    }
+
+    if (currentPolygon.length >= 3) {
+      result.push({ ...current, polygon: currentPolygon });
+    }
+  }
+
+  return result;
+}
+
+/** Sutherland-Hodgman polygon clipping — intersección de dos polígonos (fallback) */
 function clipPolygons(subject: Coord[], clip: Coord[]): Coord[] {
   let output = [...subject];
   for (let i = 0; i < clip.length && output.length > 0; i++) {
@@ -241,7 +346,8 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       const useLat = lat ?? mapRegion.latitude;
       const useLng = lng ?? mapRegion.longitude;
       const zones = await api.getNearbyZones(useLat, useLng);
-      setRemoteZones(zones);
+      // Deconflictar: zonas recientes recortan a las antiguas donde se solapan
+      setRemoteZones(deconflictZones(zones));
     } catch {}
   };
 
@@ -266,43 +372,51 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       ? await snapToRoads(path.filter((_, i) => i % 3 === 0))
       : await snapToRoads(path);
 
-    // Robo parcial: detectar solapamiento con zonas rivales
+    // Robo parcial: intersección + recorte de zonas rivales
     const stolenNames: string[] = [];
     let stealCount = 0;
+    const stolenPieces: ConqueredZone[] = [];
 
     const updatedRemoteZones = remoteZones.map(rz => {
       if (rz.is_mine) return rz;
-      // Calcular intersección entre mi loop y la zona rival
-      const intersection = clipPolygons(rz.polygon, snapped);
-      if (intersection.length < 3) return rz; // Sin solapamiento
+
+      // Calcular intersección (lo que robamos)
+      const intersections = polyIntersection(rz.polygon, snapped);
+      if (intersections.length === 0) return rz; // Sin solapamiento
 
       stealCount++;
       if (rz.owner_name && !stolenNames.includes(rz.owner_name)) {
         stolenNames.push(rz.owner_name);
       }
-      // La zona robada es la intersección (se añade como zona propia)
-      return rz; // El rival mantiene su zona, pero nosotros ganamos el trozo
+
+      // Guardar las piezas robadas (serán nuestras zonas naranjas)
+      intersections.forEach(piece => {
+        stolenPieces.push({ coords: piece, area: polygonArea(piece), points: 50 });
+      });
+
+      // Recortar zona rival: diferencia (lo que le queda al rival)
+      const remaining = polyDifference(rz.polygon, snapped);
+      if (remaining.length > 0 && remaining[0].length >= 3) {
+        return { ...rz, polygon: remaining[0] }; // Zona rival recortada
+      }
+      // Si no queda nada, la zona rival desaparece
+      return { ...rz, polygon: [] as Coord[] };
     });
 
-    // Si hay intersecciones, añadirlas como zonas conquistadas
-    remoteZones.forEach(rz => {
-      if (rz.is_mine) return;
-      const intersection = clipPolygons(rz.polygon, snapped);
-      if (intersection.length >= 3) {
-        setConqueredZones(prev => [...prev, {
-          coords: intersection,
-          area: polygonArea(intersection),
-          points: 50, // bonus por robo
-        }]);
-      }
-    });
+    // Actualizar zonas remotas (rivales recortados)
+    setRemoteZones(updatedRemoteZones.filter(rz => rz.polygon.length >= 3));
 
     const isSteal = stealCount > 0;
 
     // 100 pts por cerrar loop + 50 bonus por cada robo
     const loopPoints = 100 + (stealCount * 50);
 
-    setConqueredZones(prev => [...prev, { coords: snapped, area, points: 100 }]);
+    // Añadir zona propia + piezas robadas
+    setConqueredZones(prev => [
+      ...prev,
+      { coords: snapped, area, points: 100 },
+      ...stolenPieces,
+    ]);
     setTotalPoints(p => p + loopPoints);
 
     setPopup({
@@ -592,7 +706,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
           </View>
           <View style={styles.headerStat}>
             <Ionicons name="map" size={14} color={colors.orange} />
-            <Text style={styles.headerStatValue}>{conqueredZones.length}</Text>
+            <Text style={styles.headerStatValue}>{conqueredZones.filter(z => z.area > 0).length}</Text>
           </View>
         </View>
       </View>
@@ -612,18 +726,23 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
             currentDelta.current = { latDelta: region.latitudeDelta, lngDelta: region.longitudeDelta };
           }}
         >
-          {/* Zonas del servidor: propias (naranja, tocables) y ajenas (azul) */}
-          {remoteZones.map((zone) => (
-            <Polygon
-              key={zone.id}
-              coordinates={zone.polygon}
-              fillColor={zone.is_mine ? `${colors.orange}40` : 'rgba(30,79,216,0.25)'}
-              strokeColor={zone.is_mine ? colors.orange : colors.blue}
-              strokeWidth={zone.is_mine ? 2 : 1.5}
-              tappable={zone.is_mine}
-              onPress={() => { if (zone.is_mine) setSelectedZone(zone); }}
-            />
-          ))}
+          {/* Zonas del servidor: propias (naranja, tocables) y ajenas (color por rival) */}
+          {remoteZones.map((zone) => {
+            const rivalColor = zone.is_mine ? colors.orange : getRivalColor(zone.owner_name ?? '');
+            return (
+              <Polygon
+                key={zone.id}
+                coordinates={zone.polygon}
+                fillColor={zone.is_mine ? `${colors.orange}40` : `${rivalColor}35`}
+                strokeColor={zone.is_mine ? colors.orange : rivalColor}
+                strokeWidth={zone.is_mine ? 2 : 1.5}
+                tappable
+                onPress={() => {
+                  if (zone.is_mine) setSelectedZone(zone);
+                }}
+              />
+            );
+          })}
 
           {/* Zonas conquistadas esta sesión */}
           {conqueredZones.map((zone, i) => (
