@@ -5,6 +5,7 @@ import {
   StyleSheet,
   TouchableOpacity,
   Alert,
+  Modal,
 } from 'react-native';
 import MapView, { Polygon, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import * as Location from 'expo-location';
@@ -40,6 +41,7 @@ interface ConqueredZone { coords: Coord[]; area: number; points: number; }
 
 interface Props {
   user: { username: string; id: string } | null;
+  onNavigateToShop?: () => void;
 }
 
 /** Ray-casting point-in-polygon — mismo algoritmo que el backend */
@@ -100,15 +102,21 @@ async function snapToRoads(coords: Coord[]): Promise<Coord[]> {
   return coords;
 }
 
-export default function MapScreen({ user }: Props) {
+export default function MapScreen({ user, onNavigateToShop }: Props) {
   const [isRunning, setIsRunning] = useState(false);
   const [runTime, setRunTime] = useState(0);
   const [distance, setDistance] = useState(0);
   const [currentPath, setCurrentPath] = useState<Coord[]>([]);
   const [conqueredZones, setConqueredZones] = useState<ConqueredZone[]>([]);
   const [totalPoints, setTotalPoints] = useState(0);
+  const [totalXP, setTotalXP] = useState(0);
+  const [runSummary, setRunSummary] = useState<{
+    visible: boolean; distance: number; time: number; points: number; xp: number; zones: number;
+  } | null>(null);
   const [loopDetected, setLoopDetected] = useState(false);
   const [remoteZones, setRemoteZones] = useState<RemoteZone[]>([]);
+  const [selectedZone, setSelectedZone] = useState<RemoteZone | null>(null);
+  const [userXP, setUserXP] = useState(0); // XP acumulado del usuario
   const [mapRegion, setMapRegion] = useState(DEFAULT_REGION);
   const [cityName, setCityName] = useState('...');
   const [popup, setPopup] = useState<{ visible: boolean; type: PopupType; points: number; rivalName?: string }>({
@@ -119,6 +127,7 @@ export default function MapScreen({ user }: Props) {
   const locationRef = useRef<any>(null);
   const pathRef = useRef<Coord[]>([]);
   const mapRef = useRef<MapView>(null);
+  const currentDelta = useRef({ latDelta: 0.02, lngDelta: 0.02 });
 
   const reverseGeocode = async (lat: number, lng: number) => {
     try {
@@ -171,6 +180,17 @@ export default function MapScreen({ user }: Props) {
     })();
   }, []);
 
+  const loadUserXP = async () => {
+    try {
+      const data = await api.getMyStats();
+      if (data?.stats?.total_points) {
+        setUserXP(Math.floor(data.stats.total_points / 100));
+      }
+    } catch {}
+  };
+
+  useEffect(() => { loadUserXP(); }, []);
+
   const loadZones = async (lat?: number, lng?: number) => {
     try {
       const useLat = lat ?? mapRegion.latitude;
@@ -196,17 +216,12 @@ export default function MapScreen({ user }: Props) {
   const closeLoop = async (path: Coord[]) => {
     setLoopDetected(true);
     const area = polygonArea(path);
-    const points = Math.round(area * 1000 * 500);
-    const finalPoints = Math.max(100, Math.min(points, 5000));
 
     const snapped = path.length > 50
       ? await snapToRoads(path.filter((_, i) => i % 3 === 0))
       : await snapToRoads(path);
 
-    setConqueredZones(prev => [...prev, { coords: snapped, area, points: finalPoints }]);
-    setTotalPoints(p => p + finalPoints);
-
-    // Detectar robos cliente-side con zonas ya cargadas (feedback inmediato)
+    // Detectar robos cliente-side con zonas ya cargadas
     const rivalsCaptured = remoteZones.filter(rz => {
       if (rz.is_mine) return false;
       return pointInPolygon(rz.center_lat, rz.center_lng, snapped);
@@ -215,10 +230,16 @@ export default function MapScreen({ user }: Props) {
     const isSteal = rivalsCaptured.length > 0;
     const stolenNames = [...new Set(rivalsCaptured.map(r => r.owner_name))];
 
+    // Nueva ponderación: 100 pts por cerrar loop + 50 bonus por robo
+    const loopPoints = 100 + (isSteal ? 50 : 0);
+
+    setConqueredZones(prev => [...prev, { coords: snapped, area, points: loopPoints }]);
+    setTotalPoints(p => p + loopPoints);
+
     setPopup({
       visible: true,
       type: isSteal ? 'stolen_by_you' : 'conquered',
-      points: finalPoints,
+      points: loopPoints,
       rivalName: isSteal ? stolenNames.join(', ') : undefined,
     });
 
@@ -267,6 +288,14 @@ export default function MapScreen({ user }: Props) {
         pathRef.current = [...pathRef.current, newCoord];
         setCurrentPath([...pathRef.current]);
 
+        // Centrar mapa en la posición actual respetando el zoom del usuario
+        mapRef.current?.animateToRegion({
+          latitude: newCoord.latitude,
+          longitude: newCoord.longitude,
+          latitudeDelta: currentDelta.current.latDelta,
+          longitudeDelta: currentDelta.current.lngDelta,
+        }, 500);
+
         if (pathRef.current.length > 1) {
           const prev = pathRef.current[pathRef.current.length - 2];
           setDistance(d => d + getDistanceKm(prev, newCoord));
@@ -285,8 +314,13 @@ export default function MapScreen({ user }: Props) {
     if (timerRef.current) clearInterval(timerRef.current);
     if (locationRef.current) locationRef.current.remove();
 
-    const trailPoints = pathRef.current.length >= 2 ? Math.round(distance * 50) : 0;
-    const finalPoints = totalPoints + trailPoints;
+    // 50 pts por km recorrido (siempre, loop o recta)
+    const kmPoints = pathRef.current.length >= 2 ? Math.round(distance * 50) : 0;
+    const finalPoints = totalPoints + kmPoints;
+    // XP = puntos totales ÷ 100
+    const earnedXP = Math.floor(finalPoints / 100);
+    setTotalXP(earnedXP);
+
     const zonesCount = conqueredZones.filter(z => z.area > 0).length;
 
     if (distance > 0.05 || zonesCount > 0) {
@@ -295,6 +329,7 @@ export default function MapScreen({ user }: Props) {
         distanceKm: distance,
         durationSecs: runTime,
         points: finalPoints,
+        xp: earnedXP,
         zonesCount,
         zones: closedZones.map(z => ({ coords: z.coords, area: z.area, points: z.points })),
       }).then(res => {
@@ -319,12 +354,24 @@ export default function MapScreen({ user }: Props) {
       setConqueredZones(prev => [...prev, {
         coords: snapped,
         area: 0,
-        points: trailPoints,
+        points: kmPoints,
       }]);
     }
 
     setCurrentPath([]);
     pathRef.current = [];
+
+    // Mostrar resumen de carrera
+    if (distance > 0.05 || zonesCount > 0) {
+      setRunSummary({
+        visible: true,
+        distance,
+        time: runTime,
+        points: finalPoints,
+        xp: earnedXP,
+        zones: zonesCount,
+      });
+    }
   };
 
   const formatTime = (secs: number) => {
@@ -344,6 +391,125 @@ export default function MapScreen({ user }: Props) {
         rivalName={popup.rivalName}
         onClose={() => setPopup(p => ({ ...p, visible: false }))}
       />
+
+      {/* Resumen post-carrera */}
+      {runSummary?.visible && (
+        <Modal transparent visible animationType="fade" statusBarTranslucent>
+          <View style={styles.summaryOverlay}>
+            <View style={styles.summaryCard}>
+              <Text style={styles.summaryTitle}>CARRERA COMPLETADA</Text>
+
+              <View style={styles.summaryStats}>
+                <View style={styles.summaryStat}>
+                  <Text style={styles.summaryStatValue}>{runSummary.distance.toFixed(2)}</Text>
+                  <Text style={styles.summaryStatLabel}>km</Text>
+                </View>
+                <View style={styles.summaryDivider} />
+                <View style={styles.summaryStat}>
+                  <Text style={styles.summaryStatValue}>{formatTime(runSummary.time)}</Text>
+                  <Text style={styles.summaryStatLabel}>tiempo</Text>
+                </View>
+                <View style={styles.summaryDivider} />
+                <View style={styles.summaryStat}>
+                  <Text style={styles.summaryStatValue}>{runSummary.zones}</Text>
+                  <Text style={styles.summaryStatLabel}>zonas</Text>
+                </View>
+              </View>
+
+              <View style={styles.summaryPoints}>
+                <View style={styles.summaryPointsRow}>
+                  <Ionicons name="flame" size={20} color={colors.orange} />
+                  <Text style={styles.summaryPointsValue}>{runSummary.points}</Text>
+                  <Text style={styles.summaryPointsLabel}>puntos</Text>
+                </View>
+                <View style={styles.summaryXpRow}>
+                  <Ionicons name="star" size={18} color="#FFD700" />
+                  <Text style={styles.summaryXpValue}>+{runSummary.xp} XP</Text>
+                </View>
+              </View>
+
+              <TouchableOpacity
+                style={styles.summaryBtn}
+                onPress={() => setRunSummary(null)}
+              >
+                <Text style={styles.summaryBtnText}>CERRAR</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+      )}
+
+      {/* Popup zona propia — centinela */}
+      {selectedZone && (
+        <Modal transparent visible animationType="fade" statusBarTranslucent>
+          <View style={styles.summaryOverlay}>
+            <View style={styles.zoneCard}>
+              <TouchableOpacity style={styles.zoneCardClose} onPress={() => setSelectedZone(null)}>
+                <Ionicons name="close" size={22} color={colors.textSecondary} />
+              </TouchableOpacity>
+
+              <Ionicons name="shield" size={40} color={colors.orange} />
+              <Text style={styles.zoneCardTitle}>TU ZONA</Text>
+              <Text style={styles.zoneCardPoints}>{selectedZone.points} pts</Text>
+              {selectedZone.conquered_at && (
+                <Text style={styles.zoneCardDate}>
+                  Conquistada {new Date(selectedZone.conquered_at).toLocaleDateString('es-ES', { day: 'numeric', month: 'short' })}
+                </Text>
+              )}
+
+              <View style={styles.sentinelSection}>
+                <Text style={styles.sentinelTitle}>🛡️ PROTEGER CON CENTINELA</Text>
+                <Text style={styles.sentinelDesc}>Evita que te roben esta zona</Text>
+
+                {[
+                  { hours: 6, cost: 100 },
+                  { hours: 12, cost: 250 },
+                  { hours: 24, cost: 500 },
+                ].map(opt => {
+                  const canAfford = userXP >= opt.cost;
+                  return (
+                    <TouchableOpacity
+                      key={opt.hours}
+                      style={[styles.sentinelOption, !canAfford && styles.sentinelOptionLocked]}
+                      onPress={() => {
+                        if (canAfford) {
+                          setUserXP(xp => xp - opt.cost);
+                          Alert.alert(
+                            '🛡️ Centinela activado',
+                            `Tu zona está protegida durante ${opt.hours}h`,
+                          );
+                          setSelectedZone(null);
+                          // TODO: enviar al backend
+                        } else {
+                          setSelectedZone(null);
+                          onNavigateToShop?.();
+                        }
+                      }}
+                    >
+                      <View style={styles.sentinelOptionLeft}>
+                        <Text style={styles.sentinelHours}>{opt.hours}h</Text>
+                      </View>
+                      {canAfford ? (
+                        <View style={styles.sentinelOptionRight}>
+                          <Ionicons name="star" size={14} color="#FFD700" />
+                          <Text style={styles.sentinelCost}>{opt.cost} XP</Text>
+                        </View>
+                      ) : (
+                        <View style={styles.sentinelOptionRight}>
+                          <Ionicons name="cart" size={14} color={colors.orange} />
+                          <Text style={styles.sentinelBuy}>Comprar XP</Text>
+                        </View>
+                      )}
+                    </TouchableOpacity>
+                  );
+                })}
+
+                <Text style={styles.sentinelBalance}>Tu saldo: ⭐ {userXP} XP</Text>
+              </View>
+            </View>
+          </View>
+        </Modal>
+      )}
 
       <View style={styles.header}>
         <View>
@@ -373,8 +539,11 @@ export default function MapScreen({ user }: Props) {
           showsMyLocationButton={false}
           showsCompass={false}
           toolbarEnabled={false}
+          onRegionChangeComplete={(region) => {
+            currentDelta.current = { latDelta: region.latitudeDelta, lngDelta: region.longitudeDelta };
+          }}
         >
-          {/* Zonas del servidor: propias (naranja) y ajenas (azul) */}
+          {/* Zonas del servidor: propias (naranja, tocables) y ajenas (azul) */}
           {remoteZones.map((zone) => (
             <Polygon
               key={zone.id}
@@ -382,6 +551,8 @@ export default function MapScreen({ user }: Props) {
               fillColor={zone.is_mine ? `${colors.orange}40` : 'rgba(30,79,216,0.25)'}
               strokeColor={zone.is_mine ? colors.orange : colors.blue}
               strokeWidth={zone.is_mine ? 2 : 1.5}
+              tappable={zone.is_mine}
+              onPress={() => { if (zone.is_mine) setSelectedZone(zone); }}
             />
           ))}
 
@@ -432,18 +603,20 @@ export default function MapScreen({ user }: Props) {
           )}
         </MapView>
 
-        {/* Botón centrar en mi ubicación */}
-        <TouchableOpacity
-          style={styles.centerBtn}
-          onPress={async () => {
-            try {
-              const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
-              centerOnUser(loc.coords.latitude, loc.coords.longitude);
-            } catch {}
-          }}
-        >
-          <Ionicons name="locate" size={22} color={colors.orange} />
-        </TouchableOpacity>
+        {/* Botón centrar en mi ubicación (oculto mientras corres, el mapa ya te sigue) */}
+        {!isRunning && (
+          <TouchableOpacity
+            style={styles.centerBtn}
+            onPress={async () => {
+              try {
+                const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+                centerOnUser(loc.coords.latitude, loc.coords.longitude);
+              } catch {}
+            }}
+          >
+            <Ionicons name="locate" size={22} color={colors.orange} />
+          </TouchableOpacity>
+        )}
 
         {/* Loop detectado banner */}
         {loopDetected && (
@@ -576,5 +749,90 @@ const styles = StyleSheet.create({
     width: 68, height: 68, borderRadius: 34, backgroundColor: colors.orange,
     alignItems: 'center', justifyContent: 'center',
     shadowColor: colors.orange, shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.6, shadowRadius: 16,
+  },
+  // Resumen post-carrera
+  summaryOverlay: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.85)',
+    justifyContent: 'center', alignItems: 'center', padding: spacing.lg,
+  },
+  summaryCard: {
+    backgroundColor: colors.bgCard, borderRadius: radius.lg,
+    borderWidth: 1, borderColor: colors.border,
+    padding: spacing.lg, width: '100%', alignItems: 'center',
+  },
+  summaryTitle: {
+    fontSize: 18, fontWeight: '900', color: colors.orange,
+    letterSpacing: 2, marginBottom: spacing.lg,
+  },
+  summaryStats: {
+    flexDirection: 'row', alignItems: 'center', width: '100%',
+    marginBottom: spacing.lg,
+  },
+  summaryStat: { flex: 1, alignItems: 'center' },
+  summaryStatValue: { fontSize: 28, fontWeight: '900', color: colors.textPrimary },
+  summaryStatLabel: { fontSize: 11, color: colors.textSecondary, textTransform: 'uppercase', marginTop: 2 },
+  summaryDivider: { width: 1, height: 40, backgroundColor: colors.border },
+  summaryPoints: {
+    backgroundColor: colors.bg, borderRadius: radius.md,
+    padding: spacing.md, width: '100%', alignItems: 'center',
+    marginBottom: spacing.lg, gap: spacing.sm,
+  },
+  summaryPointsRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  summaryPointsValue: { fontSize: 32, fontWeight: '900', color: colors.orange },
+  summaryPointsLabel: { fontSize: 14, color: colors.textSecondary, fontWeight: '600' },
+  summaryXpRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  summaryXpValue: { fontSize: 18, fontWeight: '800', color: '#FFD700' },
+  summaryBtn: {
+    backgroundColor: colors.orange, paddingVertical: 14, paddingHorizontal: 48,
+    borderRadius: radius.full,
+  },
+  summaryBtnText: { fontSize: 16, fontWeight: '800', color: '#000', letterSpacing: 1 },
+  // Zona popup — centinela
+  zoneCard: {
+    backgroundColor: colors.bgCard, borderRadius: radius.lg,
+    borderWidth: 1, borderColor: colors.border,
+    padding: spacing.lg, width: '100%', alignItems: 'center',
+  },
+  zoneCardClose: {
+    position: 'absolute', top: spacing.sm, right: spacing.sm,
+    width: 32, height: 32, borderRadius: 16,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  zoneCardTitle: {
+    fontSize: 16, fontWeight: '900', color: colors.textPrimary,
+    letterSpacing: 2, marginTop: spacing.sm,
+  },
+  zoneCardPoints: {
+    fontSize: 28, fontWeight: '900', color: colors.orange, marginTop: 4,
+  },
+  zoneCardDate: {
+    fontSize: 12, color: colors.textSecondary, marginTop: 2,
+  },
+  sentinelSection: {
+    width: '100%', marginTop: spacing.lg,
+    backgroundColor: colors.bg, borderRadius: radius.md, padding: spacing.md,
+  },
+  sentinelTitle: {
+    fontSize: 14, fontWeight: '800', color: colors.textPrimary,
+    textAlign: 'center', letterSpacing: 1,
+  },
+  sentinelDesc: {
+    fontSize: 12, color: colors.textSecondary, textAlign: 'center',
+    marginTop: 2, marginBottom: spacing.md,
+  },
+  sentinelOption: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    backgroundColor: colors.bgCard, borderRadius: radius.md,
+    borderWidth: 1, borderColor: colors.border,
+    paddingVertical: 12, paddingHorizontal: spacing.md, marginBottom: spacing.sm,
+  },
+  sentinelOptionLocked: { borderColor: `${colors.orange}40` },
+  sentinelOptionLeft: {},
+  sentinelOptionRight: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  sentinelHours: { fontSize: 18, fontWeight: '800', color: colors.textPrimary },
+  sentinelCost: { fontSize: 15, fontWeight: '700', color: '#FFD700' },
+  sentinelBuy: { fontSize: 13, fontWeight: '700', color: colors.orange },
+  sentinelBalance: {
+    fontSize: 12, color: colors.textSecondary, textAlign: 'center', marginTop: spacing.sm,
   },
 });

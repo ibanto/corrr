@@ -45,6 +45,7 @@ interface RunPayload {
   distanceKm: number;
   durationSecs: number;
   points: number;
+  xp?: number;
   zonesCount: number;
   zones: ZonePayload[];
 }

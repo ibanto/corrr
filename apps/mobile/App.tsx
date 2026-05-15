@@ -124,7 +124,7 @@ export default function App() {
 
   const renderScreen = () => {
     switch (activeTab) {
-      case 'Mapa':    return <MapScreen user={user} />;
+      case 'Mapa':    return <MapScreen user={user} onNavigateToShop={() => setActiveTab('Retos')} />;
       case 'Stats':   return <StatsScreen user={user} />;
       case 'Ranking': return <RankingScreen user={user} />;
       case 'Retos':   return <RetosScreen />;

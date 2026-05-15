@@ -224,10 +224,8 @@ export default function PerfilScreen({ user, onLogout }: Props) {
             </View>
           ) : null}
           <View style={styles.xpRow}>
-            <View style={styles.xpBar}>
-              <View style={[styles.xpFill, { width: `${Math.min(100, ((s?.total_points ?? 0) % 5000) / 50)}%` }]} />
-            </View>
-            <Text style={styles.xpText}>{(s?.total_points ?? 0).toLocaleString('es-ES')} pts totales</Text>
+            <Ionicons name="star" size={14} color="#FFD700" />
+            <Text style={styles.xpText}>{Math.floor((s?.total_points ?? 0) / 100)} XP</Text>
           </View>
         </View>
         <TouchableOpacity onPress={() => { setEditName(profileName); setEditCity(profileCity); setEditModal(true); }}>
@@ -478,10 +476,8 @@ const styles = StyleSheet.create({
   username: { fontSize: 20, fontWeight: '900', color: colors.textPrimary },
   locationRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   location: { fontSize: 12, color: colors.textSecondary },
-  xpRow: { gap: 4 },
-  xpBar: { height: 4, backgroundColor: colors.bgCardAlt, borderRadius: 2, overflow: 'hidden' },
-  xpFill: { height: '100%', backgroundColor: colors.orange, borderRadius: 2 },
-  xpText: { fontSize: 10, color: colors.textSecondary },
+  xpRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 },
+  xpText: { fontSize: 13, fontWeight: '700', color: '#FFD700' },
   statsRow: {
     flexDirection: 'row', marginHorizontal: spacing.md, backgroundColor: colors.bgCard,
     borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border,

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   ScrollView,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, radius } from '../theme';
@@ -47,6 +48,13 @@ const WELCOME_CHALLENGE: RetoDetalle = {
   heroImage: require('../../assets/onboarding/welcome-challenge.png'),
 };
 
+const XP_PACKS = [
+  { id: 'xp_50',  xp: 50,   price: '0,50 €',  popular: false },
+  { id: 'xp_150', xp: 150,  price: '1,49 €',  popular: true },
+  { id: 'xp_500', xp: 500,  price: '3,99 €',  popular: false },
+  { id: 'xp_1200', xp: 1200, price: '5,99 €', popular: false },
+];
+
 export default function RetosScreen() {
   const [filter, setFilter] = useState<Filter>('Todos');
   const [challenges, setChallenges] = useState<Challenge[]>([]);
@@ -54,10 +62,21 @@ export default function RetosScreen() {
   const [selectedReto, setSelectedReto] = useState<RetoDetalle | null>(null);
   const [welcomeAccepted, setWelcomeAccepted] = useState(false);
   const [resultScreen, setResultScreen] = useState<{ type: 'completed' | 'failed'; reto: RetoDetalle } | null>(null);
+  const [userXP, setUserXP] = useState(0);
+
+  const loadXP = useCallback(async () => {
+    try {
+      const data = await api.getMyStats();
+      if (data?.stats?.total_points) {
+        setUserXP(Math.floor(data.stats.total_points / 100));
+      }
+    } catch {}
+  }, []);
 
   useEffect(() => {
     api.getChallenges().then(data => { setChallenges(data); setLoading(false); });
-  }, []);
+    loadXP();
+  }, [loadXP]);
 
   const filtered = challenges.filter(c => filterMap[filter].includes(c.type));
 
@@ -131,8 +150,8 @@ export default function RetosScreen() {
       <View style={styles.header}>
         <Text style={styles.title}>Retos</Text>
         <View style={styles.pointsBadge}>
-          <Ionicons name="flame" size={14} color={colors.orange} />
-          <Text style={styles.pointsValue}>2.450</Text>
+          <Ionicons name="star" size={14} color="#FFD700" />
+          <Text style={styles.pointsValue}>{userXP} XP</Text>
         </View>
       </View>
 
@@ -231,6 +250,89 @@ export default function RetosScreen() {
               <Text style={styles.premiumBtnText}>Próximamente</Text>
             </View>
           </View>
+
+          {/* Sección Tienda XP */}
+          <View style={styles.shopSection}>
+            <View style={styles.shopHeader}>
+              <Ionicons name="star" size={20} color="#FFD700" />
+              <Text style={styles.shopTitle}>TIENDA XP</Text>
+            </View>
+            <Text style={styles.shopBalance}>Tu saldo: ⭐ {userXP} XP</Text>
+
+            {/* Cómo ganar XP */}
+            <View style={styles.earnCard}>
+              <Text style={styles.earnTitle}>GANA XP CORRIENDO</Text>
+              <View style={styles.earnRow}>
+                <Ionicons name="footsteps" size={16} color={colors.orange} />
+                <Text style={styles.earnText}>Cada 100 puntos = 1 XP</Text>
+              </View>
+              <View style={styles.earnRow}>
+                <Ionicons name="navigate" size={16} color={colors.orange} />
+                <Text style={styles.earnText}>50 pts por km recorrido</Text>
+              </View>
+              <View style={styles.earnRow}>
+                <Ionicons name="flag" size={16} color={colors.orange} />
+                <Text style={styles.earnText}>100 pts por cerrar un circuito</Text>
+              </View>
+              <View style={styles.earnRow}>
+                <Ionicons name="hand-left" size={16} color={colors.orange} />
+                <Text style={styles.earnText}>50 pts extra por robar zona</Text>
+              </View>
+            </View>
+
+            {/* Qué hacer con XP */}
+            <View style={styles.earnCard}>
+              <Text style={styles.earnTitle}>GASTA XP EN POWER-UPS</Text>
+              <View style={styles.earnRow}>
+                <Text style={{ fontSize: 16 }}>🛡️</Text>
+                <Text style={styles.earnText}>Centinela 6h — 100 XP</Text>
+              </View>
+              <View style={styles.earnRow}>
+                <Text style={{ fontSize: 16 }}>🛡️</Text>
+                <Text style={styles.earnText}>Centinela 12h — 250 XP</Text>
+              </View>
+              <View style={styles.earnRow}>
+                <Text style={{ fontSize: 16 }}>🛡️</Text>
+                <Text style={styles.earnText}>Centinela 24h — 500 XP</Text>
+              </View>
+              <Text style={styles.earnHint}>Toca una zona tuya en el mapa para activar</Text>
+            </View>
+
+            {/* Comprar XP */}
+            <Text style={styles.shopSubtitle}>COMPRAR XP</Text>
+            <View style={styles.packsGrid}>
+              {XP_PACKS.map(pack => (
+                <TouchableOpacity
+                  key={pack.id}
+                  style={[styles.packCard, pack.popular && styles.packCardPopular]}
+                  onPress={() => {
+                    Alert.alert(
+                      'Comprar XP',
+                      `¿Comprar ${pack.xp} XP por ${pack.price}?`,
+                      [
+                        { text: 'Cancelar', style: 'cancel' },
+                        { text: 'Comprar', onPress: () => {
+                          // TODO: integrar in-app purchase real
+                          setUserXP(xp => xp + pack.xp);
+                          Alert.alert('✅ ¡Compra realizada!', `Has recibido ${pack.xp} XP`);
+                        }},
+                      ]
+                    );
+                  }}
+                >
+                  {pack.popular && (
+                    <View style={styles.packPopularBadge}>
+                      <Text style={styles.packPopularText}>POPULAR</Text>
+                    </View>
+                  )}
+                  <Ionicons name="star" size={24} color="#FFD700" />
+                  <Text style={styles.packXP}>{pack.xp}</Text>
+                  <Text style={styles.packXPLabel}>XP</Text>
+                  <Text style={styles.packPrice}>{pack.price}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
         </ScrollView>
       )}
     </View>
@@ -320,4 +422,43 @@ const styles = StyleSheet.create({
     alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: spacing.xs, marginTop: spacing.xs,
   },
   premiumBtnText: { color: '#fff', fontWeight: '700', fontSize: 14 },
+  // Tienda XP
+  shopSection: { marginTop: spacing.lg, gap: spacing.md },
+  shopHeader: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  shopTitle: { fontSize: 22, fontWeight: '900', color: '#FFD700', letterSpacing: 2 },
+  shopBalance: { fontSize: 14, color: colors.textSecondary, fontWeight: '600' },
+  earnCard: {
+    backgroundColor: colors.bgCard, borderRadius: radius.lg, padding: spacing.md,
+    borderWidth: 1, borderColor: colors.border, gap: spacing.sm,
+  },
+  earnTitle: {
+    fontSize: 13, fontWeight: '800', color: colors.textPrimary,
+    letterSpacing: 1, marginBottom: 4,
+  },
+  earnRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  earnText: { fontSize: 13, color: colors.textSecondary, flex: 1 },
+  earnHint: {
+    fontSize: 11, color: colors.textMuted, fontStyle: 'italic',
+    textAlign: 'center', marginTop: 4,
+  },
+  shopSubtitle: {
+    fontSize: 13, fontWeight: '800', color: colors.textPrimary,
+    letterSpacing: 1,
+  },
+  packsGrid: { flexDirection: 'row', gap: spacing.sm, flexWrap: 'wrap' },
+  packCard: {
+    flex: 1, minWidth: '45%', backgroundColor: colors.bgCard, borderRadius: radius.lg,
+    borderWidth: 1, borderColor: colors.border,
+    padding: spacing.md, alignItems: 'center', gap: 4,
+  },
+  packCardPopular: { borderColor: '#FFD700', borderWidth: 2 },
+  packPopularBadge: {
+    position: 'absolute', top: -10,
+    backgroundColor: '#FFD700', paddingHorizontal: 8, paddingVertical: 2,
+    borderRadius: radius.full,
+  },
+  packPopularText: { fontSize: 9, fontWeight: '800', color: '#000', letterSpacing: 1 },
+  packXP: { fontSize: 28, fontWeight: '900', color: colors.textPrimary },
+  packXPLabel: { fontSize: 11, color: colors.textSecondary, fontWeight: '600', marginTop: -4 },
+  packPrice: { fontSize: 15, fontWeight: '800', color: colors.orange, marginTop: 4 },
 });
