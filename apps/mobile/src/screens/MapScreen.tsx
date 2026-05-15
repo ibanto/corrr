@@ -110,6 +110,7 @@ export default function MapScreen({ user }: Props) {
   const [loopDetected, setLoopDetected] = useState(false);
   const [remoteZones, setRemoteZones] = useState<RemoteZone[]>([]);
   const [mapRegion, setMapRegion] = useState(DEFAULT_REGION);
+  const [cityName, setCityName] = useState('...');
   const [popup, setPopup] = useState<{ visible: boolean; type: PopupType; points: number; rivalName?: string }>({
     visible: false, type: 'conquered', points: 0,
   });
@@ -119,6 +120,26 @@ export default function MapScreen({ user }: Props) {
   const pathRef = useRef<Coord[]>([]);
   const mapRef = useRef<MapView>(null);
 
+  const reverseGeocode = async (lat: number, lng: number) => {
+    try {
+      const results = await Location.reverseGeocodeAsync({ latitude: lat, longitude: lng });
+      if (results.length > 0) {
+        setCityName((results[0].city || results[0].region || '').toUpperCase());
+      }
+    } catch {}
+  };
+
+  const centerOnUser = (lat: number, lng: number) => {
+    const region = {
+      latitude: lat,
+      longitude: lng,
+      latitudeDelta: 0.06,
+      longitudeDelta: 0.06,
+    };
+    setMapRegion(region);
+    mapRef.current?.animateToRegion(region, 800);
+  };
+
   useEffect(() => {
     (async () => {
       const { status } = await Location.requestForegroundPermissionsAsync();
@@ -127,30 +148,18 @@ export default function MapScreen({ user }: Props) {
           // Primero intentar última ubicación conocida (instantáneo)
           const lastKnown = await Location.getLastKnownPositionAsync();
           if (lastKnown) {
-            const region = {
-              latitude: lastKnown.coords.latitude,
-              longitude: lastKnown.coords.longitude,
-              latitudeDelta: 0.06,
-              longitudeDelta: 0.06,
-            };
-            setMapRegion(region);
-            mapRef.current?.animateToRegion(region, 500);
+            centerOnUser(lastKnown.coords.latitude, lastKnown.coords.longitude);
             loadZones(lastKnown.coords.latitude, lastKnown.coords.longitude);
+            reverseGeocode(lastKnown.coords.latitude, lastKnown.coords.longitude);
           }
           // Luego obtener ubicación precisa
           const loc = await Location.getCurrentPositionAsync({
             accuracy: Location.Accuracy.High,
             timeInterval: 10000,
           });
-          const region = {
-            latitude: loc.coords.latitude,
-            longitude: loc.coords.longitude,
-            latitudeDelta: 0.06,
-            longitudeDelta: 0.06,
-          };
-          setMapRegion(region);
-          mapRef.current?.animateToRegion(region, 800);
+          centerOnUser(loc.coords.latitude, loc.coords.longitude);
           loadZones(loc.coords.latitude, loc.coords.longitude);
+          reverseGeocode(loc.coords.latitude, loc.coords.longitude);
         } catch (e) {
           console.warn('[Location] Error getting position:', e);
           loadZones(DEFAULT_REGION.latitude, DEFAULT_REGION.longitude);
@@ -338,7 +347,7 @@ export default function MapScreen({ user }: Props) {
 
       <View style={styles.header}>
         <View>
-          <Text style={styles.cityLabel}>MADRID</Text>
+          <Text style={styles.cityLabel}>{cityName}</Text>
           <Text style={styles.citySubtitle}>{user?.username ?? 'Runner'}</Text>
         </View>
         <View style={styles.headerStats}>
@@ -423,6 +432,19 @@ export default function MapScreen({ user }: Props) {
           )}
         </MapView>
 
+        {/* Botón centrar en mi ubicación */}
+        <TouchableOpacity
+          style={styles.centerBtn}
+          onPress={async () => {
+            try {
+              const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+              centerOnUser(loc.coords.latitude, loc.coords.longitude);
+            } catch {}
+          }}
+        >
+          <Ionicons name="locate" size={22} color={colors.orange} />
+        </TouchableOpacity>
+
         {/* Loop detectado banner */}
         {loopDetected && (
           <View style={styles.loopBanner}>
@@ -506,6 +528,14 @@ const styles = StyleSheet.create({
   headerStatValue: { fontSize: 13, fontWeight: '700', color: colors.textPrimary },
   mapContainer: { flex: 1, position: 'relative' },
   map: { flex: 1 },
+  centerBtn: {
+    position: 'absolute', bottom: spacing.md, right: spacing.md,
+    width: 44, height: 44, borderRadius: 22, backgroundColor: colors.bgCard,
+    alignItems: 'center', justifyContent: 'center',
+    borderWidth: 1, borderColor: colors.border,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 4,
+    elevation: 4,
+  },
   loopBanner: {
     position: 'absolute', top: spacing.md, left: spacing.md, right: spacing.md,
     backgroundColor: 'rgba(34,197,94,0.15)', borderRadius: radius.full,

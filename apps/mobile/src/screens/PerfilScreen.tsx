@@ -20,6 +20,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { colors, spacing, radius } from '../theme';
 import { api, MyStats, RunRecord } from '../services/api';
 import ZonePopup, { PopupType } from '../components/ZonePopup';
+import TauntSelector, { TauntMode } from '../components/TauntSelector';
 
 interface Props {
   user: { username: string; id: string; city?: string } | null;
@@ -59,6 +60,7 @@ export default function PerfilScreen({ user, onLogout }: Props) {
   const [editName, setEditName] = useState(displayName);
   const [editCity, setEditCity] = useState(user?.city ?? '');
   const [testPopup, setTestPopup] = useState<PopupType | null>(null);
+  const [showTaunts, setShowTaunts] = useState<TauntMode | null>(null);
 
   const loadStats = useCallback(async () => {
     try {
@@ -226,14 +228,14 @@ export default function PerfilScreen({ user, onLogout }: Props) {
         </View>
         <View style={styles.achievementsRow}>
           {[
-            { icon: 'business' as const, label: 'Conquistador', sub: '10 zonas' },
-            { icon: 'flash' as const, label: 'Imparable', sub: '10 rachas' },
-            { icon: 'walk' as const, label: 'Explorador', sub: '100 km' },
-            { icon: 'star' as const, label: 'Leyenda', sub: 'Top 5%' },
+            { img: require('../../assets/logros/conquistador.png'), label: 'Conquistador', sub: '10 zonas' },
+            { img: require('../../assets/logros/imparable.png'), label: 'Imparable', sub: '10 rachas' },
+            { img: require('../../assets/logros/explorador.png'), label: 'Explorador', sub: '100 km' },
+            { img: require('../../assets/logros/leyenda.png'), label: 'Leyenda', sub: 'Top 5%' },
           ].map((a, i) => (
             <View key={i} style={styles.achievement}>
               <View style={styles.achievementIcon}>
-                <Ionicons name={a.icon} size={26} color={colors.orange} />
+                <Image source={a.img} style={{ width: 48, height: 48 }} resizeMode="contain" />
               </View>
               <Text style={styles.achievementLabel}>{a.label}</Text>
               <Text style={styles.achievementSub}>{a.sub}</Text>
@@ -321,12 +323,24 @@ export default function PerfilScreen({ user, onLogout }: Props) {
         <TouchableOpacity style={{ backgroundColor: '#FB0E01', paddingVertical: 10, borderRadius: radius.full, alignItems: 'center' }} onPress={() => setTestPopup('stolen_from_you')}>
           <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>Te han robado</Text>
         </TouchableOpacity>
+        <TouchableOpacity style={{ backgroundColor: '#9333EA', paddingVertical: 10, borderRadius: radius.full, alignItems: 'center' }} onPress={() => setShowTaunts('taunt')}>
+          <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>Taunts (cuando te roban)</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={{ backgroundColor: '#2563EB', paddingVertical: 10, borderRadius: radius.full, alignItems: 'center' }} onPress={() => setShowTaunts('response')}>
+          <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>Respuestas (cuando robas)</Text>
+        </TouchableOpacity>
       </View>
 
       <View style={styles.section}>
         {[
           { icon: 'trash-outline' as const, label: 'Eliminar cuenta', onPress: handleDeleteAccount },
-          { icon: 'notifications-outline' as const, label: 'Notificaciones', onPress: undefined },
+          { icon: 'notifications-outline' as const, label: 'Notificaciones', onPress: () => {
+            if (Platform.OS === 'ios') {
+              Linking.openURL('app-settings:');
+            } else {
+              Linking.openSettings();
+            }
+          }},
           { icon: 'lock-closed-outline' as const, label: 'Privacidad', onPress: () => Linking.openURL('https://ibanto.github.io/corrr/privacy.html') },
           { icon: 'bug-outline' as const, label: 'Reportar un bug', onPress: () => Linking.openURL('mailto:ibangarciacastrillon@gmail.com?subject=Bug%20en%20CORRR&body=Hola%2C%20he%20encontrado%20un%20problema%3A%0A%0A') },
           { icon: 'help-circle-outline' as const, label: 'Centro de ayuda', onPress: () => Linking.openURL('mailto:ibangarciacastrillon@gmail.com?subject=Ayuda%20CORRR') },
@@ -387,8 +401,21 @@ export default function PerfilScreen({ user, onLogout }: Props) {
         visible={true}
         type={testPopup}
         onClose={() => setTestPopup(null)}
+        onRespond={() => setShowTaunts('taunt')}
       />
     )}
+
+    {/* Selector de taunts */}
+    <TauntSelector
+      visible={showTaunts !== null}
+      mode={showTaunts ?? 'taunt'}
+      rivalName="TestRival"
+      onSend={(messageId, mode) => {
+        console.log(`[Taunt] Enviado ${mode} #${messageId}`);
+        setShowTaunts(null);
+      }}
+      onClose={() => setShowTaunts(null)}
+    />
     </>
   );
 }

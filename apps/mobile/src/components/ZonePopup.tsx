@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import {
   View,
+  Text,
   StyleSheet,
   TouchableOpacity,
   Modal,
@@ -9,7 +10,7 @@ import {
   Dimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { colors, spacing } from '../theme';
+import { colors, spacing, radius } from '../theme';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const SCREEN_HEIGHT = Dimensions.get('window').height;
@@ -23,6 +24,7 @@ interface Props {
   points?: number;
   rivalName?: string;
   onClose: () => void;
+  onRespond?: () => void;
 }
 
 const IMAGES: Record<PopupType, any> = {
@@ -31,7 +33,7 @@ const IMAGES: Record<PopupType, any> = {
   stolen_from_you: require('../../assets/onboarding/te-han-robado.png'),
 };
 
-export default function ZonePopup({ visible, type, onClose }: Props) {
+export default function ZonePopup({ visible, type, onClose, onRespond }: Props) {
   const opacity = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -60,6 +62,16 @@ export default function ZonePopup({ visible, type, onClose }: Props) {
           style={styles.image}
           resizeMode="contain"
         />
+
+        {/* Botón RESPONDER solo cuando te roban */}
+        {type === 'stolen_from_you' && onRespond && (
+          <View style={styles.bottomBar}>
+            <TouchableOpacity style={styles.respondBtn} onPress={() => { handleClose(); setTimeout(onRespond, 250); }}>
+              <Ionicons name="flame" size={18} color="#000" />
+              <Text style={styles.respondBtnText}>RESPONDER</Text>
+            </TouchableOpacity>
+          </View>
+        )}
       </Animated.View>
     </Modal>
   );
@@ -79,5 +91,26 @@ const styles = StyleSheet.create({
   image: {
     width: SCREEN_WIDTH,
     height: SCREEN_HEIGHT * 0.8,
+  },
+  bottomBar: {
+    position: 'absolute',
+    bottom: 50,
+    left: spacing.md,
+    right: spacing.md,
+  },
+  respondBtn: {
+    backgroundColor: colors.orange,
+    paddingVertical: 16,
+    borderRadius: radius.full,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.sm,
+  },
+  respondBtnText: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#000',
+    letterSpacing: 1,
   },
 });

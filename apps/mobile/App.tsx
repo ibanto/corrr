@@ -8,6 +8,9 @@ import {
   StatusBar,
   Platform,
   ActivityIndicator,
+  Dimensions,
+  Image,
+  ImageSourcePropType,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
@@ -25,12 +28,20 @@ import * as Notifications from 'expo-notifications';
 
 type Tab = 'Mapa' | 'Stats' | 'Ranking' | 'Retos' | 'Perfil';
 
-const TABS: { key: Tab; icon: keyof typeof Ionicons.glyphMap; iconActive: keyof typeof Ionicons.glyphMap; label: string }[] = [
-  { key: 'Mapa',    icon: 'map-outline',      iconActive: 'map',        label: 'Mapa' },
-  { key: 'Stats',   icon: 'bar-chart-outline', iconActive: 'bar-chart', label: 'Stats' },
-  { key: 'Ranking', icon: 'trophy-outline',    iconActive: 'trophy',    label: 'Ranking' },
-  { key: 'Retos',   icon: 'star-outline',      iconActive: 'star',      label: 'Retos' },
-  { key: 'Perfil',  icon: 'person-outline',    iconActive: 'person',    label: 'Perfil' },
+const TAB_ICONS: Record<Tab, { inactive: ImageSourcePropType; active: ImageSourcePropType }> = {
+  Mapa:    { inactive: require('./assets/tabs/mapa-inactive.png'),    active: require('./assets/tabs/mapa-active.png') },
+  Stats:   { inactive: require('./assets/tabs/stats-inactive.png'),   active: require('./assets/tabs/stats-active.png') },
+  Ranking: { inactive: require('./assets/tabs/ranking-inactive.png'), active: require('./assets/tabs/ranking-active.png') },
+  Retos:   { inactive: require('./assets/tabs/retos-inactive.png'),   active: require('./assets/tabs/retos-active.png') },
+  Perfil:  { inactive: require('./assets/tabs/perfil-inactive.png'),  active: require('./assets/tabs/perfil-active.png') },
+};
+
+const TABS: { key: Tab; label: string }[] = [
+  { key: 'Mapa',    label: 'Mapa' },
+  { key: 'Stats',   label: 'Stats' },
+  { key: 'Ranking', label: 'Ranking' },
+  { key: 'Retos',   label: 'Retos' },
+  { key: 'Perfil',  label: 'Perfil' },
 ];
 
 const SESSION_KEY = '@corrr_session';
@@ -138,6 +149,7 @@ export default function App() {
         <View style={styles.tabBar}>
           {TABS.map(tab => {
             const isActive = activeTab === tab.key;
+            const icons = TAB_ICONS[tab.key];
             return (
               <TouchableOpacity
                 key={tab.key}
@@ -145,15 +157,11 @@ export default function App() {
                 onPress={() => setActiveTab(tab.key)}
                 activeOpacity={0.7}
               >
-                {isActive && <View style={styles.tabIndicator} />}
-                <Ionicons
-                  name={isActive ? tab.iconActive : tab.icon}
-                  size={24}
-                  color={isActive ? colors.orange : colors.tabInactive}
+                <Image
+                  source={isActive ? icons.active : icons.inactive}
+                  style={styles.tabIcon}
+                  resizeMode="contain"
                 />
-                <Text style={[styles.tabLabel, isActive && styles.tabLabelActive]}>
-                  {tab.label}
-                </Text>
               </TouchableOpacity>
             );
           })}
@@ -178,10 +186,8 @@ const styles = StyleSheet.create({
   tabBar: {
     flexDirection: 'row', backgroundColor: colors.bgCard,
     borderTopWidth: 1, borderTopColor: colors.border,
-    paddingTop: 8, paddingBottom: Platform.OS === 'ios' ? 0 : 8,
+    paddingTop: 8, paddingBottom: Platform.OS === 'ios' ? 0 : 32,
   },
-  tabItem: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 4, position: 'relative' },
-  tabLabel: { fontSize: 10, fontWeight: '600', color: colors.tabInactive, marginTop: 2 },
-  tabLabelActive: { color: colors.orange },
-  tabIndicator: { position: 'absolute', top: 0, width: 20, height: 2, backgroundColor: colors.orange, borderRadius: 1 },
+  tabItem: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 2 },
+  tabIcon: { width: 60, height: 92 },
 });

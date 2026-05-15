@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
   RefreshControl,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, radius } from '../theme';
 import { api, RankingEntry } from '../services/api';
 
@@ -126,6 +127,43 @@ export default function RankingScreen({ user }: Props) {
             />
           }
           ItemSeparatorComponent={() => <View style={styles.separator} />}
+          ListHeaderComponent={() => {
+            const me = data.find(d => d.isCurrentUser);
+            if (!me) return null;
+            // TODO: comparar con posición anterior para flecha real
+            const trend = 0; // positivo = subiendo, negativo = bajando
+            return (
+              <View style={styles.myRankCard}>
+                <View style={styles.myRankLeft}>
+                  <Text style={styles.myRankLabel}>TU POSICIÓN</Text>
+                  <View style={styles.myRankRow}>
+                    <Text style={styles.myRankPosition}>#{me.position}</Text>
+                    {trend !== 0 && (
+                      <View style={[styles.myRankTrend, trend > 0 ? styles.myRankTrendUp : styles.myRankTrendDown]}>
+                        <Ionicons
+                          name={trend > 0 ? 'arrow-up' : 'arrow-down'}
+                          size={14}
+                          color={trend > 0 ? '#22C55E' : '#FB0E01'}
+                        />
+                        <Text style={[styles.myRankTrendText, { color: trend > 0 ? '#22C55E' : '#FB0E01' }]}>
+                          {Math.abs(trend)}
+                        </Text>
+                      </View>
+                    )}
+                    {trend === 0 && (
+                      <View style={styles.myRankTrendNeutral}>
+                        <Ionicons name="remove" size={14} color={colors.textSecondary} />
+                      </View>
+                    )}
+                  </View>
+                </View>
+                <View style={styles.myRankRight}>
+                  <Text style={styles.myRankPoints}>{me.points.toLocaleString('es-ES')}</Text>
+                  <Text style={styles.myRankPointsLabel}>puntos</Text>
+                </View>
+              </View>
+            );
+          }}
           ListFooterComponent={
             <View style={styles.footer}>
               <Text style={styles.footerText}>🔄 Actualiza cada hora</Text>
@@ -184,4 +222,32 @@ const styles = StyleSheet.create({
   footerText: { fontSize: 12, color: colors.textMuted },
   emptyTitle: { fontSize: 18, fontWeight: '800', color: colors.textPrimary, marginBottom: spacing.xs },
   emptyText: { fontSize: 14, color: colors.textSecondary, textAlign: 'center', paddingHorizontal: spacing.xl },
+  // My rank card
+  myRankCard: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    backgroundColor: colors.bgCard, borderRadius: radius.lg,
+    borderWidth: 1, borderColor: `${colors.orange}40`,
+    padding: spacing.md, marginBottom: spacing.md,
+  },
+  myRankLeft: {},
+  myRankLabel: {
+    fontSize: 11, fontWeight: '700', color: colors.textSecondary,
+    letterSpacing: 1, marginBottom: 4,
+  },
+  myRankRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  myRankPosition: { fontSize: 40, fontWeight: '900', color: colors.orange },
+  myRankTrend: {
+    flexDirection: 'row', alignItems: 'center', gap: 2,
+    paddingHorizontal: 8, paddingVertical: 4, borderRadius: radius.full,
+  },
+  myRankTrendUp: { backgroundColor: 'rgba(34,197,94,0.15)' },
+  myRankTrendDown: { backgroundColor: 'rgba(251,14,1,0.15)' },
+  myRankTrendText: { fontSize: 13, fontWeight: '700' },
+  myRankTrendNeutral: {
+    paddingHorizontal: 8, paddingVertical: 4,
+    borderRadius: radius.full, backgroundColor: 'rgba(255,255,255,0.05)',
+  },
+  myRankRight: { alignItems: 'flex-end' },
+  myRankPoints: { fontSize: 24, fontWeight: '900', color: colors.textPrimary },
+  myRankPointsLabel: { fontSize: 12, color: colors.textSecondary },
 });
