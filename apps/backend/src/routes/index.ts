@@ -407,6 +407,7 @@ app.get('/zones/nearby', { preHandler: requireAuth }, async (req: any, reply) =>
 
   const { rows } = await db.query(
     `SELECT z.id, z.polygon, z.area_km2, z.points, z.center_lat, z.center_lng,
+            z.conquered_at,
             u.display_name AS owner_name,
             (z.owner_id = $1) AS is_mine
      FROM zones z
