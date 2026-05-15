@@ -6,14 +6,19 @@ import {
   TouchableOpacity,
   Alert,
   Modal,
+  Animated,
+  Easing,
+  Image,
 } from 'react-native';
 import MapView, { Polygon, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import polygonClipping from 'polygon-clipping';
 import { colors, spacing, radius } from '../theme';
 import { api, RemoteZone } from '../services/api';
 import ZonePopup, { PopupType } from '../components/ZonePopup';
+import TauntSelector from '../components/TauntSelector';
 
 const GOOGLE_API_KEY = 'AIzaSyC_1Y2Fo6S9X6GJU5Upx4EZxrw4JFf_xNU';
 
@@ -105,48 +110,100 @@ function polyDifference(a: Coord[], b: Coord[]): Coord[][] {
  * Si dos zonas de distinto dueño se solapan, la más reciente recorta a la más antigua.
  * Así el mapa siempre muestra las zonas sin superposiciones.
  */
+/** Bounding box rápido de un polígono */
+function polyBBox(coords: Coord[]): { minLat: number; maxLat: number; minLng: number; maxLng: number } {
+  let minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity;
+  for (const c of coords) {
+    if (c.latitude < minLat) minLat = c.latitude;
+    if (c.latitude > maxLat) maxLat = c.latitude;
+    if (c.longitude < minLng) minLng = c.longitude;
+    if (c.longitude > maxLng) maxLng = c.longitude;
+  }
+  return { minLat, maxLat, minLng, maxLng };
+}
+
+/** ¿Se solapan dos bounding boxes? */
+function bboxOverlap(
+  a: { minLat: number; maxLat: number; minLng: number; maxLng: number },
+  b: { minLat: number; maxLat: number; minLng: number; maxLng: number },
+): boolean {
+  return a.minLat <= b.maxLat && a.maxLat >= b.minLat &&
+         a.minLng <= b.maxLng && a.maxLng >= b.minLng;
+}
+
 function deconflictZones(zones: RemoteZone[]): RemoteZone[] {
-  if (zones.length < 2) return zones;
+  try {
+    if (zones.length < 2) return zones;
 
-  // Ordenar por fecha: más antiguas primero → las recientes recortan a las viejas
-  const sorted = [...zones].sort((a, b) => {
-    const dateA = a.conquered_at ? new Date(a.conquered_at).getTime() : 0;
-    const dateB = b.conquered_at ? new Date(b.conquered_at).getTime() : 0;
-    return dateA - dateB;
-  });
+    // Pre-calcular bounding boxes
+    const bboxes = zones.map(z => z.polygon?.length >= 3 ? polyBBox(z.polygon) : null);
 
-  const result: RemoteZone[] = [];
+    // Primero: ¿hay algún solapamiento entre dueños distintos?
+    let hasOverlap = false;
+    outer: for (let i = 0; i < zones.length; i++) {
+      if (!bboxes[i]) continue;
+      for (let j = i + 1; j < zones.length; j++) {
+        if (!bboxes[j]) continue;
+        const sameOwner = (zones[i].is_mine && zones[j].is_mine) ||
+          (zones[i].owner_name && zones[j].owner_name && zones[i].owner_name === zones[j].owner_name);
+        if (sameOwner) continue;
+        if (bboxOverlap(bboxes[i]!, bboxes[j]!)) { hasOverlap = true; break outer; }
+      }
+    }
+    // Si no hay solapamientos, devolver tal cual (rápido)
+    if (!hasOverlap) return zones;
 
-  for (let i = 0; i < sorted.length; i++) {
-    let current = sorted[i];
-    let currentPolygon = current.polygon;
+    // Ordenar por fecha: más antiguas primero
+    const indices = zones.map((_, i) => i).sort((a, b) => {
+      const dateA = zones[a].conquered_at ? new Date(zones[a].conquered_at!).getTime() : 0;
+      const dateB = zones[b].conquered_at ? new Date(zones[b].conquered_at!).getTime() : 0;
+      return dateA - dateB;
+    });
 
-    // Cada zona posterior (más reciente) recorta a esta si se solapan
-    for (let j = i + 1; j < sorted.length; j++) {
-      const newer = sorted[j];
-      // Solo recortar si son de distinto dueño
-      if (newer.owner_name === current.owner_name && newer.is_mine === current.is_mine) continue;
-      if (newer.polygon.length < 3 || currentPolygon.length < 3) continue;
+    const result: RemoteZone[] = [];
+    const clippedPolygons: (Coord[] | null)[] = zones.map(z => z.polygon);
 
-      try {
-        const remaining = polyDifference(currentPolygon, newer.polygon);
-        if (remaining.length > 0 && remaining[0].length >= 3) {
-          currentPolygon = remaining[0];
-        } else {
-          currentPolygon = []; // Zona completamente absorbida
-          break;
-        }
-      } catch {
-        // Si falla el clipping, mantener la zona original
+    for (const i of indices) {
+      const current = zones[i];
+      if (!current.polygon || current.polygon.length < 3) continue;
+      let currentPolygon = clippedPolygons[i];
+      if (!currentPolygon || currentPolygon.length < 3) continue;
+
+      // Solo buscar zonas más recientes que me solapan
+      for (const j of indices) {
+        if (j === i) continue;
+        const newer = zones[j];
+        if (!newer.polygon || newer.polygon.length < 3) continue;
+        // Solo zonas más recientes recortan
+        const dateI = current.conquered_at ? new Date(current.conquered_at).getTime() : 0;
+        const dateJ = newer.conquered_at ? new Date(newer.conquered_at).getTime() : 0;
+        if (dateJ <= dateI) continue;
+
+        const sameOwner = (current.is_mine && newer.is_mine) ||
+          (current.owner_name && newer.owner_name && current.owner_name === newer.owner_name);
+        if (sameOwner) continue;
+        if (!bboxes[i] || !bboxes[j] || !bboxOverlap(bboxes[i]!, bboxes[j]!)) continue;
+
+        try {
+          const remaining = polyDifference(currentPolygon, newer.polygon);
+          if (remaining.length > 0 && remaining[0].length >= 3) {
+            currentPolygon = remaining[0];
+          } else {
+            currentPolygon = null;
+            break;
+          }
+        } catch {}
+      }
+
+      if (currentPolygon && currentPolygon.length >= 3) {
+        result.push({ ...current, polygon: currentPolygon });
       }
     }
 
-    if (currentPolygon.length >= 3) {
-      result.push({ ...current, polygon: currentPolygon });
-    }
+    return result.length > 0 ? result : zones;
+  } catch {
+    return zones;
   }
-
-  return result;
 }
 
 /** Sutherland-Hodgman polygon clipping — intersección de dos polígonos (fallback) */
@@ -266,12 +323,35 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
   const [loopDetected, setLoopDetected] = useState(false);
   const [remoteZones, setRemoteZones] = useState<RemoteZone[]>([]);
   const [selectedZone, setSelectedZone] = useState<RemoteZone | null>(null);
-  const [userXP, setUserXP] = useState(0); // XP acumulado del usuario
+  const [userXP, setUserXP] = useState(0);
   const [mapRegion, setMapRegion] = useState(DEFAULT_REGION);
   const [cityName, setCityName] = useState('...');
+  const [mapLoading, setMapLoading] = useState(true);
   const [popup, setPopup] = useState<{ visible: boolean; type: PopupType; points: number; rivalName?: string }>({
     visible: false, type: 'conquered', points: 0,
   });
+  const [showTaunts, setShowTaunts] = useState(false);
+  const [selectedRivalZone, setSelectedRivalZone] = useState<RemoteZone | null>(null);
+
+  // Animación para la pantalla de carga
+  const pulseAnim = useRef(new Animated.Value(0.8)).current;
+  const rotateAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (!mapLoading) return;
+    const pulse = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, { toValue: 1.1, duration: 800, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+        Animated.timing(pulseAnim, { toValue: 0.8, duration: 800, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+      ])
+    );
+    const rotate = Animated.loop(
+      Animated.timing(rotateAnim, { toValue: 1, duration: 3000, easing: Easing.linear, useNativeDriver: true })
+    );
+    pulse.start();
+    rotate.start();
+    return () => { pulse.stop(); rotate.stop(); };
+  }, [mapLoading]);
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const locationRef = useRef<any>(null);
@@ -346,8 +426,80 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       const useLat = lat ?? mapRegion.latitude;
       const useLng = lng ?? mapRegion.longitude;
       const zones = await api.getNearbyZones(useLat, useLng);
-      // Deconflictar: zonas recientes recortan a las antiguas donde se solapan
-      setRemoteZones(deconflictZones(zones));
+
+      // Deconflictar y luego mostrar
+      const fixed = deconflictZones(zones);
+      const finalZones = fixed.length > 0 ? fixed : zones;
+      setRemoteZones(finalZones);
+      setMapLoading(false);
+
+      // Detectar si me han robado zonas (usar zonas deconflictadas)
+      checkForStolenZones(finalZones);
+    } catch {}
+  };
+
+  const stolenCheckDone = useRef(false);
+  const checkForStolenZones = async (zones: RemoteZone[]) => {
+    if (stolenCheckDone.current || !user?.id) return;
+    stolenCheckDone.current = true;
+    try {
+      const key = `my_zones_snapshot_${user.id}`;
+      const myZones = zones.filter(z => z.is_mine);
+
+      // Calcular áreas reales de los polígonos (post-deconflicto)
+      const currentSnapshot = myZones.map(z => ({
+        id: z.id,
+        area: z.polygon?.length >= 3 ? polygonArea(z.polygon) : z.area_km2,
+        count: z.polygon?.length ?? 0,
+      }));
+
+      const prevRaw = await AsyncStorage.getItem(key);
+      const prevZones: { id: string; area: number; count?: number }[] = prevRaw ? JSON.parse(prevRaw) : [];
+
+      // Guardar snapshot actual para la próxima vez
+      await AsyncStorage.setItem(key, JSON.stringify(currentSnapshot));
+
+      // Primera vez o sin zonas previas → no hay referencia
+      if (prevZones.length === 0) return;
+
+      // Buscar zonas rivales recientes que solapan con las mías → esos son los ladrones
+      let stolenCount = 0;
+      const stolenNames: string[] = [];
+      const rivalZones = zones.filter(z => !z.is_mine);
+
+      // IDs de rivales que ya existían en el snapshot anterior
+      const prevRivalKey = `rival_zones_snapshot_${user.id}`;
+      const prevRivalRaw = await AsyncStorage.getItem(prevRivalKey);
+      const prevRivalIds: string[] = prevRivalRaw ? JSON.parse(prevRivalRaw) : [];
+      await AsyncStorage.setItem(prevRivalKey, JSON.stringify(rivalZones.map(r => r.id)));
+
+      // Solo rivales NUEVOS (no estaban antes)
+      const newRivals = rivalZones.filter(r => !prevRivalIds.includes(r.id));
+
+      for (const rival of newRivals) {
+        for (const mine of myZones) {
+          if (!mine.polygon || mine.polygon.length < 3) continue;
+          if (!rival.polygon || rival.polygon.length < 3) continue;
+          const bbox1 = polyBBox(mine.polygon);
+          const bbox2 = polyBBox(rival.polygon);
+          if (bboxOverlap(bbox1, bbox2)) {
+            stolenCount++;
+            if (rival.owner_name && !stolenNames.includes(rival.owner_name)) {
+              stolenNames.push(rival.owner_name);
+            }
+            break;
+          }
+        }
+      }
+
+      if (stolenCount > 0) {
+        setPopup({
+          visible: true,
+          type: 'stolen_from_you',
+          points: stolenCount * 50,
+          rivalName: stolenNames.length > 0 ? stolenNames.join(', ') : undefined,
+        });
+      }
     } catch {}
   };
 
@@ -361,16 +513,34 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       if (i === 0) return 0;
       return acc + getDistance(path[i-1], p);
     }, 0);
-    return dist < 80 && totalDist > 200;
+    return dist < 120 && totalDist > 200;
   };
 
   const closeLoop = async (path: Coord[]) => {
     setLoopDetected(true);
-    const area = polygonArea(path);
 
-    const snapped = path.length > 50
-      ? await snapToRoads(path.filter((_, i) => i % 3 === 0))
-      : await snapToRoads(path);
+    // Intentar snap to roads, si falla usar puntos raw
+    let snapped: Coord[];
+    try {
+      snapped = path.length > 50
+        ? await snapToRoads(path.filter((_, i) => i % 3 === 0))
+        : await snapToRoads(path);
+      // Si snap devuelve muy pocos puntos, usar raw
+      if (snapped.length < 4) snapped = path;
+    } catch {
+      snapped = path;
+    }
+
+    // Asegurar que el polígono está cerrado
+    if (snapped.length >= 3) {
+      const first = snapped[0];
+      const last = snapped[snapped.length - 1];
+      if (getDistance(first, last) > 5) {
+        snapped.push({ ...first });
+      }
+    }
+
+    const area = polygonArea(snapped);
 
     // Robo parcial: intersección + recorte de zonas rivales
     const stolenNames: string[] = [];
@@ -485,8 +655,14 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         }
 
         // Detectar loop cerrado
-        if (!loopDetected && checkLoop(pathRef.current)) {
-          closeLoop([...pathRef.current]);
+        if (!loopDetected && pathRef.current.length >= 10) {
+          const start = pathRef.current[0];
+          const dist = getDistance(start, newCoord);
+          console.log(`[Loop] pts=${pathRef.current.length} distToStart=${dist.toFixed(0)}m`);
+          if (checkLoop(pathRef.current)) {
+            console.log('[Loop] ¡CERRADO!');
+            closeLoop([...pathRef.current]);
+          }
         }
       }
     );
@@ -496,6 +672,19 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     setIsRunning(false);
     if (timerRef.current) clearInterval(timerRef.current);
     if (locationRef.current) locationRef.current.remove();
+
+    // Si no cerró loop durante la carrera, comprobar si está cerca del inicio al parar
+    if (!loopDetected && pathRef.current.length >= 10) {
+      const start = pathRef.current[0];
+      const end = pathRef.current[pathRef.current.length - 1];
+      const distToStart = getDistance(start, end);
+      console.log(`[StopRun] Auto-close check: pts=${pathRef.current.length} distToStart=${distToStart.toFixed(0)}m`);
+      if (distToStart < 300) {
+        console.log('[StopRun] Auto-cerrando loop');
+        pathRef.current.push(start);
+        await closeLoop([...pathRef.current]);
+      }
+    }
 
     // 50 pts por km recorrido (siempre, loop o recta)
     const kmPoints = pathRef.current.length >= 2 ? Math.round(distance * 50) : 0;
@@ -565,6 +754,33 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
 
   const pace = distance > 0.05 ? ((runTime / 60) / distance).toFixed(1) : '--';
 
+  const rotateInterpolate = rotateAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0deg', '360deg'],
+  });
+
+  if (mapLoading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
+          <Image
+            source={require('../../assets/icon.png')}
+            style={styles.loadingLogo}
+            resizeMode="contain"
+          />
+        </Animated.View>
+
+        <Text style={styles.loadingTitle}>ACTUALIZANDO MAPA</Text>
+
+        <Animated.View style={{ transform: [{ rotate: rotateInterpolate }] }}>
+          <Ionicons name="locate" size={28} color={colors.orange} />
+        </Animated.View>
+
+        <Text style={styles.loadingSubtitle}>Cargando territorios...</Text>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
       <ZonePopup
@@ -573,6 +789,19 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         points={popup.points}
         rivalName={popup.rivalName}
         onClose={() => setPopup(p => ({ ...p, visible: false }))}
+        onRespond={() => setShowTaunts(true)}
+      />
+
+      <TauntSelector
+        visible={showTaunts}
+        mode="taunt"
+        onSend={(messageId, mode) => {
+          console.log(`[Taunt] Enviado mensaje ${messageId} (${mode}) a todos los ladrones`);
+          // TODO: enviar al backend via api
+          Alert.alert('💬 Mensaje enviado', 'Tu respuesta ha sido enviada');
+          setShowTaunts(false);
+        }}
+        onClose={() => setShowTaunts(false)}
       />
 
       {/* Resumen post-carrera */}
@@ -694,6 +923,50 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         </Modal>
       )}
 
+      {/* Popup zona rival — info + agregar amigo */}
+      {selectedRivalZone && (
+        <Modal transparent visible animationType="fade" statusBarTranslucent>
+          <View style={styles.summaryOverlay}>
+            <View style={styles.zoneCard}>
+              <TouchableOpacity style={styles.zoneCardClose} onPress={() => setSelectedRivalZone(null)}>
+                <Ionicons name="close" size={22} color={colors.textSecondary} />
+              </TouchableOpacity>
+
+              <View style={[styles.rivalAvatarBig, { borderColor: getRivalColor(selectedRivalZone.owner_name ?? '') }]}>
+                <Text style={styles.rivalAvatarText}>
+                  {(selectedRivalZone.owner_name ?? '?').charAt(0).toUpperCase()}
+                </Text>
+              </View>
+              <Text style={styles.zoneCardTitle}>{selectedRivalZone.owner_name ?? 'Rival'}</Text>
+              <Text style={styles.zoneCardPoints}>{selectedRivalZone.points} pts</Text>
+              {selectedRivalZone.conquered_at && (
+                <Text style={styles.zoneCardDate}>
+                  Conquistada {new Date(selectedRivalZone.conquered_at).toLocaleDateString('es-ES', { day: 'numeric', month: 'short' })}
+                </Text>
+              )}
+
+              <TouchableOpacity
+                style={styles.addFriendBtn}
+                onPress={async () => {
+                  if (selectedRivalZone.owner_id) {
+                    try {
+                      const res = await api.sendFriendRequest(selectedRivalZone.owner_id);
+                      Alert.alert('👥 Solicitud enviada', `Has enviado solicitud de amistad a ${selectedRivalZone.owner_name}`);
+                    } catch {
+                      Alert.alert('Error', 'No se pudo enviar la solicitud');
+                    }
+                  }
+                  setSelectedRivalZone(null);
+                }}
+              >
+                <Ionicons name="person-add" size={18} color="#fff" />
+                <Text style={styles.addFriendBtnText}>AGREGAR AMIGO</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+      )}
+
       <View style={styles.header}>
         <View>
           <Text style={styles.cityLabel}>{cityName}</Text>
@@ -726,23 +999,31 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
             currentDelta.current = { latDelta: region.latitudeDelta, lngDelta: region.longitudeDelta };
           }}
         >
-          {/* Zonas del servidor: propias (naranja, tocables) y ajenas (color por rival) */}
-          {remoteZones.map((zone) => {
-            const rivalColor = zone.is_mine ? colors.orange : getRivalColor(zone.owner_name ?? '');
-            return (
-              <Polygon
-                key={zone.id}
-                coordinates={zone.polygon}
-                fillColor={zone.is_mine ? `${colors.orange}40` : `${rivalColor}35`}
-                strokeColor={zone.is_mine ? colors.orange : rivalColor}
-                strokeWidth={zone.is_mine ? 2 : 1.5}
-                tappable
-                onPress={() => {
-                  if (zone.is_mine) setSelectedZone(zone);
-                }}
-              />
-            );
-          })}
+          {/* Zonas del servidor: ordenadas por fecha (antiguas primero, recientes encima) */}
+          {[...remoteZones]
+            .sort((a, b) => {
+              const da = a.conquered_at ? new Date(a.conquered_at).getTime() : 0;
+              const db = b.conquered_at ? new Date(b.conquered_at).getTime() : 0;
+              return da - db;
+            })
+            .map((zone) => {
+              const rivalColor = zone.is_mine ? colors.orange : getRivalColor(zone.owner_name ?? '');
+              return (
+                <Polygon
+                  key={zone.id}
+                  coordinates={zone.polygon}
+                  fillColor={zone.is_mine ? `${colors.orange}60` : `${rivalColor}55`}
+                  strokeColor={zone.is_mine ? colors.orange : rivalColor}
+                  strokeWidth={zone.is_mine ? 2 : 1.5}
+                  tappable
+                  zIndex={zone.conquered_at ? new Date(zone.conquered_at).getTime() : 0}
+                  onPress={() => {
+                    if (zone.is_mine) setSelectedZone(zone);
+                    else setSelectedRivalZone(zone);
+                  }}
+                />
+              );
+            })}
 
           {/* Zonas conquistadas esta sesión */}
           {conqueredZones.map((zone, i) => (
@@ -874,6 +1155,19 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
+  // Loading screen
+  loadingContainer: {
+    flex: 1, backgroundColor: colors.bg,
+    alignItems: 'center', justifyContent: 'center', gap: 20,
+  },
+  loadingLogo: { width: 100, height: 100, borderRadius: 24 },
+  loadingTitle: {
+    fontSize: 18, fontWeight: '900', color: colors.textPrimary,
+    letterSpacing: 2, marginTop: 8,
+  },
+  loadingSubtitle: {
+    fontSize: 14, color: colors.textSecondary, marginTop: 4,
+  },
   header: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
     paddingHorizontal: spacing.md, paddingTop: spacing.sm, paddingBottom: spacing.sm,
@@ -996,6 +1290,18 @@ const styles = StyleSheet.create({
   zoneCardDate: {
     fontSize: 12, color: colors.textSecondary, marginTop: 2,
   },
+  rivalAvatarBig: {
+    width: 60, height: 60, borderRadius: 30,
+    backgroundColor: colors.bgCardAlt, alignItems: 'center', justifyContent: 'center',
+    borderWidth: 3, marginBottom: spacing.sm,
+  },
+  rivalAvatarText: { fontSize: 26, fontWeight: '900', color: colors.textPrimary },
+  addFriendBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.sm,
+    backgroundColor: colors.orange, paddingVertical: 14, borderRadius: radius.full,
+    marginTop: spacing.lg, width: '100%',
+  },
+  addFriendBtnText: { fontSize: 15, fontWeight: '800', color: '#fff', letterSpacing: 1 },
   sentinelSection: {
     width: '100%', marginTop: spacing.lg,
     backgroundColor: colors.bg, borderRadius: radius.md, padding: spacing.md,

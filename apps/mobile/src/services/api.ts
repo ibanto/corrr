@@ -58,6 +58,7 @@ interface RemoteZone {
   center_lat: number;
   center_lng: number;
   conquered_at?: string;
+  owner_id?: string;
   owner_name?: string;
   is_mine?: boolean;
 }
@@ -219,10 +220,48 @@ class ApiService {
     const data = await this.request<{ url: string }>('/auth/strava');
     return data.url;
   }
+
+  // Friends
+  async sendFriendRequest(receiverId: string): Promise<{ status: string; message: string }> {
+    return this.request('/friends/request', {
+      method: 'POST',
+      body: JSON.stringify({ receiverId }),
+    });
+  }
+
+  async getPendingFriendRequests(): Promise<FriendRequest[]> {
+    return this.request('/friends/pending');
+  }
+
+  async respondFriendRequest(id: string, action: 'accept' | 'reject'): Promise<void> {
+    await this.request(`/friends/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify({ action }),
+    });
+  }
+
+  async getFriends(): Promise<Friend[]> {
+    return this.request('/friends');
+  }
+}
+
+interface FriendRequest {
+  id: string;
+  sender_id: string;
+  sender_name: string;
+  created_at: string;
+}
+
+interface Friend {
+  user_id: string;
+  display_name: string;
+  city: string;
+  total_points: number;
+  total_zones: number;
 }
 
 export const api = new ApiService();
-export type { LoginResponse, RankingEntry, Challenge, RunRecord, UserStats, MyStats, RemoteZone, ZonePayload };
+export type { LoginResponse, RankingEntry, Challenge, RunRecord, UserStats, MyStats, RemoteZone, ZonePayload, FriendRequest, Friend };
 
 const MOCK_RANKING: RankingEntry[] = [
   { position: 1, username: 'Laura R.', city: 'Barcelona', points: 28480, zones: 87 },

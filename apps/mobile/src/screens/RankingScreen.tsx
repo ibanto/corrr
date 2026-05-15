@@ -10,8 +10,9 @@ import {
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
+import { Alert } from 'react-native';
 import { colors, spacing, radius } from '../theme';
-import { api, RankingEntry } from '../services/api';
+import { api, RankingEntry, FriendRequest, Friend } from '../services/api';
 
 type Tab = 'Nacional' | 'Ciudad' | 'Amigos';
 
@@ -25,6 +26,9 @@ export default function RankingScreen({ user }: Props) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [trend, setTrend] = useState(0);
+  const [friends, setFriends] = useState<Friend[]>([]);
+  const [pendingRequests, setPendingRequests] = useState<FriendRequest[]>([]);
+  const [friendsLoading, setFriendsLoading] = useState(false);
 
   const load = async (silent = false, currentTab = tab) => {
     if (!silent) setLoading(true);
@@ -63,7 +67,32 @@ export default function RankingScreen({ user }: Props) {
     setRefreshing(false);
   };
 
-  useEffect(() => { load(false, tab); }, [tab]);
+  const loadFriends = async () => {
+    setFriendsLoading(true);
+    try {
+      const [f, p] = await Promise.all([
+        api.getFriends(),
+        api.getPendingFriendRequests(),
+      ]);
+      setFriends(f);
+      setPendingRequests(p);
+    } catch {}
+    setFriendsLoading(false);
+  };
+
+  const handleFriendAction = async (id: string, action: 'accept' | 'reject') => {
+    try {
+      await api.respondFriendRequest(id, action);
+      loadFriends();
+    } catch {
+      Alert.alert('Error', 'No se pudo procesar la solicitud');
+    }
+  };
+
+  useEffect(() => {
+    if (tab === 'Amigos') loadFriends();
+    else load(false, tab);
+  }, [tab]);
 
   const renderItem = ({ item }: { item: RankingEntry }) => {
     const isTop3 = item.position <= 3;
@@ -116,10 +145,84 @@ export default function RankingScreen({ user }: Props) {
       </View>
 
       {tab === 'Amigos' ? (
-        <View style={styles.centered}>
-          <Text style={styles.emptyTitle}>Próximamente</Text>
-          <Text style={styles.emptyText}>El ranking de amigos llegará pronto.</Text>
-        </View>
+        friendsLoading ? (
+          <View style={styles.centered}>
+            <ActivityIndicator color={colors.orange} size="large" />
+          </View>
+        ) : (
+          <FlatList
+            data={friends}
+            keyExtractor={item => item.user_id}
+            contentContainerStyle={[styles.list, friends.length === 0 && pendingRequests.length === 0 && { flex: 1 }]}
+            ListHeaderComponent={() => (
+              <View>
+                {/* Solicitudes pendientes */}
+                {pendingRequests.length > 0 && (
+                  <View style={styles.pendingSection}>
+                    <Text style={styles.pendingSectionTitle}>SOLICITUDES ({pendingRequests.length})</Text>
+                    {pendingRequests.map(req => (
+                      <View key={req.id} style={styles.pendingRow}>
+                        <View style={styles.pendingAvatar}>
+                          <Text style={styles.pendingAvatarText}>{(req.sender_name ?? '?').charAt(0).toUpperCase()}</Text>
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.pendingName}>{req.sender_name}</Text>
+                          <Text style={styles.pendingDate}>
+                            {new Date(req.created_at).toLocaleDateString('es-ES', { day: 'numeric', month: 'short' })}
+                          </Text>
+                        </View>
+                        <TouchableOpacity
+                          style={styles.acceptBtn}
+                          onPress={() => handleFriendAction(req.id, 'accept')}
+                        >
+                          <Ionicons name="checkmark" size={18} color="#fff" />
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={styles.rejectBtn}
+                          onPress={() => handleFriendAction(req.id, 'reject')}
+                        >
+                          <Ionicons name="close" size={18} color={colors.textSecondary} />
+                        </TouchableOpacity>
+                      </View>
+                    ))}
+                  </View>
+                )}
+
+                {friends.length > 0 && (
+                  <Text style={styles.friendsSectionTitle}>RANKING AMIGOS</Text>
+                )}
+              </View>
+            )}
+            renderItem={({ item, index }) => (
+              <View style={styles.row}>
+                <View style={styles.positionCell}>
+                  <Text style={styles.positionText}>{index + 1}</Text>
+                </View>
+                <View style={styles.avatar}>
+                  <Text style={styles.avatarText}>{(item.display_name ?? '?').charAt(0).toUpperCase()}</Text>
+                </View>
+                <View style={styles.userInfo}>
+                  <Text style={styles.username}>{item.display_name}</Text>
+                  <Text style={styles.city}>{item.city}</Text>
+                </View>
+                <View style={styles.rightCell}>
+                  <Text style={styles.points}>{item.total_points.toLocaleString('es-ES')}</Text>
+                  <Text style={styles.pointsLabel}>pts · {item.total_zones} zonas</Text>
+                </View>
+              </View>
+            )}
+            ItemSeparatorComponent={() => <View style={styles.separator} />}
+            ListEmptyComponent={
+              pendingRequests.length === 0 ? (
+                <View style={styles.centered}>
+                  <Ionicons name="people-outline" size={48} color={colors.textMuted} />
+                  <Text style={styles.emptyTitle}>Sin amigos aún</Text>
+                  <Text style={styles.emptyText}>Toca en una zona rival en el mapa para agregar amigos.</Text>
+                </View>
+              ) : null
+            }
+          />
+        )
       ) : tab === 'Ciudad' && !user?.city ? (
         <View style={styles.centered}>
           <Text style={styles.emptyTitle}>Sin ciudad</Text>
@@ -269,4 +372,39 @@ const styles = StyleSheet.create({
   myRankRight: { alignItems: 'flex-end' },
   myRankPoints: { fontSize: 24, fontWeight: '900', color: colors.textPrimary },
   myRankPointsLabel: { fontSize: 12, color: colors.textSecondary },
+  // Friends tab
+  pendingSection: {
+    backgroundColor: colors.bgCard, borderRadius: radius.lg,
+    padding: spacing.md, marginBottom: spacing.md,
+    borderWidth: 1, borderColor: `${colors.orange}40`,
+  },
+  pendingSectionTitle: {
+    fontSize: 12, fontWeight: '800', color: colors.orange,
+    letterSpacing: 1, marginBottom: spacing.sm,
+  },
+  pendingRow: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
+    paddingVertical: spacing.xs,
+  },
+  pendingAvatar: {
+    width: 36, height: 36, borderRadius: 18, backgroundColor: colors.bgCardAlt,
+    alignItems: 'center', justifyContent: 'center',
+    borderWidth: 1, borderColor: colors.border,
+  },
+  pendingAvatarText: { fontSize: 14, fontWeight: '700', color: colors.textPrimary },
+  pendingName: { fontSize: 14, fontWeight: '700', color: colors.textPrimary },
+  pendingDate: { fontSize: 11, color: colors.textSecondary },
+  acceptBtn: {
+    width: 36, height: 36, borderRadius: 18,
+    backgroundColor: '#22C55E', alignItems: 'center', justifyContent: 'center',
+  },
+  rejectBtn: {
+    width: 36, height: 36, borderRadius: 18,
+    backgroundColor: colors.bgCardAlt, alignItems: 'center', justifyContent: 'center',
+    borderWidth: 1, borderColor: colors.border,
+  },
+  friendsSectionTitle: {
+    fontSize: 12, fontWeight: '800', color: colors.textSecondary,
+    letterSpacing: 1, marginBottom: spacing.sm, marginTop: spacing.sm,
+  },
 });

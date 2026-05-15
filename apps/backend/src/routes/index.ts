@@ -58,6 +58,18 @@ async function initDB() {
   await db.query(`CREATE INDEX IF NOT EXISTS zones_owner_idx ON zones(owner_id)`);
   await db.query(`CREATE INDEX IF NOT EXISTS zones_center_idx ON zones(center_lat, center_lng)`);
 
+  // Friendships
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS friendships (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      sender_id UUID REFERENCES users(id) ON DELETE CASCADE,
+      receiver_id UUID REFERENCES users(id) ON DELETE CASCADE,
+      status TEXT NOT NULL DEFAULT 'pending',
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(sender_id, receiver_id)
+    )
+  `);
+
   // Push tokens + avatar
   await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS push_token TEXT`);
   await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT`);
@@ -408,6 +420,7 @@ app.get('/zones/nearby', { preHandler: requireAuth }, async (req: any, reply) =>
   const { rows } = await db.query(
     `SELECT z.id, z.polygon, z.area_km2, z.points, z.center_lat, z.center_lng,
             z.conquered_at,
+            z.owner_id,
             u.display_name AS owner_name,
             (z.owner_id = $1) AS is_mine
      FROM zones z
@@ -416,6 +429,79 @@ app.get('/zones/nearby', { preHandler: requireAuth }, async (req: any, reply) =>
        AND z.center_lng BETWEEN ($3::float - $4::float) AND ($3::float + $4::float)
      LIMIT 200`,
     [req.userId, parseFloat(lat), parseFloat(lng), parseFloat(radius)]
+  );
+  return reply.send(rows);
+});
+
+// ── Friends ──────────────────────────────────────────────────────────────────
+
+// Enviar solicitud de amistad (por owner_id de zona rival)
+app.post('/friends/request', { preHandler: requireAuth }, async (req: any, reply) => {
+  const { receiverId } = req.body;
+  if (!receiverId) return reply.status(400).send({ error: 'receiverId requerido' });
+  if (receiverId === req.userId) return reply.status(400).send({ error: 'No puedes agregarte a ti mismo' });
+
+  // Check si ya existe
+  const { rows: existing } = await db.query(
+    `SELECT id, status FROM friendships
+     WHERE (sender_id = $1 AND receiver_id = $2) OR (sender_id = $2 AND receiver_id = $1)`,
+    [req.userId, receiverId]
+  );
+  if (existing.length > 0) {
+    return reply.send({ status: existing[0].status, message: 'Solicitud ya existe' });
+  }
+
+  await db.query(
+    `INSERT INTO friendships (sender_id, receiver_id, status) VALUES ($1, $2, 'pending')`,
+    [req.userId, receiverId]
+  );
+  return reply.send({ status: 'pending', message: 'Solicitud enviada' });
+});
+
+// Solicitudes pendientes (que me han enviado)
+app.get('/friends/pending', { preHandler: requireAuth }, async (req: any, reply) => {
+  const { rows } = await db.query(
+    `SELECT f.id, f.sender_id, u.display_name AS sender_name, f.created_at
+     FROM friendships f
+     JOIN users u ON u.id = f.sender_id
+     WHERE f.receiver_id = $1 AND f.status = 'pending'
+     ORDER BY f.created_at DESC`,
+    [req.userId]
+  );
+  return reply.send(rows);
+});
+
+// Aceptar / rechazar solicitud
+app.put('/friends/:id', { preHandler: requireAuth }, async (req: any, reply) => {
+  const { id } = req.params;
+  const { action } = req.body; // 'accept' | 'reject'
+
+  if (action === 'accept') {
+    await db.query(
+      `UPDATE friendships SET status = 'accepted' WHERE id = $1 AND receiver_id = $2`,
+      [id, req.userId]
+    );
+  } else {
+    await db.query(
+      `DELETE FROM friendships WHERE id = $1 AND receiver_id = $2`,
+      [id, req.userId]
+    );
+  }
+  return reply.send({ ok: true });
+});
+
+// Lista de amigos aceptados + sus stats (para ranking)
+app.get('/friends', { preHandler: requireAuth }, async (req: any, reply) => {
+  const { rows } = await db.query(
+    `SELECT u.id AS user_id, u.display_name, u.city,
+            COALESCE(s.total_points, 0) AS total_points,
+            COALESCE(s.total_zones, 0) AS total_zones
+     FROM friendships f
+     JOIN users u ON u.id = CASE WHEN f.sender_id = $1 THEN f.receiver_id ELSE f.sender_id END
+     LEFT JOIN user_stats s ON s.user_id = u.id
+     WHERE f.status = 'accepted' AND (f.sender_id = $1 OR f.receiver_id = $1)
+     ORDER BY COALESCE(s.total_points, 0) DESC`,
+    [req.userId]
   );
   return reply.send(rows);
 });

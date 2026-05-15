@@ -94,7 +94,7 @@ export default function TauntSelector({ visible, mode = 'taunt', rivalName, zone
               }}
             >
               <Ionicons name="send" size={18} color="#000" />
-              <Text style={styles.sendBtnText}>ENVIAR A {(rivalName ?? 'RIVAL').toUpperCase()}</Text>
+              <Text style={styles.sendBtnText}>ENVIAR</Text>
             </TouchableOpacity>
           </View>
         </View>
