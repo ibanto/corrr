@@ -17,6 +17,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
+import * as Location from 'expo-location';
 import { colors, spacing, radius } from '../theme';
 import { api, MyStats, RunRecord } from '../services/api';
 import ZonePopup, { PopupType } from '../components/ZonePopup';
@@ -49,7 +50,7 @@ function formatKm(km: number): string {
 }
 
 export default function PerfilScreen({ user, onLogout }: Props) {
-  const displayName = user?.username ?? 'RunnerMadrid';
+  const displayName = user?.username ?? 'Runner';
   const [stravaLoading, setStravaLoading] = useState(false);
   const [stats, setStats] = useState<MyStats | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -62,19 +63,47 @@ export default function PerfilScreen({ user, onLogout }: Props) {
   const [testPopup, setTestPopup] = useState<PopupType | null>(null);
   const [showTaunts, setShowTaunts] = useState<TauntMode | null>(null);
 
+  const detectCity = useCallback(async () => {
+    try {
+      const { status } = await Location.getForegroundPermissionsAsync();
+      if (status !== 'granted') return;
+      const loc = await Location.getLastKnownPositionAsync() ?? await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      if (!loc) return;
+      const results = await Location.reverseGeocodeAsync({ latitude: loc.coords.latitude, longitude: loc.coords.longitude });
+      if (results.length > 0) {
+        const city = results[0].city || results[0].region || '';
+        if (city) {
+          setProfileCity(city);
+          setEditCity(city);
+          // Guardar en backend para que el ranking y otros sitios lo usen
+          try { await api.updateProfile({ city }); } catch {}
+        }
+      }
+    } catch {}
+  }, []);
+
   const loadStats = useCallback(async () => {
     try {
       const [data, profile] = await Promise.all([api.getMyStats(), api.getProfile()]);
       setStats(data);
       if (profile.avatar_url) setAvatarUrl(profile.avatar_url);
       if (profile.display_name) setProfileName(profile.display_name);
-      if (profile.city) setProfileCity(profile.city);
+      if (profile.city) {
+        setProfileCity(profile.city);
+      } else {
+        // Si no tiene ciudad en el backend, detectar por GPS
+        detectCity();
+      }
     } catch {
       // silencioso
     }
-  }, []);
+  }, [detectCity]);
 
-  useEffect(() => { loadStats(); }, [loadStats]);
+  useEffect(() => {
+    loadStats();
+    // Siempre intentar actualizar la ciudad por GPS
+    detectCity();
+  }, [loadStats, detectCity]);
 
   const pickAvatar = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({

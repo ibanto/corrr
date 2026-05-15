@@ -232,12 +232,12 @@ const MOCK_RANKING: RankingEntry[] = [
   { position: 6, username: 'CarlosP', city: 'Zaragoza', points: 14540, zones: 43 },
   { position: 7, username: 'Pau Trail', city: 'Valencia', points: 13280, zones: 39 },
   { position: 8, username: 'Nerea_24', city: 'Málaga', points: 11980, zones: 35 },
-  { position: 23, username: 'Tú', city: 'Madrid', points: 4250, zones: 12, isCurrentUser: true },
+  { position: 23, username: 'Tú', city: 'Barcelona', points: 4250, zones: 12, isCurrentUser: true },
 ];
 
 const MOCK_CHALLENGES: Challenge[] = [
   { id: '1', title: 'El gran círculo', description: 'Captura 1 zona circular de 10 km.', type: 'shape', progress: 7, total: 10, reward: 600, icon: '⭕' },
-  { id: '2', title: 'La estrella de Madrid', description: 'Dibuja una estrella de 5 puntas.', type: 'shape', progress: 2, total: 5, reward: 800, icon: '⭐' },
+  { id: '2', title: 'La estrella', description: 'Dibuja una estrella de 5 puntas.', type: 'shape', progress: 2, total: 5, reward: 800, icon: '⭐' },
   { id: '3', title: 'Corredor infinito', description: 'Dibuja el símbolo del infinito.', type: 'shape', progress: 1, total: 3, reward: 500, icon: '∞' },
   { id: '4', title: '100 km este mes', description: 'Acumula 100 km en carreras.', type: 'distance', progress: 68, total: 100, reward: 1000, icon: '💯' },
   { id: '5', title: 'Ladrón de zonas', description: 'Roba 5 zonas a rivales.', type: 'steal', progress: 3, total: 5, reward: 700, icon: '🎭' },
