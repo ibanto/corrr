@@ -125,22 +125,7 @@ export default function RetoDetalleScreen({ reto, onBack, onAccept, onSimulateCo
           </View>
         )}
 
-        {/* DEV: botones de test para ver pantallas de resultado */}
-        {(onSimulateComplete || onSimulateFail) && (
-          <View style={styles.devRow}>
-            <Text style={styles.devLabel}>🧪 TEST</Text>
-            {onSimulateComplete && (
-              <TouchableOpacity style={styles.devBtnGreen} onPress={onSimulateComplete}>
-                <Text style={styles.devBtnText}>Completado</Text>
-              </TouchableOpacity>
-            )}
-            {onSimulateFail && (
-              <TouchableOpacity style={styles.devBtnRed} onPress={onSimulateFail}>
-                <Text style={styles.devBtnText}>Fallido</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-        )}
+
       </ScrollView>
     </View>
   );

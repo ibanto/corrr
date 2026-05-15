@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
   RefreshControl,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, radius } from '../theme';
 import { api, RankingEntry } from '../services/api';
@@ -23,6 +24,7 @@ export default function RankingScreen({ user }: Props) {
   const [data, setData] = useState<RankingEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [trend, setTrend] = useState(0);
 
   const load = async (silent = false, currentTab = tab) => {
     if (!silent) setLoading(true);
@@ -38,6 +40,25 @@ export default function RankingScreen({ user }: Props) {
       }
     }
     setData(res);
+
+    // Calcular trend comparando con posición guardada
+    const me = res.find(r => r.isCurrentUser);
+    if (me) {
+      const key = `rank_prev_${currentTab}`;
+      try {
+        const prev = await AsyncStorage.getItem(key);
+        if (prev) {
+          const prevPos = parseInt(prev, 10);
+          setTrend(prevPos - me.position); // positivo = has subido
+        } else {
+          setTrend(0);
+        }
+        await AsyncStorage.setItem(key, String(me.position));
+      } catch {
+        setTrend(0);
+      }
+    }
+
     setLoading(false);
     setRefreshing(false);
   };
@@ -79,7 +100,7 @@ export default function RankingScreen({ user }: Props) {
     <View style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.title}>Ranking</Text>
-        <Text style={styles.updated}>Actualizado hoy 9:00</Text>
+        <Text style={styles.updated}>Actualizado {new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}</Text>
       </View>
 
       <View style={styles.tabs}>
@@ -130,8 +151,6 @@ export default function RankingScreen({ user }: Props) {
           ListHeaderComponent={() => {
             const me = data.find(d => d.isCurrentUser);
             if (!me) return null;
-            // TODO: comparar con posición anterior para flecha real
-            const trend = 0; // positivo = subiendo, negativo = bajando
             return (
               <View style={styles.myRankCard}>
                 <View style={styles.myRankLeft}>

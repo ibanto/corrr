@@ -44,6 +44,51 @@ interface Props {
   onNavigateToShop?: () => void;
 }
 
+/** Sutherland-Hodgman polygon clipping — intersección de dos polígonos */
+function clipPolygons(subject: Coord[], clip: Coord[]): Coord[] {
+  let output = [...subject];
+  for (let i = 0; i < clip.length && output.length > 0; i++) {
+    const input = [...output];
+    output = [];
+    const edgeStart = clip[i];
+    const edgeEnd = clip[(i + 1) % clip.length];
+    for (let j = 0; j < input.length; j++) {
+      const current = input[j];
+      const prev = input[(j + input.length - 1) % input.length];
+      const currInside = isInsideEdge(current, edgeStart, edgeEnd);
+      const prevInside = isInsideEdge(prev, edgeStart, edgeEnd);
+      if (currInside) {
+        if (!prevInside) {
+          const inter = lineIntersect(prev, current, edgeStart, edgeEnd);
+          if (inter) output.push(inter);
+        }
+        output.push(current);
+      } else if (prevInside) {
+        const inter = lineIntersect(prev, current, edgeStart, edgeEnd);
+        if (inter) output.push(inter);
+      }
+    }
+  }
+  return output;
+}
+
+function isInsideEdge(p: Coord, edgeStart: Coord, edgeEnd: Coord): boolean {
+  return (edgeEnd.longitude - edgeStart.longitude) * (p.latitude - edgeStart.latitude) -
+         (edgeEnd.latitude - edgeStart.latitude) * (p.longitude - edgeStart.longitude) >= 0;
+}
+
+function lineIntersect(a1: Coord, a2: Coord, b1: Coord, b2: Coord): Coord | null {
+  const d1 = { latitude: a2.latitude - a1.latitude, longitude: a2.longitude - a1.longitude };
+  const d2 = { latitude: b2.latitude - b1.latitude, longitude: b2.longitude - b1.longitude };
+  const cross = d1.latitude * d2.longitude - d1.longitude * d2.latitude;
+  if (Math.abs(cross) < 1e-12) return null;
+  const t = ((b1.latitude - a1.latitude) * d2.longitude - (b1.longitude - a1.longitude) * d2.latitude) / cross;
+  return {
+    latitude: a1.latitude + t * d1.latitude,
+    longitude: a1.longitude + t * d1.longitude,
+  };
+}
+
 /** Ray-casting point-in-polygon — mismo algoritmo que el backend */
 function pointInPolygon(lat: number, lng: number, polygon: Coord[]): boolean {
   let inside = false;
@@ -221,19 +266,43 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       ? await snapToRoads(path.filter((_, i) => i % 3 === 0))
       : await snapToRoads(path);
 
-    // Detectar robos cliente-side con zonas ya cargadas
-    const rivalsCaptured = remoteZones.filter(rz => {
-      if (rz.is_mine) return false;
-      return pointInPolygon(rz.center_lat, rz.center_lng, snapped);
+    // Robo parcial: detectar solapamiento con zonas rivales
+    const stolenNames: string[] = [];
+    let stealCount = 0;
+
+    const updatedRemoteZones = remoteZones.map(rz => {
+      if (rz.is_mine) return rz;
+      // Calcular intersección entre mi loop y la zona rival
+      const intersection = clipPolygons(rz.polygon, snapped);
+      if (intersection.length < 3) return rz; // Sin solapamiento
+
+      stealCount++;
+      if (rz.owner_name && !stolenNames.includes(rz.owner_name)) {
+        stolenNames.push(rz.owner_name);
+      }
+      // La zona robada es la intersección (se añade como zona propia)
+      return rz; // El rival mantiene su zona, pero nosotros ganamos el trozo
     });
 
-    const isSteal = rivalsCaptured.length > 0;
-    const stolenNames = [...new Set(rivalsCaptured.map(r => r.owner_name))];
+    // Si hay intersecciones, añadirlas como zonas conquistadas
+    remoteZones.forEach(rz => {
+      if (rz.is_mine) return;
+      const intersection = clipPolygons(rz.polygon, snapped);
+      if (intersection.length >= 3) {
+        setConqueredZones(prev => [...prev, {
+          coords: intersection,
+          area: polygonArea(intersection),
+          points: 50, // bonus por robo
+        }]);
+      }
+    });
 
-    // Nueva ponderación: 100 pts por cerrar loop + 50 bonus por robo
-    const loopPoints = 100 + (isSteal ? 50 : 0);
+    const isSteal = stealCount > 0;
 
-    setConqueredZones(prev => [...prev, { coords: snapped, area, points: loopPoints }]);
+    // 100 pts por cerrar loop + 50 bonus por cada robo
+    const loopPoints = 100 + (stealCount * 50);
+
+    setConqueredZones(prev => [...prev, { coords: snapped, area, points: 100 }]);
     setTotalPoints(p => p + loopPoints);
 
     setPopup({
