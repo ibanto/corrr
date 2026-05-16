@@ -35,7 +35,6 @@ function SwipeableFriendRow({ item, index, onDelete }: { item: Friend; index: nu
       },
       onPanResponderRelease: (_, g) => {
         if (g.dx < -80) {
-          // Mostrar botón eliminar
           Animated.spring(translateX, { toValue: -80, useNativeDriver: true }).start();
         } else {
           Animated.spring(translateX, { toValue: 0, useNativeDriver: true }).start();
@@ -81,6 +80,60 @@ function SwipeableFriendRow({ item, index, onDelete }: { item: Friend; index: nu
   );
 }
 
+function SwipeableRankingRow({ item, onAddFriend, children }: { item: RankingEntry; onAddFriend: () => void; children: React.ReactNode }) {
+  const translateX = useRef(new Animated.Value(0)).current;
+  const btnOpacity = translateX.interpolate({
+    inputRange: [0, 40, 90],
+    outputRange: [0, 0.5, 1],
+    extrapolate: 'clamp',
+  });
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dx) > 10 && Math.abs(g.dx) > Math.abs(g.dy),
+      onPanResponderMove: (_, g) => {
+        if (g.dx > 0 && !item.isCurrentUser) {
+          translateX.setValue(Math.min(g.dx, 100));
+        }
+      },
+      onPanResponderRelease: (_, g) => {
+        if (g.dx > 70 && !item.isCurrentUser) {
+          Animated.spring(translateX, { toValue: 90, useNativeDriver: true }).start();
+        } else {
+          Animated.spring(translateX, { toValue: 0, useNativeDriver: true }).start();
+        }
+      },
+    })
+  ).current;
+
+  if (item.isCurrentUser) {
+    return <>{children}</>;
+  }
+
+  return (
+    <View style={swipeStyles.swipeContainer}>
+      {/* Botón agregar — posición absoluta, oculto detrás */}
+      <Animated.View style={[swipeStyles.addFriendBtnWrap, { opacity: btnOpacity }]}>
+        <TouchableOpacity
+          style={swipeStyles.addFriendBtn}
+          onPress={() => {
+            Animated.spring(translateX, { toValue: 0, useNativeDriver: true }).start();
+            onAddFriend();
+          }}
+        >
+          <Ionicons name="person-add" size={18} color="#fff" />
+          <Text style={swipeStyles.addFriendBtnText}>Agregar</Text>
+        </TouchableOpacity>
+      </Animated.View>
+
+      {/* Row con swipe */}
+      <Animated.View {...panResponder.panHandlers} style={[swipeStyles.swipeRow, { transform: [{ translateX }] }]}>
+        {children}
+      </Animated.View>
+    </View>
+  );
+}
+
 const swipeStyles = StyleSheet.create({
   deleteBtn: {
     position: 'absolute', right: 0, top: 0, bottom: 0, width: 80,
@@ -88,6 +141,23 @@ const swipeStyles = StyleSheet.create({
     borderRadius: radius.md,
   },
   deleteBtnText: { fontSize: 11, fontWeight: '700', color: '#fff' },
+  swipeContainer: {
+    overflow: 'hidden',
+    borderRadius: radius.md,
+  },
+  swipeRow: {
+    backgroundColor: colors.bg,
+  },
+  addFriendBtnWrap: {
+    position: 'absolute', left: 0, top: 0, bottom: 0, width: 90,
+    zIndex: 0,
+  },
+  addFriendBtn: {
+    flex: 1,
+    backgroundColor: '#22C55E', alignItems: 'center', justifyContent: 'center', gap: 2,
+    borderTopLeftRadius: radius.md, borderBottomLeftRadius: radius.md,
+  },
+  addFriendBtnText: { fontSize: 10, fontWeight: '800', color: '#fff', letterSpacing: 0.5 },
 });
 
 const rowStyles = StyleSheet.create({
@@ -116,6 +186,8 @@ export default function RankingScreen({ user, pendingCount = 0, onPendingCountCh
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [trend, setTrend] = useState(0);
+  const [citiesData, setCitiesData] = useState<RankingEntry[]>([]);
+  const [citiesLoading, setCitiesLoading] = useState(false);
   const [friends, setFriends] = useState<Friend[]>([]);
   const [pendingRequests, setPendingRequests] = useState<FriendRequest[]>([]);
   const [friendsLoading, setFriendsLoading] = useState(false);
@@ -155,6 +227,15 @@ export default function RankingScreen({ user, pendingCount = 0, onPendingCountCh
 
     setLoading(false);
     setRefreshing(false);
+  };
+
+  const loadCities = async (silent = false) => {
+    if (!silent) setCitiesLoading(true);
+    try {
+      const res = await api.getCitiesRanking();
+      setCitiesData(res);
+    } catch {}
+    setCitiesLoading(false);
   };
 
   const loadFriends = async () => {
@@ -203,39 +284,25 @@ export default function RankingScreen({ user, pendingCount = 0, onPendingCountCh
 
   useEffect(() => {
     if (tab === 'Amigos') loadFriends();
+    else if (tab === 'Ciudad') loadCities();
     else load(false, tab);
   }, [tab]);
+
+  const sendFriendRequest = async (item: RankingEntry) => {
+    if (!item.userId) return;
+    try {
+      const res = await api.sendFriendRequest(item.userId);
+      Alert.alert('👥 Solicitud enviada', `Has enviado solicitud a ${item.username}`);
+    } catch {
+      Alert.alert('👥 Solicitud enviada', `Solicitud enviada a ${item.username}`);
+    }
+  };
 
   const renderItem = ({ item }: { item: RankingEntry }) => {
     const isTop3 = item.position <= 3;
     const medals = ['🥇', '🥈', '🥉'];
-    return (
-      <TouchableOpacity
-        style={[styles.row, item.isCurrentUser && styles.rowHighlight]}
-        activeOpacity={item.isCurrentUser ? 1 : 0.6}
-        onPress={() => {
-          if (!item.isCurrentUser && item.userId) {
-            Alert.alert(
-              item.username,
-              `${item.points.toLocaleString('es-ES')} pts · ${item.zones} zonas`,
-              [
-                { text: 'Cerrar', style: 'cancel' },
-                {
-                  text: '👥 Agregar amigo',
-                  onPress: async () => {
-                    try {
-                      await api.sendFriendRequest(item.userId!);
-                      Alert.alert('👥 Solicitud enviada', `Has enviado solicitud a ${item.username}`);
-                    } catch {
-                      Alert.alert('👥 Solicitud enviada', `Solicitud enviada a ${item.username}`);
-                    }
-                  },
-                },
-              ]
-            );
-          }
-        }}
-      >
+    const rowContent = (
+      <View style={[styles.row, styles.rowSolid, item.isCurrentUser && styles.rowHighlight]}>
         <View style={styles.positionCell}>
           {isTop3 && !item.isCurrentUser ? (
             <Text style={styles.medal}>{medals[item.position - 1]}</Text>
@@ -258,7 +325,13 @@ export default function RankingScreen({ user, pendingCount = 0, onPendingCountCh
           </Text>
           <Text style={styles.pointsLabel}>pts · {item.zones} zonas</Text>
         </View>
-      </TouchableOpacity>
+      </View>
+    );
+
+    return (
+      <SwipeableRankingRow item={item} onAddFriend={() => sendFriendRequest(item)}>
+        {rowContent}
+      </SwipeableRankingRow>
     );
   };
 
@@ -356,11 +429,64 @@ export default function RankingScreen({ user, pendingCount = 0, onPendingCountCh
             }
           />
         )
-      ) : tab === 'Ciudad' && !user?.city ? (
-        <View style={styles.centered}>
-          <Text style={styles.emptyTitle}>Sin ciudad</Text>
-          <Text style={styles.emptyText}>Actualiza tu ciudad en el perfil para ver el ranking local.</Text>
-        </View>
+      ) : tab === 'Ciudad' ? (
+        citiesLoading ? (
+          <View style={styles.centered}>
+            <ActivityIndicator color={colors.orange} size="large" />
+          </View>
+        ) : citiesData.length === 0 ? (
+          <View style={styles.centered}>
+            <Text style={styles.emptyTitle}>Sin resultados</Text>
+            <Text style={styles.emptyText}>Aún no hay ciudades con corredores.</Text>
+          </View>
+        ) : (
+          <FlatList
+            data={citiesData}
+            keyExtractor={item => `${item.city}-${item.userId}`}
+            contentContainerStyle={styles.list}
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={() => { setRefreshing(true); loadCities(true).then(() => setRefreshing(false)); }}
+                tintColor={colors.orange}
+              />
+            }
+            ItemSeparatorComponent={() => <View style={styles.separator} />}
+            renderItem={({ item }) => {
+              const isMyCity = user?.city && item.city.toLowerCase() === user.city.toLowerCase();
+              return (
+                <SwipeableRankingRow item={item} onAddFriend={() => sendFriendRequest(item)}>
+                  <View style={[styles.row, styles.rowSolid, isMyCity && styles.rowHighlight]}>
+                    <View style={[styles.cityBadge, isMyCity && styles.cityBadgeMine]}>
+                      <Text style={styles.cityBadgeText}>{item.city.charAt(0).toUpperCase()}</Text>
+                    </View>
+                    <View style={styles.userInfo}>
+                      <Text style={[styles.cityName, isMyCity && styles.usernameHighlight]}>{item.city}</Text>
+                      <View style={styles.cityLeaderRow}>
+                        <Ionicons name="trophy" size={12} color={colors.orange} />
+                        <Text style={styles.cityLeaderName}>{item.username}</Text>
+                      </View>
+                    </View>
+                    <View style={styles.rightCell}>
+                      <Text style={[styles.points, isMyCity && styles.pointsHighlight]}>
+                        {item.points.toLocaleString('es-ES')}
+                      </Text>
+                      <Text style={styles.pointsLabel}>pts · {item.zones} zonas</Text>
+                    </View>
+                  </View>
+                </SwipeableRankingRow>
+              );
+            }}
+            ListHeaderComponent={
+              <Text style={styles.citiesSubtitle}>Líder por ciudad</Text>
+            }
+            ListFooterComponent={
+              <View style={styles.footer}>
+                <Text style={styles.footerText}>🔄 Actualiza cada hora</Text>
+              </View>
+            }
+          />
+        )
       ) : loading ? (
         <View style={styles.centered}>
           <ActivityIndicator color={colors.orange} size="large" />
@@ -368,7 +494,7 @@ export default function RankingScreen({ user, pendingCount = 0, onPendingCountCh
       ) : data.length === 0 ? (
         <View style={styles.centered}>
           <Text style={styles.emptyTitle}>Sin resultados</Text>
-          <Text style={styles.emptyText}>Aún no hay corredores en {user?.city}.</Text>
+          <Text style={styles.emptyText}>Aún no hay corredores.</Text>
         </View>
       ) : (
         <FlatList
@@ -453,6 +579,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', paddingVertical: spacing.sm,
     paddingHorizontal: spacing.sm, borderRadius: radius.md, gap: spacing.sm,
   },
+  rowSolid: { backgroundColor: colors.bg },
   rowHighlight: { backgroundColor: colors.orangeGlow, borderWidth: 1, borderColor: `${colors.orange}40` },
   positionCell: { width: 32, alignItems: 'center' },
   medal: { fontSize: 20 },
@@ -540,6 +667,20 @@ const styles = StyleSheet.create({
     fontSize: 12, fontWeight: '800', color: colors.textSecondary,
     letterSpacing: 1, marginBottom: spacing.sm, marginTop: spacing.sm,
   },
+  // Cities tab
+  citiesSubtitle: {
+    fontSize: 12, fontWeight: '800', color: colors.textSecondary,
+    letterSpacing: 1, marginBottom: spacing.sm, textTransform: 'uppercase',
+  },
+  cityBadge: {
+    width: 40, height: 40, borderRadius: 12, backgroundColor: colors.bgCardAlt,
+    alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: colors.border,
+  },
+  cityBadgeMine: { backgroundColor: `${colors.orange}20`, borderColor: `${colors.orange}40` },
+  cityBadgeText: { fontSize: 18, fontWeight: '800', color: colors.textPrimary },
+  cityName: { fontSize: 15, fontWeight: '700', color: colors.textPrimary },
+  cityLeaderRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 },
+  cityLeaderName: { fontSize: 12, color: colors.orange, fontWeight: '600' },
   tabBadge: {
     backgroundColor: '#FB0E01', borderRadius: 8,
     minWidth: 16, height: 16, alignItems: 'center', justifyContent: 'center',

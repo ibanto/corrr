@@ -238,6 +238,21 @@ app.get('/ranking/city', async (req: any, reply) => {
   return reply.send(rows);
 });
 
+// Top 1 por cada ciudad, ordenado alfabéticamente
+app.get('/ranking/cities', async (req, reply) => {
+  const { rows } = await db.query(`
+    SELECT DISTINCT ON (LOWER(u.city))
+           u.id AS user_id, u.display_name, u.city,
+           COALESCE(s.total_points, 0) + (s.total_zones * 450) AS total_points,
+           s.total_zones
+    FROM user_stats s
+    JOIN users u ON u.id = s.user_id
+    WHERE u.city IS NOT NULL AND u.city != ''
+    ORDER BY LOWER(u.city), (COALESCE(s.total_points, 0) + s.total_zones * 450) DESC
+  `);
+  return reply.send(rows);
+});
+
 app.get('/challenges', async (req, reply) => {
   const { rows } = await db.query('SELECT * FROM challenges WHERE ends_at > NOW() ORDER BY difficulty ASC');
   return reply.send(rows);

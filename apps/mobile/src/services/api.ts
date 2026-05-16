@@ -136,6 +136,23 @@ class ApiService {
     };
   }
 
+  async getCitiesRanking(): Promise<RankingEntry[]> {
+    try {
+      const rows = await this.request<any[]>('/ranking/cities');
+      return rows.map((r, i) => ({
+        position: i + 1,
+        userId: r.user_id,
+        username: r.display_name ?? 'Runner',
+        city: r.city ?? '',
+        points: r.total_points ?? 0,
+        zones: r.total_zones ?? 0,
+        isCurrentUser: this.userId != null && r.user_id === this.userId,
+      }));
+    } catch {
+      return [];
+    }
+  }
+
   async getRankingByCity(city: string): Promise<RankingEntry[]> {
     try {
       const rows = await this.request<any[]>(`/ranking/city?city=${encodeURIComponent(city)}`);

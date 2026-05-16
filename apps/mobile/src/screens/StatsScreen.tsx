@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -18,6 +18,7 @@ const { width } = Dimensions.get('window');
 type Period = 'Semana' | 'Mes' | 'Año' | 'Todo';
 
 const DAYS = ['L', 'M', 'X', 'J', 'V', 'S', 'D'];
+const MONTHS_SHORT = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
 
 interface Props {
   user: { id: string; username: string; email: string } | null;
@@ -41,8 +42,28 @@ function formatPace(durationSecs: number, distanceKm: number): string {
   return `${min}:${sec}`;
 }
 
+// Helpers para filtrar carreras por periodo
+function getWeekStart(): Date {
+  const now = new Date();
+  const dayOfWeek = (now.getDay() + 6) % 7;
+  const start = new Date(now);
+  start.setDate(now.getDate() - dayOfWeek);
+  start.setHours(0, 0, 0, 0);
+  return start;
+}
+
+function getMonthStart(): Date {
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), 1);
+}
+
+function getYearStart(): Date {
+  const now = new Date();
+  return new Date(now.getFullYear(), 0, 1);
+}
+
 export default function StatsScreen({ user }: Props) {
-  const [period, setPeriod] = useState<Period>('Mes');
+  const [period, setPeriod] = useState<Period>('Semana');
   const [stats, setStats] = useState<UserStats | null>(null);
   const [runs, setRuns] = useState<RunRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -67,26 +88,171 @@ export default function StatsScreen({ user }: Props) {
 
   useEffect(() => { load(); }, []);
 
-  // Agrupar km de esta semana para el gráfico
-  const weeklyKm = (() => {
-    const buckets = [0, 0, 0, 0, 0, 0, 0];
+  // Filtrar carreras según periodo
+  const filteredRuns = useMemo(() => {
+    if (period === 'Todo') return runs;
+    let start: Date;
+    if (period === 'Semana') start = getWeekStart();
+    else if (period === 'Mes') start = getMonthStart();
+    else start = getYearStart();
+    return runs.filter(r => new Date(r.created_at) >= start);
+  }, [runs, period]);
+
+  // Stats filtradas
+  const periodStats = useMemo(() => {
+    const km = filteredRuns.reduce((a, r) => a + r.distance_km, 0);
+    const zones = filteredRuns.reduce((a, r) => a + r.zones_count, 0);
+    const points = filteredRuns.reduce((a, r) => a + r.points, 0);
+    return { km, zones, runs: filteredRuns.length, points };
+  }, [filteredRuns]);
+
+  // Calcular fechas de la semana actual (lunes a domingo)
+  const weekDates = useMemo(() => {
     const now = new Date();
-    const dayOfWeek = (now.getDay() + 6) % 7; // lunes=0
+    const dayOfWeek = (now.getDay() + 6) % 7;
+    const dates: Date[] = [];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(now);
+      d.setDate(now.getDate() - dayOfWeek + i);
+      dates.push(d);
+    }
+    return dates;
+  }, []);
+
+  // --- DATOS DEL GRAFICO SEGUN PERIODO ---
+
+  // Semana: barras por dia (L-D)
+  const weeklyKm = useMemo(() => {
+    const buckets = [0, 0, 0, 0, 0, 0, 0];
     runs.forEach(r => {
       const d = new Date(r.created_at);
-      const diff = Math.floor((now.getTime() - d.getTime()) / 86400000);
-      if (diff <= dayOfWeek) {
-        const idx = dayOfWeek - diff;
-        if (idx >= 0 && idx < 7) buckets[idx] += r.distance_km;
+      const runDate = d.getDate();
+      const runMonth = d.getMonth();
+      const runYear = d.getFullYear();
+      for (let i = 0; i < 7; i++) {
+        if (weekDates[i].getDate() === runDate &&
+            weekDates[i].getMonth() === runMonth &&
+            weekDates[i].getFullYear() === runYear) {
+          buckets[i] += r.distance_km;
+          break;
+        }
       }
     });
     return buckets.map(v => Math.round(v * 10) / 10);
-  })();
-  const maxKm = Math.max(...weeklyKm, 1);
+  }, [runs, weekDates]);
 
-  const totalKm = stats?.total_km ?? 0;
-  const totalZones = stats?.total_zones ?? 0;
-  const totalRuns = stats?.total_runs ?? 0;
+  // Mes: barras por semana (S1, S2, S3, S4, S5)
+  const monthlyKm = useMemo(() => {
+    const now = new Date();
+    const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    const numWeeks = Math.ceil(daysInMonth / 7);
+    const buckets = Array(numWeeks).fill(0);
+    runs.forEach(r => {
+      const d = new Date(r.created_at);
+      if (d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear()) {
+        const weekIdx = Math.floor((d.getDate() - 1) / 7);
+        if (weekIdx < numWeeks) buckets[weekIdx] += r.distance_km;
+      }
+    });
+    return buckets.map(v => Math.round(v * 10) / 10);
+  }, [runs]);
+
+  // Año: barras por mes (Ene-Dic)
+  const yearlyKm = useMemo(() => {
+    const now = new Date();
+    const buckets = Array(12).fill(0);
+    runs.forEach(r => {
+      const d = new Date(r.created_at);
+      if (d.getFullYear() === now.getFullYear()) {
+        buckets[d.getMonth()] += r.distance_km;
+      }
+    });
+    return buckets.map(v => Math.round(v * 10) / 10);
+  }, [runs]);
+
+  // Todo: barras por los ultimos 6 meses
+  const allTimeKm = useMemo(() => {
+    const now = new Date();
+    const buckets = Array(6).fill(0);
+    const labels: string[] = [];
+    for (let i = 5; i >= 0; i--) {
+      const m = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      labels.push(MONTHS_SHORT[m.getMonth()]);
+    }
+    runs.forEach(r => {
+      const d = new Date(r.created_at);
+      for (let i = 5; i >= 0; i--) {
+        const m = new Date(now.getFullYear(), now.getMonth() - i, 1);
+        if (d.getMonth() === m.getMonth() && d.getFullYear() === m.getFullYear()) {
+          buckets[5 - i] += r.distance_km;
+          break;
+        }
+      }
+    });
+    return { values: buckets.map(v => Math.round(v * 10) / 10), labels };
+  }, [runs]);
+
+  // Determinar datos del chart segun periodo
+  const chartData = useMemo(() => {
+    if (period === 'Semana') {
+      return {
+        title: 'Kilómetros esta semana',
+        values: weeklyKm,
+        labels: DAYS.map((d, i) => d),
+        subLabels: weekDates.map(d => String(d.getDate())),
+        highlightIdx: weekDates.findIndex(d => {
+          const now = new Date();
+          return d.getDate() === now.getDate() && d.getMonth() === now.getMonth();
+        }),
+      };
+    } else if (period === 'Mes') {
+      const now = new Date();
+      const numWeeks = monthlyKm.length;
+      const labels = Array.from({ length: numWeeks }, (_, i) => `S${i + 1}`);
+      const currentWeek = Math.floor((now.getDate() - 1) / 7);
+      // Sub-labels: rango de dias
+      const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+      const subLabels = labels.map((_, i) => {
+        const from = i * 7 + 1;
+        const to = Math.min((i + 1) * 7, daysInMonth);
+        return `${from}-${to}`;
+      });
+      return {
+        title: 'Kilómetros este mes',
+        values: monthlyKm,
+        labels,
+        subLabels,
+        highlightIdx: currentWeek,
+      };
+    } else if (period === 'Año') {
+      const now = new Date();
+      return {
+        title: 'Kilómetros este año',
+        values: yearlyKm,
+        labels: MONTHS_SHORT,
+        subLabels: undefined,
+        highlightIdx: now.getMonth(),
+      };
+    } else {
+      return {
+        title: 'Kilómetros (últimos 6 meses)',
+        values: allTimeKm.values,
+        labels: allTimeKm.labels,
+        subLabels: undefined,
+        highlightIdx: 5, // ultimo = actual
+      };
+    }
+  }, [period, weeklyKm, monthlyKm, yearlyKm, allTimeKm, weekDates]);
+
+  const maxKm = Math.max(...chartData.values, 1);
+
+  // Stats totales (para "Todo" mostramos stats del servidor)
+  const displayStats = period === 'Todo' ? {
+    km: stats?.total_km ?? 0,
+    zones: stats?.total_zones ?? 0,
+    runs: stats?.total_runs ?? 0,
+    points: stats?.total_points ?? 0,
+  } : periodStats;
 
   return (
     <>
@@ -119,10 +285,10 @@ export default function StatsScreen({ user }: Props) {
         <>
           <View style={styles.bigStatsGrid}>
             {[
-              { icon: 'walk' as const, value: totalKm.toFixed(1), unit: 'km', label: 'km totales' },
-              { icon: 'map' as const, value: String(totalZones), unit: '', label: 'zonas capturadas' },
-              { icon: 'flash' as const, value: String(totalRuns), unit: '', label: 'carreras' },
-              { icon: 'flame' as const, value: String(stats?.total_points ?? 0), unit: 'pts', label: 'puntos totales' },
+              { icon: 'walk' as const, value: displayStats.km.toFixed(1), unit: 'km', label: period === 'Todo' ? 'km totales' : `km ${period.toLowerCase()}` },
+              { icon: 'map' as const, value: String(displayStats.zones), unit: '', label: period === 'Todo' ? 'zonas capturadas' : 'zonas' },
+              { icon: 'flash' as const, value: String(displayStats.runs), unit: '', label: 'carreras' },
+              { icon: 'flame' as const, value: String(displayStats.points), unit: 'pts', label: 'puntos' },
             ].map((s, i) => (
               <View key={i} style={styles.statCard}>
                 <Ionicons name={s.icon} size={22} color={colors.orange} style={{ marginBottom: 4 }} />
@@ -136,15 +302,23 @@ export default function StatsScreen({ user }: Props) {
           </View>
 
           <View style={styles.chartCard}>
-            <Text style={styles.chartTitle}>Kilómetros esta semana</Text>
-            <View style={styles.bars}>
-              {weeklyKm.map((km, i) => {
+            <Text style={styles.chartTitle}>{chartData.title}</Text>
+            <View style={[styles.bars, period === 'Año' && styles.barsYear]}>
+              {chartData.values.map((km, i) => {
                 const barH = km === 0 ? 4 : Math.max(8, (km / maxKm) * 120);
+                const isHighlight = i === chartData.highlightIdx;
                 return (
                   <View key={i} style={styles.barGroup}>
                     <Text style={styles.barValue}>{km > 0 ? km : ''}</Text>
                     <View style={[styles.bar, { height: barH, opacity: km === 0 ? 0.2 : 1 }]} />
-                    <Text style={styles.barDay}>{DAYS[i]}</Text>
+                    <Text style={[styles.barDay, isHighlight && styles.barDayToday]}>
+                      {chartData.labels[i]}
+                    </Text>
+                    {chartData.subLabels && (
+                      <Text style={[styles.barDate, isHighlight && styles.barDateToday]}>
+                        {chartData.subLabels[i]}
+                      </Text>
+                    )}
                   </View>
                 );
               })}
@@ -153,15 +327,20 @@ export default function StatsScreen({ user }: Props) {
 
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>Últimas carreras</Text>
+              <Text style={styles.sectionTitle}>
+                {period === 'Todo' ? 'Todas las carreras' : `Carreras · ${period}`}
+              </Text>
             </View>
-            {runs.length === 0 ? (
+            {filteredRuns.length === 0 ? (
               <View style={styles.emptyBox}>
-                <Text style={styles.emptyText}>Aún no tienes carreras guardadas.</Text>
-                <Text style={styles.emptyText}>¡Sal a correr y conquista tu primera zona!</Text>
+                <Text style={styles.emptyText}>
+                  {runs.length === 0
+                    ? 'Aún no tienes carreras guardadas.\n¡Sal a correr y conquista tu primera zona!'
+                    : `Sin carreras en este periodo.`}
+                </Text>
               </View>
             ) : (
-              runs.map((run) => (
+              filteredRuns.map((run) => (
                 <View key={run.id} style={styles.runRow}>
                   <View style={styles.runIconBox}>
                     <Ionicons name="walk" size={18} color={colors.orange} />
@@ -339,11 +518,15 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: colors.border, padding: spacing.md, marginBottom: spacing.md,
   },
   chartTitle: { fontSize: 15, fontWeight: '700', color: colors.textPrimary, marginBottom: spacing.md },
-  bars: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', height: 150 },
-  barGroup: { alignItems: 'center', gap: 4, flex: 1 },
+  bars: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', height: 165 },
+  barsYear: { height: 180 },
+  barGroup: { alignItems: 'center', gap: 3, flex: 1 },
   barValue: { fontSize: 10, color: colors.textSecondary, height: 14 },
   bar: { width: '60%', backgroundColor: colors.orange, borderRadius: 4, minWidth: 8 },
   barDay: { fontSize: 11, color: colors.textSecondary },
+  barDayToday: { color: colors.orange, fontWeight: '700' },
+  barDate: { fontSize: 9, color: colors.textSecondary, marginTop: 1 },
+  barDateToday: { color: colors.orange, fontWeight: '700' },
   section: { paddingHorizontal: spacing.md, marginBottom: spacing.md },
   sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.sm },
   sectionTitle: { fontSize: 18, fontWeight: '800', color: colors.textPrimary },
