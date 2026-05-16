@@ -982,7 +982,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
             <Text style={styles.headerStatValue}>{totalPoints}</Text>
           </View>
           <View style={styles.headerStat}>
-            <Ionicons name="map" size={14} color={colors.orange} />
+            <Ionicons name="flag" size={14} color={colors.orange} />
             <Text style={styles.headerStatValue}>{conqueredZones.filter(z => z.area > 0).length}</Text>
           </View>
         </View>

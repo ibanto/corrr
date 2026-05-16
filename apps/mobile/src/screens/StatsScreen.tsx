@@ -286,12 +286,12 @@ export default function StatsScreen({ user }: Props) {
           <View style={styles.bigStatsGrid}>
             {[
               { icon: 'walk' as const, value: displayStats.km.toFixed(1), unit: 'km', label: period === 'Todo' ? 'km totales' : `km ${period.toLowerCase()}` },
-              { icon: 'map' as const, value: String(displayStats.zones), unit: '', label: period === 'Todo' ? 'zonas capturadas' : 'zonas' },
+              { icon: 'flag' as const, value: String(displayStats.zones), unit: '', label: period === 'Todo' ? 'zonas capturadas' : 'zonas' },
               { icon: 'flash' as const, value: String(displayStats.runs), unit: '', label: 'carreras' },
               { icon: 'flame' as const, value: String(displayStats.points), unit: 'pts', label: 'puntos' },
             ].map((s, i) => (
               <View key={i} style={styles.statCard}>
-                <Ionicons name={s.icon} size={22} color={colors.orange} style={{ marginBottom: 4 }} />
+                <Ionicons name={s.icon} size={18} color={colors.orange} style={{ marginBottom: 2 }} />
                 <View style={styles.statValueRow}>
                   <Text style={styles.statBigValue}>{s.value}</Text>
                   {s.unit ? <Text style={styles.statUnit}>{s.unit}</Text> : null}
@@ -507,10 +507,11 @@ const styles = StyleSheet.create({
   },
   statCard: {
     width: (width - spacing.md * 2 - spacing.sm) / 2, backgroundColor: colors.bgCard,
-    borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, padding: spacing.md, gap: 2,
+    borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border,
+    paddingHorizontal: spacing.md, paddingVertical: spacing.sm, gap: 0,
   },
   statValueRow: { flexDirection: 'row', alignItems: 'baseline', gap: 4 },
-  statBigValue: { fontSize: 28, fontWeight: '900', color: colors.textPrimary },
+  statBigValue: { fontSize: 24, fontWeight: '900', color: colors.textPrimary },
   statUnit: { fontSize: 14, color: colors.textSecondary, fontWeight: '600' },
   statLabel: { fontSize: 12, color: colors.textSecondary, marginTop: 2 },
   chartCard: {

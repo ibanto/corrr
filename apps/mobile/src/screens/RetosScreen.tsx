@@ -7,7 +7,12 @@ import {
   ScrollView,
   ActivityIndicator,
   Alert,
+  Dimensions,
+  Image,
+  ImageSourcePropType,
 } from 'react-native';
+
+const { width } = Dimensions.get('window');
 import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, radius } from '../theme';
 import { api, Challenge } from '../services/api';
@@ -16,13 +21,13 @@ import RetoCompletadoScreen from './RetoCompletadoScreen';
 import RetoFallidoScreen from './RetoFallidoScreen';
 import type { RetoDetalle } from './RetoDetalleScreen';
 
-type Filter = 'Todos' | 'Formas' | 'Mensuales' | 'Especiales';
+type Filter = 'Semanales' | 'Especiales' | 'Mensuales' | 'Tienda';
 
 const filterMap: Record<Filter, string[]> = {
-  Todos: ['shape', 'distance', 'streak', 'steal'],
-  Formas: ['shape'],
+  Semanales: ['shape', 'distance', 'streak', 'steal'],
+  Especiales: ['steal', 'shape'],
   Mensuales: ['distance', 'streak'],
-  Especiales: ['steal'],
+  Tienda: [],
 };
 
 const challengeIcons: Record<string, keyof typeof Ionicons.glyphMap> = {
@@ -33,19 +38,73 @@ const challengeIcons: Record<string, keyof typeof Ionicons.glyphMap> = {
   '🎭': 'glasses-outline',
 };
 
+// Iconos por categoría de reto (imágenes custom)
+const categoryImages: Record<string, ImageSourcePropType | null> = {
+  semanales: require('../../assets/retos/icono-retosemanal.png'),
+  especiales: require('../../assets/retos/icono-retoespecial.png'),
+  mensuales: require('../../assets/retos/icono-retosmensuales.png'),
+};
+
+// Mapeo de filtro a categoría para obtener la imagen correcta
+const filterToCategory: Record<Filter, string> = {
+  Semanales: 'semanales',
+  Especiales: 'especiales',
+  Mensuales: 'mensuales',
+  Tienda: 'semanales',
+};
+
 const WELCOME_CHALLENGE: RetoDetalle = {
   id: 'welcome',
   title: '¡Bienvenido a CORRR!',
   description: 'Demuestra de qué estás hecho en tu primera semana. Corre, conquista y roba para ganar tu primera gran recompensa.',
   timeLimit: '7 días',
   objectives: [
-    { label: 'Recorre 100 km', icon: 'navigate-outline', current: 0, target: 100 },
+    { label: 'Recorre 20 km', icon: 'navigate-outline', current: 0, target: 20 },
     { label: 'Consigue 10 territorios', icon: 'flag-outline', current: 0, target: 10 },
     { label: 'Roba 5 territorios', icon: 'hand-left-outline', current: 0, target: 5 },
   ],
-  rewardPoints: 1000,
-  rewardXP: 150,
+  rewardPoints: 500,
+  rewardXP: 50,
+  penalty: 200,
   heroImage: require('../../assets/onboarding/welcome-challenge.png'),
+};
+
+const BATALLA_ALBA: RetoDetalle = {
+  id: 'batalla_alba',
+  title: '¡Batalla al alba!',
+  description: 'Haz una carrera de mínimo 5 km y roba alguna zona entre las 20:00 y la salida del sol. ¿Te atreves?',
+  timeLimit: '1 día (20:00 → amanecer)',
+  objectives: [
+    { label: 'Corre mínimo 5 km', icon: 'navigate-outline', current: 0, target: 5 },
+    { label: 'Roba al menos 1 zona', icon: 'hand-left-outline', current: 0, target: 1 },
+  ],
+  rewardPoints: 500,
+  rewardXP: 50,
+  penalty: 250,
+  activatesAtHour: 20,
+  heroImage: require('../../assets/retos/batalla-alba.png'),
+};
+
+// Calcula días restantes del mes actual
+const getDaysLeftInMonth = () => {
+  const now = new Date();
+  const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  return lastDay - now.getDate();
+};
+
+const ROBA_Y_ROBA: RetoDetalle = {
+  id: 'roba_y_roba',
+  title: '¡Roba y roba!',
+  description: 'Roba 5 zonas a 10 personas distintas. ¿Eres el más pesado o eres una leyenda?',
+  timeLimit: '30 días',
+  daysLeft: getDaysLeftInMonth(),
+  penalty: 500,
+  objectives: [
+    { label: 'Roba 5 zonas a 10 personas distintas', icon: 'hand-left-outline', current: 0, target: 50 },
+  ],
+  rewardPoints: 2500,
+  rewardXP: 150,
+  heroImage: require('../../assets/retos/roba-y-roba.png'),
 };
 
 const XP_PACKS = [
@@ -56,13 +115,17 @@ const XP_PACKS = [
 ];
 
 export default function RetosScreen() {
-  const [filter, setFilter] = useState<Filter>('Todos');
+  const [filter, setFilter] = useState<Filter>('Semanales');
   const [challenges, setChallenges] = useState<Challenge[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedReto, setSelectedReto] = useState<RetoDetalle | null>(null);
   const [welcomeAccepted, setWelcomeAccepted] = useState(false);
+  const [batallaAccepted, setBatallaAccepted] = useState(false);
+  const [robaAccepted, setRobaAccepted] = useState(false);
   const [resultScreen, setResultScreen] = useState<{ type: 'completed' | 'failed'; reto: RetoDetalle } | null>(null);
   const [userXP, setUserXP] = useState(0);
+  const [earnOpen, setEarnOpen] = useState(false);
+  const [spendOpen, setSpendOpen] = useState(false);
 
   const loadXP = useCallback(async () => {
     try {
@@ -129,6 +192,8 @@ export default function RetosScreen() {
         onBack={() => setSelectedReto(null)}
         onAccept={(id) => {
           if (id === 'welcome') setWelcomeAccepted(true);
+          if (id === 'batalla_alba') setBatallaAccepted(true);
+          if (id === 'roba_y_roba') setRobaAccepted(true);
           setSelectedReto(null);
         }}
         onSimulateComplete={() => {
@@ -150,13 +215,14 @@ export default function RetosScreen() {
       <View style={styles.header}>
         <Text style={styles.title}>Retos</Text>
         <View style={styles.pointsBadge}>
+          <Text style={styles.balanceLabel}>Tu saldo</Text>
           <Ionicons name="star" size={14} color="#FFD700" />
           <Text style={styles.pointsValue}>{userXP} XP</Text>
         </View>
       </View>
 
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterRow} contentContainerStyle={styles.filterContent}>
-        {(['Todos', 'Formas', 'Mensuales', 'Especiales'] as Filter[]).map(f => (
+      <View style={styles.filterRow}>
+        {(['Semanales', 'Especiales', 'Mensuales', 'Tienda'] as Filter[]).map(f => (
           <TouchableOpacity
             key={f}
             style={[styles.filterPill, filter === f && styles.filterPillActive]}
@@ -165,138 +231,259 @@ export default function RetosScreen() {
             <Text style={[styles.filterText, filter === f && styles.filterTextActive]}>{f}</Text>
           </TouchableOpacity>
         ))}
-      </ScrollView>
+      </View>
 
       {loading ? (
         <View style={styles.centered}><ActivityIndicator color={colors.orange} size="large" /></View>
       ) : (
         <ScrollView contentContainerStyle={styles.list} showsVerticalScrollIndicator={false}>
-          {/* Welcome challenge - top */}
-          <TouchableOpacity
-            style={styles.welcomeCard}
-            activeOpacity={0.8}
-            onPress={() => setSelectedReto({ ...WELCOME_CHALLENGE, accepted: welcomeAccepted })}
-          >
-            <View style={styles.welcomeHeader}>
-              <View style={styles.welcomeIconWrap}>
-                <Ionicons name="rocket" size={24} color={colors.orange} />
-              </View>
-              <View style={styles.welcomeBadge}>
-                <Ionicons name="time-outline" size={12} color={colors.orange} />
-                <Text style={styles.welcomeBadgeText}>7 días</Text>
-              </View>
-            </View>
-            <Text style={styles.welcomeTitle}>¡Bienvenido a CORRR!</Text>
-            <Text style={styles.welcomeDesc}>Recorre 100 km, conquista 10 territorios y roba 5. ¡Demuestra de qué estás hecho!</Text>
-            <View style={styles.welcomeRewards}>
-              <View style={styles.welcomeRewardItem}>
-                <Ionicons name="flame" size={14} color={colors.orange} />
-                <Text style={styles.welcomeRewardText}>1.000 pts</Text>
-              </View>
-              <View style={styles.welcomeRewardItem}>
-                <Ionicons name="flash" size={14} color={colors.purple} />
-                <Text style={[styles.welcomeRewardText, { color: colors.purple }]}>150 XP</Text>
-              </View>
-            </View>
-            <View style={styles.welcomeBtn}>
-              <Text style={styles.welcomeBtnText}>
-                {welcomeAccepted ? '✓ Desafío aceptado' : 'Ver desafío →'}
-              </Text>
-            </View>
-          </TouchableOpacity>
-
-          {/* Challenge cards */}
-          {filtered.map(challenge => {
-            const pct = Math.min(100, (challenge.progress / challenge.total) * 100);
-            const iconName = challengeIcons[challenge.icon] ?? 'star-outline';
-            return (
-              <TouchableOpacity
-                key={challenge.id}
-                style={styles.card}
-                activeOpacity={0.8}
-                onPress={() => setSelectedReto(challengeToReto(challenge))}
-              >
-                <View style={styles.cardIcon}>
-                  <Ionicons name={iconName} size={26} color={colors.orange} />
-                </View>
-                <View style={styles.cardBody}>
-                  <Text style={styles.cardTitle}>{challenge.title}</Text>
-                  <Text style={styles.cardDesc}>{challenge.description}</Text>
-                  <View style={styles.progressRow}>
-                    <View style={styles.progressBar}>
-                      <View style={[styles.progressFill, { width: `${pct}%` }]} />
+          {/* Grid 2 columnas — oculto en Tienda */}
+          {filter !== 'Tienda' && (
+          <View style={styles.grid}>
+            {/* Bienvenido + Premium solo en Todos */}
+            {filter === 'Semanales' && (
+              <>
+                <TouchableOpacity
+                  style={[styles.gridCard, styles.gridCardHighlight]}
+                  activeOpacity={0.8}
+                  onPress={() => setSelectedReto({ ...WELCOME_CHALLENGE, accepted: welcomeAccepted })}
+                >
+                  <View style={styles.gridCardIcon}>
+                    {categoryImages.semanales ? (
+                      <Image source={categoryImages.semanales} style={styles.gridCardIconImage} />
+                    ) : (
+                      <Ionicons name="rocket" size={24} color={colors.orange} />
+                    )}
+                  </View>
+                  <View style={styles.gridCardBody}>
+                    <Text style={styles.gridCardTitle} numberOfLines={2}>¡Bienvenido a CORRR!</Text>
+                    <Text style={styles.gridCardDesc} numberOfLines={2}>20 km, 10 territorios y roba 5</Text>
+                  </View>
+                  <View style={styles.gridCardBottom}>
+                    <View style={styles.gridRewardRow}>
+                      <Ionicons name="flame" size={12} color={colors.orange} />
+                      <Text style={styles.gridRewardValue}>500 pts</Text>
+                      <Ionicons name="flash" size={12} color={colors.purple} style={{ marginLeft: 6 }} />
+                      <Text style={[styles.gridRewardValue, { color: colors.purple }]}>50 XP</Text>
                     </View>
-                    <Text style={styles.progressText}>{challenge.progress}/{challenge.total}</Text>
+                    <View style={styles.gridBadge}>
+                      <Ionicons name="time-outline" size={10} color={colors.orange} />
+                      <Text style={styles.gridBadgeText}>7 días</Text>
+                    </View>
+                  </View>
+                </TouchableOpacity>
+
+                <View style={[styles.gridCard, styles.gridCardPremium]}>
+                  <View style={[styles.gridCardIcon, { backgroundColor: 'rgba(255,85,0,0.25)' }]}>
+                    {categoryImages.semanales ? (
+                      <Image source={categoryImages.semanales} style={[styles.gridCardIconImage, { opacity: 0.6 }]} />
+                    ) : (
+                      <Ionicons name="ribbon" size={24} color={colors.orange} />
+                    )}
+                  </View>
+                  <View style={styles.gridCardBody}>
+                    <Text style={styles.gridCardTitle} numberOfLines={2}>Conquistador infinito</Text>
+                    <Text style={styles.gridCardDesc} numberOfLines={2}>Captura 20 zonas en 30 días</Text>
+                  </View>
+                  <View style={styles.gridCardBottom}>
+                    <View style={styles.gridPremiumTag}>
+                      <Ionicons name="lock-closed" size={10} color={colors.textSecondary} />
+                      <Text style={styles.gridPremiumText}>Próximamente</Text>
+                    </View>
                   </View>
                 </View>
-                <View style={styles.cardRight}>
-                  <Text style={styles.rewardValue}>{challenge.reward}</Text>
-                  <Text style={styles.rewardLabel}>pts</Text>
+              </>
+            )}
+
+            {/* Especiales: Batalla al alba */}
+            {filter === 'Especiales' && (
+              <TouchableOpacity
+                style={[styles.gridCard, styles.gridCardHighlight]}
+                activeOpacity={0.8}
+                onPress={() => setSelectedReto({ ...BATALLA_ALBA, accepted: batallaAccepted })}
+              >
+                <View style={styles.gridCardIcon}>
+                  {categoryImages.especiales ? (
+                    <Image source={categoryImages.especiales} style={styles.gridCardIconImage} />
+                  ) : (
+                    <Ionicons name="flash" size={24} color={colors.orange} />
+                  )}
+                </View>
+                <View style={styles.gridCardBody}>
+                  <Text style={styles.gridCardTitle} numberOfLines={2}>¡Batalla al alba!</Text>
+                  <Text style={styles.gridCardDesc} numberOfLines={2}>5 km + roba una zona</Text>
+                </View>
+                <View style={styles.gridCardBottom}>
+                  <View style={styles.gridRewardRow}>
+                    <Ionicons name="flame" size={12} color={colors.orange} />
+                    <Text style={styles.gridRewardValue}>500 pts</Text>
+                    <Ionicons name="flash" size={12} color={colors.purple} style={{ marginLeft: 6 }} />
+                    <Text style={[styles.gridRewardValue, { color: colors.purple }]}>50 XP</Text>
+                  </View>
+                  <View style={styles.gridBadge}>
+                    <Ionicons name="time-outline" size={10} color={colors.orange} />
+                    <Text style={styles.gridBadgeText}>1 día</Text>
+                  </View>
                 </View>
               </TouchableOpacity>
-            );
-          })}
+            )}
 
-          {/* Premium card - bottom */}
-          <View style={styles.premiumCard}>
-            <View style={styles.premiumHeader}>
-              <Ionicons name="ribbon" size={18} color={colors.orange} />
-              <Text style={styles.premiumTitle}>Desafío premium</Text>
+            {/* Mensuales: ¡Roba y roba! */}
+            {filter === 'Mensuales' && (
+              <TouchableOpacity
+                style={[styles.gridCard, styles.gridCardHighlight]}
+                activeOpacity={0.8}
+                onPress={() => setSelectedReto({ ...ROBA_Y_ROBA, accepted: robaAccepted })}
+              >
+                <View style={styles.gridCardIcon}>
+                  {categoryImages.mensuales ? (
+                    <Image source={categoryImages.mensuales} style={styles.gridCardIconImage} />
+                  ) : (
+                    <Ionicons name="hand-left" size={24} color={colors.orange} />
+                  )}
+                </View>
+                <View style={styles.gridCardBody}>
+                  <Text style={styles.gridCardTitle} numberOfLines={2}>¡Roba y roba!</Text>
+                  <Text style={styles.gridCardDesc} numberOfLines={2}>Roba a 10 personas 10 veces</Text>
+                </View>
+                <View style={styles.gridCardBottom}>
+                  <View style={styles.gridRewardRow}>
+                    <Ionicons name="flame" size={12} color={colors.orange} />
+                    <Text style={styles.gridRewardValue}>2.500 pts</Text>
+                    <Ionicons name="flash" size={12} color={colors.purple} style={{ marginLeft: 6 }} />
+                    <Text style={[styles.gridRewardValue, { color: colors.purple }]}>150 XP</Text>
+                  </View>
+                  <View style={styles.gridBadge}>
+                    <Ionicons name="time-outline" size={10} color={colors.orange} />
+                    <Text style={styles.gridBadgeText}>30 días</Text>
+                  </View>
+                </View>
+              </TouchableOpacity>
+            )}
+
+            {/* Retos dinámicos filtrados */}
+            {filtered.map(challenge => {
+              const pct = Math.min(100, (challenge.progress / challenge.total) * 100);
+              const catKey = (challenge as any).category || filterToCategory[filter];
+              const catImage = categoryImages[catKey];
+              return (
+                <TouchableOpacity
+                  key={challenge.id}
+                  style={styles.gridCard}
+                  activeOpacity={0.8}
+                  onPress={() => setSelectedReto(challengeToReto(challenge))}
+                >
+                  <View style={styles.gridCardIcon}>
+                    {catImage ? (
+                      <Image source={catImage} style={styles.gridCardIconImage} />
+                    ) : (
+                      <Ionicons name={challengeIcons[challenge.icon] ?? 'star-outline'} size={24} color={colors.orange} />
+                    )}
+                  </View>
+                  <View style={styles.gridCardBody}>
+                    <Text style={styles.gridCardTitle} numberOfLines={2}>{challenge.title}</Text>
+                    <Text style={styles.gridCardDesc} numberOfLines={2}>{challenge.description}</Text>
+                  </View>
+                  <View style={styles.gridCardBottom}>
+                    <View style={styles.gridProgressRow}>
+                      <View style={styles.progressBar}>
+                        <View style={[styles.progressFill, { width: `${pct}%` }]} />
+                      </View>
+                      <Text style={styles.gridProgressText}>{challenge.progress}/{challenge.total}</Text>
+                    </View>
+                    <View style={styles.gridRewardRow}>
+                      <Ionicons name="flame" size={12} color={colors.orange} />
+                      <Text style={styles.gridRewardValue}>{challenge.reward} pts</Text>
+                    </View>
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
+
+            {/* Próximamente — siempre al final del grid */}
+            <View style={[styles.gridCard, styles.gridCardSoon]}>
+              <View style={[styles.gridCardIcon, { backgroundColor: 'rgba(255,255,255,0.05)' }]}>
+                <Ionicons name="lock-closed" size={24} color={colors.textMuted} />
+              </View>
+              <View style={styles.gridCardBody}>
+                <Text style={[styles.gridCardTitle, { color: colors.textMuted }]}>Próximamente</Text>
+                <Text style={styles.gridCardDesc}>Nuevos retos cada semana</Text>
+              </View>
+              <View style={styles.gridCardBottom} />
             </View>
-            <Text style={styles.premiumName}>Conquistador infinito</Text>
-            <Text style={styles.premiumDesc}>Captura 20 zonas en 30 días.</Text>
-            <View style={[styles.premiumBtn, { opacity: 0.5 }]}>
-              <Ionicons name="ribbon" size={16} color="#fff" />
-              <Text style={styles.premiumBtnText}>Próximamente</Text>
+            <View style={[styles.gridCard, styles.gridCardSoon]}>
+              <View style={[styles.gridCardIcon, { backgroundColor: 'rgba(255,255,255,0.05)' }]}>
+                <Ionicons name="help-outline" size={24} color={colors.textMuted} />
+              </View>
+              <View style={styles.gridCardBody}>
+                <Text style={[styles.gridCardTitle, { color: colors.textMuted }]}>Próximamente</Text>
+                <Text style={styles.gridCardDesc}>Sigue corriendo...</Text>
+              </View>
+              <View style={styles.gridCardBottom} />
             </View>
           </View>
+          )}
 
-          {/* Sección Tienda XP */}
+          {/* Sección Tienda XP — solo en pestaña Tienda */}
+          {filter === 'Tienda' && (
           <View style={styles.shopSection}>
             <View style={styles.shopHeader}>
               <Ionicons name="star" size={20} color="#FFD700" />
               <Text style={styles.shopTitle}>TIENDA XP</Text>
             </View>
-            <Text style={styles.shopBalance}>Tu saldo: ⭐ {userXP} XP</Text>
 
-            {/* Cómo ganar XP */}
-            <View style={styles.earnCard}>
-              <Text style={styles.earnTitle}>GANA XP CORRIENDO</Text>
-              <View style={styles.earnRow}>
-                <Ionicons name="footsteps" size={16} color={colors.orange} />
-                <Text style={styles.earnText}>Cada 100 puntos = 1 XP</Text>
+            {/* Cómo ganar XP — colapsable */}
+            <TouchableOpacity style={styles.earnCard} activeOpacity={0.7} onPress={() => setEarnOpen(!earnOpen)}>
+              <View style={styles.earnHeader}>
+                <Text style={styles.earnTitle}>GANA XP CORRIENDO</Text>
+                <Ionicons name={earnOpen ? 'chevron-up' : 'chevron-down'} size={18} color={colors.textSecondary} />
               </View>
-              <View style={styles.earnRow}>
-                <Ionicons name="navigate" size={16} color={colors.orange} />
-                <Text style={styles.earnText}>50 pts por km recorrido</Text>
-              </View>
-              <View style={styles.earnRow}>
-                <Ionicons name="flag" size={16} color={colors.orange} />
-                <Text style={styles.earnText}>100 pts por cerrar un circuito</Text>
-              </View>
-              <View style={styles.earnRow}>
-                <Ionicons name="hand-left" size={16} color={colors.orange} />
-                <Text style={styles.earnText}>50 pts extra por robar zona</Text>
-              </View>
-            </View>
+              {earnOpen && (
+                <View style={styles.earnContent}>
+                  <View style={styles.earnRow}>
+                    <Ionicons name="footsteps" size={16} color={colors.orange} />
+                    <Text style={styles.earnText}>Cada 100 puntos = 1 XP</Text>
+                  </View>
+                  <View style={styles.earnRow}>
+                    <Ionicons name="navigate" size={16} color={colors.orange} />
+                    <Text style={styles.earnText}>50 pts por km recorrido</Text>
+                  </View>
+                  <View style={styles.earnRow}>
+                    <Ionicons name="flag" size={16} color={colors.orange} />
+                    <Text style={styles.earnText}>100 pts por cerrar un circuito</Text>
+                  </View>
+                  <View style={styles.earnRow}>
+                    <Ionicons name="hand-left" size={16} color={colors.orange} />
+                    <Text style={styles.earnText}>50 pts extra por robar zona</Text>
+                  </View>
+                </View>
+              )}
+            </TouchableOpacity>
 
-            {/* Qué hacer con XP */}
-            <View style={styles.earnCard}>
-              <Text style={styles.earnTitle}>GASTA XP EN POWER-UPS</Text>
-              <View style={styles.earnRow}>
-                <Text style={{ fontSize: 16 }}>🛡️</Text>
-                <Text style={styles.earnText}>Centinela 6h — 100 XP</Text>
+            {/* Gasta XP — colapsable */}
+            <TouchableOpacity style={styles.earnCard} activeOpacity={0.7} onPress={() => setSpendOpen(!spendOpen)}>
+              <View style={styles.earnHeader}>
+                <Text style={styles.earnTitle}>GASTA XP EN POWER-UPS</Text>
+                <Ionicons name={spendOpen ? 'chevron-up' : 'chevron-down'} size={18} color={colors.textSecondary} />
               </View>
-              <View style={styles.earnRow}>
-                <Text style={{ fontSize: 16 }}>🛡️</Text>
-                <Text style={styles.earnText}>Centinela 12h — 250 XP</Text>
-              </View>
-              <View style={styles.earnRow}>
-                <Text style={{ fontSize: 16 }}>🛡️</Text>
-                <Text style={styles.earnText}>Centinela 24h — 500 XP</Text>
-              </View>
-              <Text style={styles.earnHint}>Toca una zona tuya en el mapa para activar</Text>
-            </View>
+              {spendOpen && (
+                <View style={styles.earnContent}>
+                  <View style={styles.earnRow}>
+                    <Text style={{ fontSize: 16 }}>🛡️</Text>
+                    <Text style={styles.earnText}>Centinela 6h — 100 XP</Text>
+                  </View>
+                  <View style={styles.earnRow}>
+                    <Text style={{ fontSize: 16 }}>🛡️</Text>
+                    <Text style={styles.earnText}>Centinela 12h — 250 XP</Text>
+                  </View>
+                  <View style={styles.earnRow}>
+                    <Text style={{ fontSize: 16 }}>🛡️</Text>
+                    <Text style={styles.earnText}>Centinela 24h — 500 XP</Text>
+                  </View>
+                  <Text style={styles.earnHint}>Toca una zona tuya en el mapa para activar</Text>
+                </View>
+              )}
+            </TouchableOpacity>
 
             {/* Comprar XP */}
             <Text style={styles.shopSubtitle}>COMPRAR XP</Text>
@@ -325,14 +512,17 @@ export default function RetosScreen() {
                       <Text style={styles.packPopularText}>POPULAR</Text>
                     </View>
                   )}
-                  <Ionicons name="star" size={24} color="#FFD700" />
-                  <Text style={styles.packXP}>{pack.xp}</Text>
-                  <Text style={styles.packXPLabel}>XP</Text>
+                  <View style={styles.packTopRow}>
+                    <Ionicons name="star" size={14} color="#FFD700" />
+                    <Text style={styles.packXP}>{pack.xp}</Text>
+                    <Text style={styles.packXPLabel}>XP</Text>
+                  </View>
                   <Text style={styles.packPrice}>{pack.price}</Text>
                 </TouchableOpacity>
               ))}
             </View>
           </View>
+          )}
         </ScrollView>
       )}
     </View>
@@ -351,90 +541,82 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.sm, paddingVertical: 6, borderRadius: radius.full,
     borderWidth: 1, borderColor: colors.border,
   },
+  balanceLabel: { fontSize: 11, color: colors.textSecondary, fontWeight: '600' },
   pointsValue: { fontSize: 14, fontWeight: '700', color: colors.textPrimary },
-  filterRow: { maxHeight: 44, marginBottom: spacing.md },
-  filterContent: { paddingHorizontal: spacing.md, gap: spacing.sm, alignItems: 'center' },
+  filterRow: {
+    flexDirection: 'row', paddingHorizontal: spacing.md, gap: spacing.sm,
+    marginBottom: spacing.md,
+  },
   filterPill: {
-    paddingHorizontal: spacing.md, paddingVertical: 8, borderRadius: radius.full,
+    paddingHorizontal: 14, paddingVertical: 10, borderRadius: radius.full,
     borderWidth: 1, borderColor: colors.border, backgroundColor: colors.bgCard,
   },
   filterPillActive: { backgroundColor: colors.orange, borderColor: colors.orange },
   filterText: { fontSize: 13, fontWeight: '600', color: colors.textSecondary },
   filterTextActive: { color: '#fff' },
   list: { paddingHorizontal: spacing.md, paddingBottom: 100, gap: spacing.sm },
-  // Welcome challenge
-  welcomeCard: {
+  // Challenge grid
+  grid: {
+    flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm,
+  },
+  gridCard: {
+    width: (width - spacing.md * 2 - spacing.sm) / 2,
+    aspectRatio: 1,
     backgroundColor: colors.bgCard, borderRadius: radius.lg,
-    padding: spacing.md, borderWidth: 1.5, borderColor: colors.orange, gap: spacing.sm,
+    padding: spacing.md, borderWidth: 1, borderColor: colors.border,
+    justifyContent: 'space-between',
   },
-  welcomeHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  welcomeIconWrap: {
+  gridCardIcon: {
     width: 44, height: 44, borderRadius: 22, backgroundColor: colors.orangeGlow,
-    alignItems: 'center', justifyContent: 'center',
+    alignItems: 'center', justifyContent: 'center', overflow: 'hidden',
   },
-  welcomeBadge: {
+  gridCardIconImage: {
+    width: 44, height: 44, resizeMode: 'cover',
+  },
+  gridCardBody: { flex: 1, justifyContent: 'center', gap: 4 },
+  gridCardTitle: { fontSize: 15, fontWeight: '800', color: colors.textPrimary },
+  gridCardDesc: { fontSize: 11, color: colors.textSecondary, lineHeight: 15 },
+  gridCardBottom: { gap: 6 },
+  gridProgressRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  gridProgressText: { fontSize: 10, color: colors.textSecondary },
+  gridRewardRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  gridRewardValue: { fontSize: 13, fontWeight: '800', color: colors.orange },
+  gridCardHighlight: { borderColor: colors.orange, borderWidth: 1.5 },
+  gridCardPremium: { borderColor: `${colors.orange}60`, backgroundColor: '#1A0F00', opacity: 0.7 },
+  gridBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 3,
+    alignSelf: 'flex-start', backgroundColor: colors.bgCardAlt,
+    paddingHorizontal: 8, paddingVertical: 3, borderRadius: radius.full,
+    borderWidth: 1, borderColor: colors.border,
+  },
+  gridBadgeText: { fontSize: 9, fontWeight: '700', color: colors.orange },
+  gridPremiumTag: {
     flexDirection: 'row', alignItems: 'center', gap: 4,
-    backgroundColor: colors.bgCardAlt, paddingHorizontal: 10, paddingVertical: 4,
-    borderRadius: radius.full, borderWidth: 1, borderColor: colors.border,
+    alignSelf: 'flex-start', backgroundColor: colors.bgCardAlt,
+    paddingHorizontal: 8, paddingVertical: 4, borderRadius: radius.full,
   },
-  welcomeBadgeText: { fontSize: 11, fontWeight: '700', color: colors.orange },
-  welcomeTitle: { fontSize: 18, fontWeight: '900', color: colors.textPrimary },
-  welcomeDesc: { fontSize: 13, color: colors.textSecondary, lineHeight: 19 },
-  welcomeRewards: { flexDirection: 'row', gap: spacing.md },
-  welcomeRewardItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  welcomeRewardText: { fontSize: 13, fontWeight: '700', color: colors.orange },
-  welcomeBtn: {
-    backgroundColor: colors.orange, paddingVertical: 12, borderRadius: radius.full,
-    alignItems: 'center', marginTop: spacing.xs,
-  },
-  welcomeBtnText: { color: '#fff', fontWeight: '700', fontSize: 14 },
-  // Challenge cards
-  card: {
-    flexDirection: 'row', backgroundColor: colors.bgCard, borderRadius: radius.lg,
-    padding: spacing.md, borderWidth: 1, borderColor: colors.border, gap: spacing.sm, alignItems: 'center',
-  },
-  cardIcon: {
-    width: 48, height: 48, borderRadius: radius.md, backgroundColor: colors.bgCardAlt,
-    alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: colors.border,
-  },
-  cardBody: { flex: 1, gap: 4 },
-  cardTitle: { fontSize: 15, fontWeight: '700', color: colors.textPrimary },
-  cardDesc: { fontSize: 12, color: colors.textSecondary },
-  progressRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginTop: 4 },
+  gridPremiumText: { fontSize: 10, fontWeight: '700', color: colors.textSecondary },
+  gridCardSoon: { borderStyle: 'dashed', borderColor: colors.textMuted, opacity: 0.5 },
   progressBar: { flex: 1, height: 4, backgroundColor: colors.bgCardAlt, borderRadius: 2, overflow: 'hidden' },
   progressFill: { height: '100%', backgroundColor: colors.orange, borderRadius: 2 },
-  progressText: { fontSize: 11, color: colors.textSecondary, minWidth: 28 },
-  cardRight: { alignItems: 'center' },
-  rewardValue: { fontSize: 18, fontWeight: '800', color: colors.orange },
-  rewardLabel: { fontSize: 10, color: colors.textSecondary },
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  // Premium card
-  premiumCard: {
-    backgroundColor: '#1A0F00', borderRadius: radius.lg, padding: spacing.md,
-    borderWidth: 1, borderColor: `${colors.orange}60`, gap: spacing.sm, marginTop: spacing.sm,
-  },
-  premiumHeader: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
-  premiumTitle: { fontSize: 13, fontWeight: '700', color: colors.orange, textTransform: 'uppercase', letterSpacing: 0.5 },
-  premiumName: { fontSize: 17, fontWeight: '800', color: colors.textPrimary },
-  premiumDesc: { fontSize: 13, color: colors.textSecondary },
-  premiumBtn: {
-    backgroundColor: colors.orange, paddingVertical: 12, borderRadius: radius.full,
-    alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: spacing.xs, marginTop: spacing.xs,
-  },
-  premiumBtnText: { color: '#fff', fontWeight: '700', fontSize: 14 },
   // Tienda XP
-  shopSection: { marginTop: spacing.lg, gap: spacing.md },
+  shopSection: { marginTop: spacing.lg, gap: spacing.sm },
   shopHeader: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  shopTitle: { fontSize: 22, fontWeight: '900', color: '#FFD700', letterSpacing: 2 },
+  shopTitle: { fontSize: 22, fontWeight: '900', color: colors.orange, letterSpacing: 2 },
   shopBalance: { fontSize: 14, color: colors.textSecondary, fontWeight: '600' },
   earnCard: {
     backgroundColor: colors.bgCard, borderRadius: radius.lg, padding: spacing.md,
-    borderWidth: 1, borderColor: colors.border, gap: spacing.sm,
+    borderWidth: 1, borderColor: colors.border,
+  },
+  earnHeader: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
   },
   earnTitle: {
     fontSize: 13, fontWeight: '800', color: colors.textPrimary,
-    letterSpacing: 1, marginBottom: 4,
+    letterSpacing: 1,
   },
+  earnContent: { gap: spacing.sm, marginTop: spacing.sm, paddingTop: spacing.sm, borderTopWidth: 1, borderTopColor: colors.border },
   earnRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   earnText: { fontSize: 13, color: colors.textSecondary, flex: 1 },
   earnHint: {
@@ -443,22 +625,25 @@ const styles = StyleSheet.create({
   },
   shopSubtitle: {
     fontSize: 13, fontWeight: '800', color: colors.textPrimary,
-    letterSpacing: 1,
+    letterSpacing: 1, marginTop: spacing.sm,
   },
   packsGrid: { flexDirection: 'row', gap: spacing.sm, flexWrap: 'wrap' },
   packCard: {
-    flex: 1, minWidth: '45%', backgroundColor: colors.bgCard, borderRadius: radius.lg,
+    width: (width - spacing.md * 2 - spacing.sm) / 2,
+    backgroundColor: colors.bgCard, borderRadius: radius.md,
     borderWidth: 1, borderColor: colors.border,
-    padding: spacing.md, alignItems: 'center', gap: 4,
+    paddingVertical: 14, paddingHorizontal: spacing.md,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
   },
   packCardPopular: { borderColor: '#FFD700', borderWidth: 2 },
   packPopularBadge: {
-    position: 'absolute', top: -10,
-    backgroundColor: '#FFD700', paddingHorizontal: 8, paddingVertical: 2,
-    borderRadius: radius.full,
+    position: 'absolute', top: -8, right: 8,
+    backgroundColor: '#FFD700', paddingHorizontal: 6, paddingVertical: 1,
+    borderRadius: radius.full, zIndex: 1,
   },
-  packPopularText: { fontSize: 9, fontWeight: '800', color: '#000', letterSpacing: 1 },
-  packXP: { fontSize: 28, fontWeight: '900', color: colors.textPrimary },
-  packXPLabel: { fontSize: 11, color: colors.textSecondary, fontWeight: '600', marginTop: -4 },
-  packPrice: { fontSize: 15, fontWeight: '800', color: colors.orange, marginTop: 4 },
+  packPopularText: { fontSize: 7, fontWeight: '800', color: '#000', letterSpacing: 0.5 },
+  packTopRow: { flexDirection: 'row', alignItems: 'baseline', gap: 4 },
+  packXP: { fontSize: 22, fontWeight: '900', color: colors.textPrimary },
+  packXPLabel: { fontSize: 12, color: colors.textSecondary, fontWeight: '700' },
+  packPrice: { fontSize: 15, fontWeight: '800', color: colors.orange },
 });

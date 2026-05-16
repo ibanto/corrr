@@ -23,6 +23,9 @@ interface RetoDetalle {
   timeLimit: string;
   accepted?: boolean;
   heroImage?: any;
+  penalty?: number;
+  daysLeft?: number;
+  activatesAtHour?: number; // hora a partir de la cual se puede activar (ej: 20)
 }
 
 interface Props {
@@ -69,10 +72,20 @@ export default function RetoDetalleScreen({ reto, onBack, onAccept, onSimulateCo
         )}
         <Text style={styles.description}>{reto.description}</Text>
 
-        {/* Time limit */}
-        <View style={styles.timeBadge}>
-          <Ionicons name="time-outline" size={16} color={colors.orange} />
-          <Text style={styles.timeText}>{reto.timeLimit}</Text>
+        {/* Time limit + countdown */}
+        <View style={styles.timeRow}>
+          <View style={styles.timeBadge}>
+            <Ionicons name="time-outline" size={16} color={colors.orange} />
+            <Text style={styles.timeText}>{reto.timeLimit}</Text>
+          </View>
+          {reto.daysLeft != null && (
+            <View style={[styles.timeBadge, styles.daysLeftBadge]}>
+              <Ionicons name="calendar-outline" size={16} color={reto.daysLeft <= 3 ? '#FF3B30' : colors.orange} />
+              <Text style={[styles.timeText, reto.daysLeft <= 3 && { color: '#FF3B30' }]}>
+                {reto.daysLeft > 0 ? `Quedan ${reto.daysLeft} días` : '¡Último día!'}
+              </Text>
+            </View>
+          )}
         </View>
 
         {/* Objectives */}
@@ -112,17 +125,36 @@ export default function RetoDetalleScreen({ reto, onBack, onAccept, onSimulateCo
           </View>
         </View>
 
+        {/* Penalty warning */}
+        {reto.penalty != null && reto.penalty > 0 && (
+          <View style={styles.penaltyCard}>
+            <View style={styles.penaltyHeader}>
+              <Ionicons name="warning" size={20} color="#FF3B30" />
+              <Text style={styles.penaltyTitle}>Penalización</Text>
+            </View>
+            <Text style={styles.penaltyText}>
+              Si no completas el reto perderás {reto.penalty.toLocaleString()} puntos{'\n'}
+              <Text style={{ fontSize: 11, color: '#FF8A80' }}>Tu saldo nunca bajará de 0</Text>
+            </Text>
+          </View>
+        )}
+
         {/* Accept button */}
-        {!reto.accepted ? (
-          <TouchableOpacity style={styles.acceptBtn} onPress={() => onAccept(reto.id)} activeOpacity={0.8}>
-            <Ionicons name="rocket" size={20} color="#fff" />
-            <Text style={styles.acceptBtnText}>¡Quiero el desafío!</Text>
-          </TouchableOpacity>
-        ) : (
+        {reto.accepted ? (
           <View style={styles.acceptedBadge}>
             <Ionicons name="checkmark-circle" size={20} color={colors.success} />
             <Text style={styles.acceptedText}>Desafío aceptado</Text>
           </View>
+        ) : reto.activatesAtHour != null && new Date().getHours() < reto.activatesAtHour ? (
+          <View style={styles.acceptBtnDisabled}>
+            <Ionicons name="lock-closed" size={20} color={colors.textMuted} />
+            <Text style={styles.acceptBtnTextDisabled}>Se activa a las {reto.activatesAtHour}:00</Text>
+          </View>
+        ) : (
+          <TouchableOpacity style={styles.acceptBtn} onPress={() => onAccept(reto.id)} activeOpacity={0.8}>
+            <Ionicons name="rocket" size={20} color="#fff" />
+            <Text style={styles.acceptBtnText}>¡Quiero el desafío!</Text>
+          </TouchableOpacity>
         )}
 
 
@@ -159,11 +191,17 @@ const styles = StyleSheet.create({
     fontSize: 15, color: colors.textSecondary, textAlign: 'center',
     marginTop: spacing.xs, lineHeight: 22,
   },
+  timeRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: spacing.sm, marginTop: spacing.md, flexWrap: 'wrap',
+  },
   timeBadge: {
     flexDirection: 'row', alignItems: 'center', gap: 6,
-    alignSelf: 'center', marginTop: spacing.md,
     backgroundColor: colors.bgCard, paddingHorizontal: spacing.md, paddingVertical: 8,
     borderRadius: radius.full, borderWidth: 1, borderColor: colors.border,
+  },
+  daysLeftBadge: {
+    borderColor: 'rgba(255,59,48,0.3)', backgroundColor: 'rgba(255,59,48,0.08)',
   },
   timeText: { fontSize: 13, fontWeight: '600', color: colors.orange },
   sectionTitle: {
@@ -198,6 +236,12 @@ const styles = StyleSheet.create({
     marginTop: spacing.lg,
   },
   acceptBtnText: { color: '#fff', fontSize: 17, fontWeight: '800' },
+  acceptBtnDisabled: {
+    backgroundColor: colors.bgCard, paddingVertical: 16, borderRadius: radius.full,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.sm,
+    marginTop: spacing.lg, borderWidth: 1, borderColor: colors.border,
+  },
+  acceptBtnTextDisabled: { color: colors.textMuted, fontSize: 17, fontWeight: '800' },
   acceptedBadge: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.sm,
     marginTop: spacing.lg, paddingVertical: 16,
@@ -205,6 +249,16 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: colors.success,
   },
   acceptedText: { fontSize: 15, fontWeight: '700', color: colors.success },
+  penaltyCard: {
+    backgroundColor: 'rgba(255,59,48,0.08)', borderRadius: radius.lg,
+    padding: spacing.md, marginTop: spacing.md,
+    borderWidth: 1, borderColor: 'rgba(255,59,48,0.25)',
+  },
+  penaltyHeader: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginBottom: 6,
+  },
+  penaltyTitle: { fontSize: 15, fontWeight: '800', color: '#FF3B30' },
+  penaltyText: { fontSize: 13, color: '#FF8A80', lineHeight: 20 },
   devRow: {
     flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
     marginTop: spacing.xl, paddingTop: spacing.md,

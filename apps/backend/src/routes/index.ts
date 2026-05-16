@@ -70,9 +70,36 @@ async function initDB() {
     )
   `);
 
+  // Challenges
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS challenges (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      title TEXT NOT NULL,
+      description TEXT NOT NULL,
+      type TEXT NOT NULL DEFAULT 'shape',
+      icon TEXT DEFAULT '⭐',
+      progress_default INT DEFAULT 0,
+      total INT NOT NULL DEFAULT 1,
+      reward INT NOT NULL DEFAULT 100,
+      difficulty INT DEFAULT 1,
+      category TEXT DEFAULT 'semanales',
+      starts_at TIMESTAMPTZ DEFAULT NOW(),
+      ends_at TIMESTAMPTZ DEFAULT (NOW() + INTERVAL '30 days'),
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+  await db.query(`ALTER TABLE challenges ADD COLUMN IF NOT EXISTS category TEXT DEFAULT 'semanales'`);
+
   // Push tokens + avatar
   await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS push_token TEXT`);
   await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT`);
+
+  // Strava tokens
+  await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS strava_athlete_id BIGINT`);
+  await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS strava_access_token TEXT`);
+  await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS strava_refresh_token TEXT`);
+  await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS strava_token_expires_at BIGINT`);
+  await db.query(`CREATE INDEX IF NOT EXISTS users_strava_idx ON users(strava_athlete_id)`).catch(() => {});
 
   // Activar Row Level Security en todas las tablas (bloquea acceso directo vía Supabase API)
   for (const table of ['users', 'user_stats', 'runs', 'zones']) {
@@ -255,6 +282,85 @@ app.get('/ranking/cities', async (req, reply) => {
 
 app.get('/challenges', async (req, reply) => {
   const { rows } = await db.query('SELECT * FROM challenges WHERE ends_at > NOW() ORDER BY difficulty ASC');
+  // Map to frontend Challenge interface
+  const challenges = rows.map((r: any) => ({
+    id: r.id,
+    title: r.title,
+    description: r.description,
+    type: r.type,
+    progress: r.progress_default ?? 0,
+    total: r.total,
+    reward: r.reward,
+    icon: r.icon,
+    category: r.category,
+  }));
+  return reply.send(challenges);
+});
+
+// ── Admin: Challenges CRUD ──────────────────────────────────────────────────
+
+const ADMIN_KEY = process.env.ADMIN_KEY || 'corrr-admin-2024';
+
+const requireAdmin = async (req: any, reply: any) => {
+  const key = req.headers['x-admin-key'];
+  if (key !== ADMIN_KEY) return reply.status(403).send({ error: 'Acceso denegado' });
+};
+
+app.post('/admin/challenges', { preHandler: requireAdmin }, async (req: any, reply) => {
+  const { title, description, type, icon, total, reward, difficulty, category, starts_at, ends_at } = req.body;
+  if (!title || !description || !total || !reward) {
+    return reply.status(400).send({ error: 'Faltan campos obligatorios: title, description, total, reward' });
+  }
+  const { rows } = await db.query(
+    `INSERT INTO challenges (title, description, type, icon, total, reward, difficulty, category, starts_at, ends_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+     RETURNING *`,
+    [
+      title, description,
+      type || 'shape',
+      icon || '⭐',
+      total, reward,
+      difficulty || 1,
+      category || 'semanales',
+      starts_at || new Date().toISOString(),
+      ends_at || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+    ]
+  );
+  return reply.status(201).send(rows[0]);
+});
+
+app.put('/admin/challenges/:id', { preHandler: requireAdmin }, async (req: any, reply) => {
+  const { id } = req.params;
+  const { title, description, type, icon, total, reward, difficulty, category, starts_at, ends_at } = req.body;
+  const { rows } = await db.query(
+    `UPDATE challenges SET
+      title = COALESCE($1, title),
+      description = COALESCE($2, description),
+      type = COALESCE($3, type),
+      icon = COALESCE($4, icon),
+      total = COALESCE($5, total),
+      reward = COALESCE($6, reward),
+      difficulty = COALESCE($7, difficulty),
+      category = COALESCE($8, category),
+      starts_at = COALESCE($9, starts_at),
+      ends_at = COALESCE($10, ends_at)
+     WHERE id = $11
+     RETURNING *`,
+    [title, description, type, icon, total, reward, difficulty, category, starts_at, ends_at, id]
+  );
+  if (rows.length === 0) return reply.status(404).send({ error: 'Reto no encontrado' });
+  return reply.send(rows[0]);
+});
+
+app.delete('/admin/challenges/:id', { preHandler: requireAdmin }, async (req: any, reply) => {
+  const { id } = req.params;
+  const { rowCount } = await db.query('DELETE FROM challenges WHERE id = $1', [id]);
+  if (rowCount === 0) return reply.status(404).send({ error: 'Reto no encontrado' });
+  return reply.send({ ok: true });
+});
+
+app.get('/admin/challenges', { preHandler: requireAdmin }, async (req: any, reply) => {
+  const { rows } = await db.query('SELECT * FROM challenges ORDER BY created_at DESC');
   return reply.send(rows);
 });
 
@@ -570,6 +676,12 @@ app.get('/auth/strava/callback', async (req: any, reply) => {
       `Strava dijo: ${tokenData.message ?? 'token inválido'}`, '#FF3B30'));
   }
 
+  // 1b. Guardar tokens de Strava en el usuario
+  await db.query(
+    `UPDATE users SET strava_athlete_id = $1, strava_access_token = $2, strava_refresh_token = $3, strava_token_expires_at = $4 WHERE id = $5`,
+    [tokenData.athlete?.id, tokenData.access_token, tokenData.refresh_token, tokenData.expires_at, userId]
+  );
+
   // 2. Obtener últimas actividades
   const actsRes  = await fetch('https://www.strava.com/api/v3/athlete/activities?per_page=10', {
     headers: { Authorization: `Bearer ${tokenData.access_token}` },
@@ -593,15 +705,26 @@ app.get('/auth/strava/callback', async (req: any, reply) => {
       const centerLat = coords.reduce((s: number, c: Coord) => s + c.latitude,  0) / coords.length;
       const centerLng = coords.reduce((s: number, c: Coord) => s + c.longitude, 0) / coords.length;
       const distKm    = (act.distance ?? 0) / 1000;
+      const durSecs   = act.moving_time ?? act.elapsed_time ?? 0;
       const pts       = Math.max(10, Math.round(distKm * 15));
+
+      // Crear run
+      const { rows: runRows } = await client.query(
+        `INSERT INTO runs (user_id, distance_km, duration_secs, points, zones_count, created_at)
+         VALUES ($1,$2,$3,$4,1,$5) RETURNING id`,
+        [userId, distKm, durSecs, pts, act.start_date ?? new Date().toISOString()]
+      );
+      const runId = runRows[0].id;
+
+      // Crear zona vinculada al run
       await client.query(
-        `INSERT INTO zones (owner_id, polygon, area_km2, points, center_lat, center_lng)
-         VALUES ($1,$2,$3,$4,$5,$6)`,
-        [userId, JSON.stringify(coords), distKm * 0.05, pts, centerLat, centerLng]
+        `INSERT INTO zones (owner_id, run_id, polygon, area_km2, points, center_lat, center_lng)
+         VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+        [userId, runId, JSON.stringify(coords), distKm * 0.05, pts, centerLat, centerLng]
       );
       await client.query(
-        `UPDATE user_stats SET total_zones = total_zones + 1, total_points = total_points + $2 WHERE user_id = $1`,
-        [userId, pts]
+        `UPDATE user_stats SET total_zones = total_zones + 1, total_points = total_points + $2, total_km = total_km + $3, total_runs = total_runs + 1 WHERE user_id = $1`,
+        [userId, pts, distKm]
       );
       created++;
     }
@@ -616,6 +739,154 @@ app.get('/auth/strava/callback', async (req: any, reply) => {
     `Se han conquistado <strong>${created} zona${created !== 1 ? 's' : ''}</strong> a partir de tus últimas carreras en Strava.<br><br>Cierra esta ventana y abre CORRR para verlas en el mapa.`,
     '#FF6600'));
 });
+
+// ── Strava Webhook ────────────────────────────────────────────────────────────
+
+const STRAVA_VERIFY_TOKEN = process.env.STRAVA_VERIFY_TOKEN || 'corrr-strava-webhook-2024';
+
+/** Refresca el access_token de Strava si ha expirado. */
+async function refreshStravaToken(userId: string): Promise<string | null> {
+  const { rows } = await db.query(
+    'SELECT strava_access_token, strava_refresh_token, strava_token_expires_at FROM users WHERE id = $1',
+    [userId]
+  );
+  if (!rows[0]?.strava_refresh_token) return null;
+
+  const now = Math.floor(Date.now() / 1000);
+  // Token aún válido
+  if (rows[0].strava_token_expires_at > now + 60) {
+    return rows[0].strava_access_token;
+  }
+
+  // Refrescar
+  const res = await fetch('https://www.strava.com/oauth/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      client_id: STRAVA_CLIENT_ID,
+      client_secret: STRAVA_CLIENT_SECRET,
+      grant_type: 'refresh_token',
+      refresh_token: rows[0].strava_refresh_token,
+    }),
+  });
+  const data = await res.json() as any;
+  if (!data.access_token) return null;
+
+  await db.query(
+    'UPDATE users SET strava_access_token = $1, strava_refresh_token = $2, strava_token_expires_at = $3 WHERE id = $4',
+    [data.access_token, data.refresh_token, data.expires_at, userId]
+  );
+  return data.access_token;
+}
+
+/** Importa una actividad de Strava como run + zona. */
+async function importStravaActivity(userId: string, activityId: number, accessToken: string) {
+  // Obtener detalle de la actividad
+  const actRes = await fetch(`https://www.strava.com/api/v3/activities/${activityId}`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  const act = await actRes.json() as any;
+
+  if (act.type !== 'Run' || !act.map?.summary_polyline) {
+    console.log(`[Strava] Actividad ${activityId} ignorada (tipo: ${act.type}, sin polyline)`);
+    return;
+  }
+
+  const coords = decodePolyline(act.map.summary_polyline);
+  if (coords.length < 3) return;
+
+  const centerLat = coords.reduce((s: number, c: Coord) => s + c.latitude, 0) / coords.length;
+  const centerLng = coords.reduce((s: number, c: Coord) => s + c.longitude, 0) / coords.length;
+  const distKm = (act.distance ?? 0) / 1000;
+  const durSecs = act.moving_time ?? act.elapsed_time ?? 0;
+  const pts = Math.max(10, Math.round(distKm * 15));
+
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+
+    const { rows: runRows } = await client.query(
+      `INSERT INTO runs (user_id, distance_km, duration_secs, points, zones_count, created_at)
+       VALUES ($1,$2,$3,$4,1,$5) RETURNING id`,
+      [userId, distKm, durSecs, pts, act.start_date ?? new Date().toISOString()]
+    );
+
+    await client.query(
+      `INSERT INTO zones (owner_id, run_id, polygon, area_km2, points, center_lat, center_lng)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      [userId, runRows[0].id, JSON.stringify(coords), distKm * 0.05, pts, centerLat, centerLng]
+    );
+
+    await client.query(
+      `UPDATE user_stats SET total_zones = total_zones + 1, total_points = total_points + $2, total_km = total_km + $3, total_runs = total_runs + 1 WHERE user_id = $1`,
+      [userId, pts, distKm]
+    );
+
+    await client.query('COMMIT');
+    console.log(`[Strava] Importada actividad ${activityId} para usuario ${userId}: ${distKm.toFixed(1)} km, ${pts} pts`);
+
+    // Enviar push notification
+    const { rows: userRows } = await db.query('SELECT push_token FROM users WHERE id = $1', [userId]);
+    if (userRows[0]?.push_token) {
+      await sendPushNotification(
+        userRows[0].push_token,
+        '🏃 ¡Carrera importada!',
+        `Tu carrera de ${distKm.toFixed(1)} km se ha sincronizado. +${pts} pts`
+      );
+    }
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error(`[Strava] Error importando actividad ${activityId}:`, err);
+  } finally {
+    client.release();
+  }
+}
+
+/** Webhook de validación (Strava envía GET para verificar). */
+app.get('/strava/webhook', async (req: any, reply) => {
+  const mode = req.query['hub.mode'];
+  const token = req.query['hub.verify_token'];
+  const challenge = req.query['hub.challenge'];
+
+  if (mode === 'subscribe' && token === STRAVA_VERIFY_TOKEN) {
+    console.log('[Strava] Webhook verificado');
+    return reply.send({ 'hub.challenge': challenge });
+  }
+  return reply.status(403).send({ error: 'Token inválido' });
+});
+
+/** Webhook de eventos (Strava envía POST cuando hay nueva actividad). */
+app.post('/strava/webhook', async (req: any, reply) => {
+  const { object_type, aspect_type, object_id, owner_id } = req.body;
+
+  // Solo nos interesan actividades nuevas
+  if (object_type !== 'activity' || aspect_type !== 'create') {
+    return reply.send({ ok: true });
+  }
+
+  console.log(`[Strava] Nueva actividad ${object_id} del atleta ${owner_id}`);
+
+  // Buscar usuario por strava_athlete_id
+  const { rows } = await db.query('SELECT id FROM users WHERE strava_athlete_id = $1', [owner_id]);
+  if (rows.length === 0) {
+    console.log(`[Strava] Atleta ${owner_id} no encontrado en CORRR`);
+    return reply.send({ ok: true });
+  }
+
+  const userId = rows[0].id;
+  const accessToken = await refreshStravaToken(userId);
+  if (!accessToken) {
+    console.log(`[Strava] No se pudo refrescar token para usuario ${userId}`);
+    return reply.send({ ok: true });
+  }
+
+  // Importar en background (Strava espera respuesta rápida < 2s)
+  setImmediate(() => importStravaActivity(userId, object_id, accessToken));
+
+  return reply.send({ ok: true });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 function htmlPage(title: string, body: string, accent: string): string {
   return `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8">

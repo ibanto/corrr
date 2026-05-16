@@ -189,7 +189,8 @@ class ApiService {
 
   async getChallenges(): Promise<Challenge[]> {
     try {
-      return await this.request<Challenge[]>('/challenges');
+      const res = await this.request<Challenge[]>('/challenges');
+      return res.length > 0 ? res : MOCK_CHALLENGES;
     } catch {
       return MOCK_CHALLENGES;
     }
