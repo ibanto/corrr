@@ -302,7 +302,7 @@ app.get('/challenges', async (req, reply) => {
 const ADMIN_KEY = process.env.ADMIN_KEY || 'corrr-admin-2024';
 
 const requireAdmin = async (req: any, reply: any) => {
-  const key = req.headers['x-admin-key'];
+  const key = req.headers['x-admin-key'] || (req.query as any)?.key;
   if (key !== ADMIN_KEY) return reply.status(403).send({ error: 'Acceso denegado' });
 };
 
@@ -362,6 +362,61 @@ app.delete('/admin/challenges/:id', { preHandler: requireAdmin }, async (req: an
 app.get('/admin/challenges', { preHandler: requireAdmin }, async (req: any, reply) => {
   const { rows } = await db.query('SELECT * FROM challenges ORDER BY created_at DESC');
   return reply.send(rows);
+});
+
+// ── Admin Stats ──────────────────────────────────────────────────────────────
+
+app.get('/admin/stats', { preHandler: requireAdmin }, async (req: any, reply) => {
+  const [users, runs, zones, stats, today, week] = await Promise.all([
+    db.query('SELECT COUNT(*) as total FROM users'),
+    db.query('SELECT COUNT(*) as total FROM runs'),
+    db.query('SELECT COUNT(*) as total FROM zones'),
+    db.query('SELECT COALESCE(SUM(total_km),0) as km, COALESCE(SUM(total_points),0) as points FROM user_stats'),
+    db.query("SELECT COUNT(*) as runs, COUNT(DISTINCT user_id) as active_users FROM runs WHERE created_at > NOW() - INTERVAL '1 day'"),
+    db.query("SELECT COUNT(*) as new_users FROM users WHERE created_at > NOW() - INTERVAL '7 days'"),
+  ]);
+
+  const data = {
+    usuarios_total: parseInt(users.rows[0].total),
+    usuarios_nuevos_7d: parseInt(week.rows[0].new_users),
+    usuarios_activos_hoy: parseInt(today.rows[0].active_users),
+    carreras_total: parseInt(runs.rows[0].total),
+    carreras_hoy: parseInt(today.rows[0].runs),
+    zonas_total: parseInt(zones.rows[0].total),
+    km_total: parseFloat(stats.rows[0].km).toFixed(1),
+    puntos_total: parseInt(stats.rows[0].points),
+  };
+
+  // Si piden HTML (navegador), devolver página bonita
+  const accept = req.headers.accept || '';
+  if (accept.includes('text/html')) {
+    return reply.type('text/html').send(`<!DOCTYPE html><html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CORRR Admin</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#0A0A0A;color:#fff;font-family:-apple-system,sans-serif;padding:24px}
+  h1{font-size:28px;font-weight:900;color:#FF5500;margin-bottom:24px}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .card{background:#111;border:1px solid #222;border-radius:16px;padding:20px}
+  .card .num{font-size:32px;font-weight:900;color:#FF5500}
+  .card .label{font-size:13px;color:#888;margin-top:4px}
+</style></head><body>
+<h1>CORRR Dashboard</h1>
+<div class="grid">
+  <div class="card"><div class="num">${data.usuarios_total}</div><div class="label">Usuarios total</div></div>
+  <div class="card"><div class="num">${data.usuarios_nuevos_7d}</div><div class="label">Nuevos (7 días)</div></div>
+  <div class="card"><div class="num">${data.usuarios_activos_hoy}</div><div class="label">Activos hoy</div></div>
+  <div class="card"><div class="num">${data.carreras_hoy}</div><div class="label">Carreras hoy</div></div>
+  <div class="card"><div class="num">${data.carreras_total}</div><div class="label">Carreras total</div></div>
+  <div class="card"><div class="num">${data.zonas_total}</div><div class="label">Zonas total</div></div>
+  <div class="card"><div class="num">${data.km_total} km</div><div class="label">Km recorridos</div></div>
+  <div class="card"><div class="num">${data.puntos_total.toLocaleString()}</div><div class="label">Puntos total</div></div>
+</div>
+</body></html>`);
+  }
+
+  return reply.send(data);
 });
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
