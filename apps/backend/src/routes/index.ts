@@ -810,11 +810,47 @@ async function importStravaActivity(userId: string, activityId: number, accessTo
        VALUES ($1,$2,$3,$4,1,$5) RETURNING id`,
       [userId, distKm, durSecs, pts, act.start_date ?? new Date().toISOString()]
     );
+    const runId = runRows[0].id;
 
+    // Robo automático: buscar zonas rivales solapadas
+    const minLat = Math.min(...coords.map((c: Coord) => c.latitude));
+    const maxLat = Math.max(...coords.map((c: Coord) => c.latitude));
+    const minLng = Math.min(...coords.map((c: Coord) => c.longitude));
+    const maxLng = Math.max(...coords.map((c: Coord) => c.longitude));
+
+    const { rows: candidates } = await client.query(
+      `SELECT z.id, z.owner_id, z.polygon, z.points, z.center_lat, z.center_lng,
+              u.display_name AS owner_name, u.push_token AS owner_push_token
+       FROM zones z JOIN users u ON u.id = z.owner_id
+       WHERE z.owner_id != $1
+         AND z.center_lat BETWEEN $2::float AND $3::float
+         AND z.center_lng BETWEEN $4::float AND $5::float`,
+      [userId, minLat, maxLat, minLng, maxLng]
+    );
+
+    let stolen = 0;
+    const thiefName = (await client.query('SELECT display_name FROM users WHERE id = $1', [userId])).rows[0]?.display_name ?? 'Alguien';
+
+    for (const rival of candidates) {
+      if (pointInPolygon(rival.center_lat ?? 0, rival.center_lng ?? 0, coords)) {
+        await client.query('UPDATE zones SET owner_id = $1, run_id = $2 WHERE id = $3', [userId, runId, rival.id]);
+        await client.query(
+          `UPDATE user_stats SET total_zones = GREATEST(0, total_zones - 1), total_points = GREATEST(0, total_points - $2) WHERE user_id = $1`,
+          [rival.owner_id, rival.points]
+        );
+        stolen++;
+        if (rival.owner_push_token) {
+          sendPushNotification(rival.owner_push_token, '😱 ¡Te han robado una zona!',
+            `${thiefName} ha conquistado una de tus zonas (${rival.points} pts). ¡Sal a recuperarla!`);
+        }
+      }
+    }
+
+    // Guardar nueva zona
     await client.query(
       `INSERT INTO zones (owner_id, run_id, polygon, area_km2, points, center_lat, center_lng)
        VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-      [userId, runRows[0].id, JSON.stringify(coords), distKm * 0.05, pts, centerLat, centerLng]
+      [userId, runId, JSON.stringify(coords), distKm * 0.05, pts, centerLat, centerLng]
     );
 
     await client.query(
@@ -823,16 +859,15 @@ async function importStravaActivity(userId: string, activityId: number, accessTo
     );
 
     await client.query('COMMIT');
-    console.log(`[Strava] Importada actividad ${activityId} para usuario ${userId}: ${distKm.toFixed(1)} km, ${pts} pts`);
+    console.log(`[Strava] Importada actividad ${activityId} para usuario ${userId}: ${distKm.toFixed(1)} km, ${pts} pts, ${stolen} zonas robadas`);
 
     // Enviar push notification
     const { rows: userRows } = await db.query('SELECT push_token FROM users WHERE id = $1', [userId]);
     if (userRows[0]?.push_token) {
-      await sendPushNotification(
-        userRows[0].push_token,
-        '🏃 ¡Carrera importada!',
-        `Tu carrera de ${distKm.toFixed(1)} km se ha sincronizado. +${pts} pts`
-      );
+      const msg = stolen > 0
+        ? `Tu carrera de ${distKm.toFixed(1)} km se ha sincronizado. +${pts} pts y ${stolen} zona${stolen > 1 ? 's' : ''} robada${stolen > 1 ? 's' : ''}!`
+        : `Tu carrera de ${distKm.toFixed(1)} km se ha sincronizado. +${pts} pts`;
+      await sendPushNotification(userRows[0].push_token, '🏃 ¡Carrera importada!', msg);
     }
   } catch (err) {
     await client.query('ROLLBACK');
