@@ -125,6 +125,17 @@ class ApiService {
     };
   }
 
+  async loginWithGoogle(idToken: string): Promise<{ accessToken: string; user: { id: string; username: string; email: string } }> {
+    const res = await this.request<any>('/auth/google', {
+      method: 'POST',
+      body: JSON.stringify({ idToken }),
+    });
+    return {
+      accessToken: res.accessToken,
+      user: { id: res.userId, username: '', email: '' },
+    };
+  }
+
   async register(username: string, email: string, password: string, city?: string): Promise<{ accessToken: string; user: { id: string; username: string; email: string; city?: string } }> {
     const res = await this.request<any>('/auth/register', {
       method: 'POST',

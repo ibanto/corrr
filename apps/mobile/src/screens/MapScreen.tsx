@@ -9,9 +9,12 @@ import {
   Animated,
   Easing,
   Image,
+  AppState,
+  AppStateStatus,
 } from 'react-native';
 import MapView, { Polygon, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import * as Location from 'expo-location';
+import * as TaskManager from 'expo-task-manager';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import polygonClipping from 'polygon-clipping';
@@ -22,12 +25,45 @@ import TauntSelector from '../components/TauntSelector';
 
 const GOOGLE_API_KEY = 'AIzaSyC_1Y2Fo6S9X6GJU5Upx4EZxrw4JFf_xNU';
 
+// Background location task
+const BACKGROUND_LOCATION_TASK = 'corrr-background-location';
+let bgLocationBuffer: { latitude: number; longitude: number; timestamp: number }[] = [];
+
+TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
+  if (error) return;
+  const { locations } = data as { locations: Location.LocationObject[] };
+  if (locations) {
+    for (const loc of locations) {
+      bgLocationBuffer.push({
+        latitude: loc.coords.latitude,
+        longitude: loc.coords.longitude,
+        timestamp: loc.timestamp ?? Date.now(),
+      });
+    }
+  }
+});
+
 const DEFAULT_REGION = {
   latitude: 40.4168,
   longitude: -3.7038,
   latitudeDelta: 0.06,
   longitudeDelta: 0.06,
 };
+
+// Límites de España (incluye Canarias, Baleares)
+const SPAIN_BOUNDS = {
+  north: 43.85,   // Picos de Europa
+  south: 27.5,    // Canarias sur
+  west: -18.2,    // Canarias oeste
+  east: 4.5,      // Baleares este
+};
+
+// Delta máximo para cargar zonas (si se aleja más → no cargar)
+const MAX_DELTA_FOR_ZONES = 0.15;
+
+// Anti-trampa: velocidad máxima permitida (km/h)
+// 30 km/h = ritmo de 2:00 min/km — margen para sprinters motivados
+const MAX_SPEED_KMH = 30;
 
 const MAP_STYLE = [
   { elementType: 'geometry', stylers: [{ color: '#1a1a2e' }] },
@@ -184,6 +220,7 @@ function deconflictZones(zones: RemoteZone[]): RemoteZone[] {
         if (sameOwner) continue;
         if (!bboxes[i] || !bboxes[j] || !bboxOverlap(bboxes[i]!, bboxes[j]!)) continue;
 
+        if (!currentPolygon) break;
         try {
           const remaining = polyDifference(currentPolygon, newer.polygon);
           if (remaining.length > 0 && remaining[0].length >= 3) {
@@ -332,6 +369,96 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
   });
   const [showTaunts, setShowTaunts] = useState(false);
   const [selectedRivalZone, setSelectedRivalZone] = useState<RemoteZone | null>(null);
+  const [zoomedOutTooMuch, setZoomedOutTooMuch] = useState(false);
+  const [speedWarning, setSpeedWarning] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
+  const speedWarningTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const invalidSegments = useRef(0);
+  const isRunningRef = useRef(false);
+
+  // Timestamp del último punto GPS para cálculo de velocidad real
+  const lastLocationTimestamp = useRef<number>(0);
+
+  // Background location: integrar puntos del buffer cuando la app vuelve a foreground
+  useEffect(() => {
+    const handleAppState = async (nextState: AppStateStatus) => {
+      if (!isRunningRef.current) return;
+
+      if (nextState === 'active') {
+        // Volver a foreground: integrar puntos acumulados en background
+        if (bgLocationBuffer.length > 0) {
+          for (const point of bgLocationBuffer) {
+            const newCoord = { latitude: point.latitude, longitude: point.longitude };
+            if (pathRef.current.length > 0) {
+              const prev = pathRef.current[pathRef.current.length - 1];
+              const segmentDistKm = getDistanceKm(prev, newCoord);
+              // Usar timestamps reales para velocidad
+              const timeDiffSecs = lastLocationTimestamp.current > 0
+                ? (point.timestamp - lastLocationTimestamp.current) / 1000
+                : 3;
+              if (timeDiffSecs > 0) {
+                const speedKmh = (segmentDistKm / timeDiffSecs) * 3600;
+                if (speedKmh > MAX_SPEED_KMH) {
+                  lastLocationTimestamp.current = point.timestamp;
+                  continue;
+                }
+              }
+              setDistance(d => d + segmentDistKm);
+            }
+            lastLocationTimestamp.current = point.timestamp;
+            pathRef.current = [...pathRef.current, newCoord];
+          }
+          setCurrentPath([...pathRef.current]);
+          bgLocationBuffer = [];
+
+          // Comprobar loop con los nuevos puntos
+          if (!loopDetected && pathRef.current.length >= 10) {
+            if (checkLoop(pathRef.current)) closeLoop([...pathRef.current]);
+          }
+        }
+
+        // Reanudar foreground watcher si se perdió
+        if (isRunningRef.current && !locationRef.current) {
+          locationRef.current = await Location.watchPositionAsync(
+            { accuracy: Location.Accuracy.BestForNavigation, distanceInterval: 5, timeInterval: 2000 },
+            (loc) => {
+              const newCoord = { latitude: loc.coords.latitude, longitude: loc.coords.longitude };
+              const now = loc.timestamp ?? Date.now();
+              if (pathRef.current.length > 0) {
+                const prev = pathRef.current[pathRef.current.length - 1];
+                const segmentDistKm = getDistanceKm(prev, newCoord);
+                const timeDiffSecs = lastLocationTimestamp.current > 0
+                  ? (now - lastLocationTimestamp.current) / 1000
+                  : 3;
+                if (timeDiffSecs > 0) {
+                  const speedKmh = (segmentDistKm / timeDiffSecs) * 3600;
+                  if (speedKmh > MAX_SPEED_KMH) {
+                    lastLocationTimestamp.current = now;
+                    return;
+                  }
+                }
+                setDistance(d => d + segmentDistKm);
+              }
+              lastLocationTimestamp.current = now;
+              pathRef.current = [...pathRef.current, newCoord];
+              setCurrentPath([...pathRef.current]);
+              mapRef.current?.animateToRegion({
+                latitude: newCoord.latitude, longitude: newCoord.longitude,
+                latitudeDelta: currentDelta.current.latDelta, longitudeDelta: currentDelta.current.lngDelta,
+              }, 500);
+              setSpeedWarning(false);
+              if (!loopDetected && pathRef.current.length >= 10) {
+                if (checkLoop(pathRef.current)) closeLoop([...pathRef.current]);
+              }
+            },
+          );
+        }
+      }
+    };
+
+    const sub = AppState.addEventListener('change', handleAppState);
+    return () => sub.remove();
+  }, []);
 
   // Animación para la pantalla de carga
   const pulseAnim = useRef(new Animated.Value(0.8)).current;
@@ -425,6 +552,11 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     try {
       const useLat = lat ?? mapRegion.latitude;
       const useLng = lng ?? mapRegion.longitude;
+      // No cargar zonas si el zoom es demasiado amplio
+      if (currentDelta.current.latDelta > MAX_DELTA_FOR_ZONES) {
+        setMapLoading(false);
+        return;
+      }
       const zones = await api.getNearbyZones(useLat, useLng);
 
       // Deconflictar y luego mostrar
@@ -513,7 +645,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       if (i === 0) return 0;
       return acc + getDistance(path[i-1], p);
     }, 0);
-    return dist < 120 && totalDist > 200;
+    return dist < 15 && totalDist > 200;
   };
 
   const closeLoop = async (path: Coord[]) => {
@@ -578,8 +710,9 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
 
     const isSteal = stealCount > 0;
 
-    // 100 pts por cerrar loop + 50 bonus por cada robo
-    const loopPoints = 100 + (stealCount * 50);
+    // Puntos por cerrar loop: 100 si recorrido > 3 km, sino 50
+    const loopBase = distance >= 3 ? 100 : 50;
+    const loopPoints = loopBase + (stealCount * 50);
 
     // Añadir zona propia + piezas robadas
     setConqueredZones(prev => [
@@ -608,12 +741,18 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       return;
     }
 
+    // Pedir permiso de background para que el GPS siga activo con pantalla apagada
+    const { status: bgStatus } = await Location.requestBackgroundPermissionsAsync();
+
     setIsRunning(true);
     setRunTime(0);
     setDistance(0);
     setCurrentPath([]);
     setLoopDetected(false);
+    setSpeedWarning(false);
+    invalidSegments.current = 0;
     pathRef.current = [];
+    lastLocationTimestamp.current = 0;
 
     timerRef.current = setInterval(() => setRunTime(t => t + 1), 1000);
 
@@ -626,20 +765,58 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       longitudeDelta: 0.02,
     }, 800);
 
-    locationRef.current = await Location.watchPositionAsync(
-      {
-        accuracy: Location.Accuracy.BestForNavigation,
-        distanceInterval: 10,
-        timeInterval: 3000,
-      },
-      (loc) => {
-        const newCoord = {
-          latitude: loc.coords.latitude,
-          longitude: loc.coords.longitude,
-        };
+    // Arrancar background location task con foreground service (mantiene GPS activo con pantalla apagada)
+    if (bgStatus === 'granted') {
+      bgLocationBuffer = [];
+      try {
+        await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, {
+          accuracy: Location.Accuracy.BestForNavigation,
+          distanceInterval: 5,
+          timeInterval: 2000,
+          foregroundService: {
+            notificationTitle: 'CORRR — Carrera en curso',
+            notificationBody: 'Registrando tu recorrido...',
+            notificationColor: '#FF6600',
+          },
+          pausesUpdatesAutomatically: false,
+          showsBackgroundLocationIndicator: true,
+        });
+      } catch (e) {
+        console.warn('[BG Location] No se pudo iniciar:', e);
+      }
+    }
 
-        pathRef.current = [...pathRef.current, newCoord];
-        setCurrentPath([...pathRef.current]);
+    const handleLocationUpdate = (loc: Location.LocationObject) => {
+      const newCoord = {
+        latitude: loc.coords.latitude,
+        longitude: loc.coords.longitude,
+      };
+      const now = loc.timestamp ?? Date.now();
+
+      // Anti-trampa: calcular velocidad con timestamps reales
+      if (pathRef.current.length > 0) {
+        const prev = pathRef.current[pathRef.current.length - 1];
+        const segmentDistKm = getDistanceKm(prev, newCoord);
+        const timeDiffSecs = lastLocationTimestamp.current > 0
+          ? (now - lastLocationTimestamp.current) / 1000
+          : 3;
+
+        if (timeDiffSecs > 0) {
+          const speedKmh = (segmentDistKm / timeDiffSecs) * 3600;
+          if (speedKmh > MAX_SPEED_KMH) {
+            invalidSegments.current += 1;
+            setSpeedWarning(true);
+            if (speedWarningTimeout.current) clearTimeout(speedWarningTimeout.current);
+            speedWarningTimeout.current = setTimeout(() => setSpeedWarning(false), 5000);
+            lastLocationTimestamp.current = now;
+            return;
+          }
+        }
+      }
+
+      lastLocationTimestamp.current = now;
+      pathRef.current = [...pathRef.current, newCoord];
+      setCurrentPath([...pathRef.current]);
 
         // Centrar mapa en la posición actual respetando el zoom del usuario
         mapRef.current?.animateToRegion({
@@ -654,6 +831,9 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
           setDistance(d => d + getDistanceKm(prev, newCoord));
         }
 
+        // Resetear warning si velocidad normal
+        setSpeedWarning(false);
+
         // Detectar loop cerrado
         if (!loopDetected && pathRef.current.length >= 10) {
           const start = pathRef.current[0];
@@ -664,14 +844,101 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
             closeLoop([...pathRef.current]);
           }
         }
+    };
+
+    isRunningRef.current = true;
+    locationRef.current = await Location.watchPositionAsync(
+      { accuracy: Location.Accuracy.BestForNavigation, distanceInterval: 5, timeInterval: 2000 },
+      handleLocationUpdate,
+    );
+  };
+
+  const pauseRun = async () => {
+    setIsPaused(true);
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    if (locationRef.current) { locationRef.current.remove(); locationRef.current = null; }
+    // Parar background task al pausar
+    try {
+      const isTask = await TaskManager.isTaskRegisteredAsync(BACKGROUND_LOCATION_TASK);
+      if (isTask) await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
+    } catch {}
+    bgLocationBuffer = [];
+  };
+
+  const resumeRun = async () => {
+    setIsPaused(false);
+    timerRef.current = setInterval(() => setRunTime(t => t + 1), 1000);
+
+    // Reiniciar background task
+    try {
+      const bgRunning = await TaskManager.isTaskRegisteredAsync(BACKGROUND_LOCATION_TASK);
+      if (!bgRunning) {
+        const { status } = await Location.requestBackgroundPermissionsAsync();
+        if (status === 'granted') {
+          bgLocationBuffer = [];
+          await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, {
+            accuracy: Location.Accuracy.BestForNavigation,
+            distanceInterval: 5,
+            timeInterval: 2000,
+            foregroundService: {
+              notificationTitle: 'CORRR — Carrera en curso',
+              notificationBody: 'Registrando tu recorrido...',
+              notificationColor: '#FF6600',
+            },
+            pausesUpdatesAutomatically: false,
+            showsBackgroundLocationIndicator: true,
+          });
+        }
       }
+    } catch {}
+
+    locationRef.current = await Location.watchPositionAsync(
+      { accuracy: Location.Accuracy.BestForNavigation, distanceInterval: 5, timeInterval: 2000 },
+      (loc) => {
+        const newCoord = { latitude: loc.coords.latitude, longitude: loc.coords.longitude };
+        const now = loc.timestamp ?? Date.now();
+        if (pathRef.current.length > 0) {
+          const prev = pathRef.current[pathRef.current.length - 1];
+          const segmentDistKm = getDistanceKm(prev, newCoord);
+          const timeDiffSecs = lastLocationTimestamp.current > 0
+            ? (now - lastLocationTimestamp.current) / 1000
+            : 3;
+          if (timeDiffSecs > 0) {
+            const speedKmh = (segmentDistKm / timeDiffSecs) * 3600;
+            if (speedKmh > MAX_SPEED_KMH) {
+              lastLocationTimestamp.current = now;
+              return;
+            }
+          }
+          setDistance(d => d + segmentDistKm);
+        }
+        lastLocationTimestamp.current = now;
+        pathRef.current = [...pathRef.current, newCoord];
+        setCurrentPath([...pathRef.current]);
+        mapRef.current?.animateToRegion({
+          latitude: newCoord.latitude, longitude: newCoord.longitude,
+          latitudeDelta: currentDelta.current.latDelta, longitudeDelta: currentDelta.current.lngDelta,
+        }, 500);
+        setSpeedWarning(false);
+        if (!loopDetected && pathRef.current.length >= 10) {
+          if (checkLoop(pathRef.current)) closeLoop([...pathRef.current]);
+        }
+      },
     );
   };
 
   const stopRun = async () => {
     setIsRunning(false);
+    setIsPaused(false);
+    isRunningRef.current = false;
     if (timerRef.current) clearInterval(timerRef.current);
     if (locationRef.current) locationRef.current.remove();
+    // Parar background task si estaba activo
+    try {
+      const isTask = await TaskManager.isTaskRegisteredAsync(BACKGROUND_LOCATION_TASK);
+      if (isTask) await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
+    } catch {}
+    bgLocationBuffer = [];
 
     // Si no cerró loop durante la carrera, comprobar si está cerca del inicio al parar
     if (!loopDetected && pathRef.current.length >= 10) {
@@ -1001,10 +1268,22 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
           toolbarEnabled={false}
           onRegionChangeComplete={(region) => {
             currentDelta.current = { latDelta: region.latitudeDelta, lngDelta: region.longitudeDelta };
+            // Comprobar si está demasiado lejos para mostrar zonas
+            setZoomedOutTooMuch(region.latitudeDelta > MAX_DELTA_FOR_ZONES);
+            // Limitar al territorio español
+            const clampedLat = Math.max(SPAIN_BOUNDS.south, Math.min(SPAIN_BOUNDS.north, region.latitude));
+            const clampedLng = Math.max(SPAIN_BOUNDS.west, Math.min(SPAIN_BOUNDS.east, region.longitude));
+            if (clampedLat !== region.latitude || clampedLng !== region.longitude) {
+              mapRef.current?.animateToRegion({
+                ...region,
+                latitude: clampedLat,
+                longitude: clampedLng,
+              }, 300);
+            }
           }}
         >
           {/* Zonas del servidor: ordenadas por fecha (antiguas primero, recientes encima) */}
-          {[...remoteZones]
+          {!zoomedOutTooMuch && [...remoteZones]
             .sort((a, b) => {
               const da = a.conquered_at ? new Date(a.conquered_at).getTime() : 0;
               const db = b.conquered_at ? new Date(b.conquered_at).getTime() : 0;
@@ -1076,6 +1355,14 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
           )}
         </MapView>
 
+        {/* Banner: acércate para ver zonas */}
+        {zoomedOutTooMuch && !isRunning && (
+          <View style={styles.zoomBanner}>
+            <Ionicons name="search-outline" size={16} color={colors.orange} />
+            <Text style={styles.zoomBannerText}>Acércate para ver los territorios</Text>
+          </View>
+        )}
+
         {/* Botón centrar en mi ubicación (oculto mientras corres, el mapa ya te sigue) */}
         {!isRunning && (
           <TouchableOpacity
@@ -1096,6 +1383,14 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
           <View style={styles.loopBanner}>
             <Ionicons name="checkmark-circle" size={20} color={colors.success} />
             <Text style={styles.loopBannerText}>¡Zona cerrada! Calculando...</Text>
+          </View>
+        )}
+
+        {/* Anti-trampa: aviso velocidad excesiva */}
+        {speedWarning && (
+          <View style={styles.speedBanner}>
+            <Ionicons name="speedometer" size={18} color="#FF3B30" />
+            <Text style={styles.speedBannerText}>Velocidad no válida — ¡corre, no conduzcas!</Text>
           </View>
         )}
 
@@ -1139,17 +1434,27 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
             <Ionicons name="play" size={18} color="#fff" />
             <Text style={styles.startBtnText}>INICIAR CARRERA</Text>
           </TouchableOpacity>
-        ) : (
+        ) : !isPaused ? (
           <View style={styles.runControls}>
             <TouchableOpacity style={styles.runControlBtn}>
               <Ionicons name="lock-closed" size={22} color={colors.textSecondary} />
             </TouchableOpacity>
-            <TouchableOpacity style={styles.pauseBtn} onPress={stopRun}>
-              <Ionicons name="stop" size={28} color="#fff" />
+            <TouchableOpacity style={styles.pauseBtn} onPress={pauseRun}>
+              <Ionicons name="pause" size={28} color="#fff" />
             </TouchableOpacity>
             <TouchableOpacity style={styles.runControlBtn}>
               <Ionicons name="location" size={22} color={colors.textSecondary} />
             </TouchableOpacity>
+          </View>
+        ) : (
+          <View style={styles.runControls}>
+            <TouchableOpacity style={styles.stopBtn} onPress={stopRun}>
+              <Ionicons name="stop" size={24} color="#fff" />
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.resumeBtn} onPress={resumeRun}>
+              <Ionicons name="play" size={28} color="#fff" />
+            </TouchableOpacity>
+            <View style={{ width: 52 }} />
           </View>
         )}
       </View>
@@ -1203,6 +1508,22 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm, gap: spacing.xs,
   },
   loopBannerText: { fontSize: 14, fontWeight: '700', color: colors.success },
+  zoomBanner: {
+    position: 'absolute', top: spacing.md, left: spacing.md, right: spacing.md,
+    backgroundColor: 'rgba(255,149,0,0.12)', borderRadius: radius.full,
+    borderWidth: 1, borderColor: `${colors.orange}50`,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    paddingVertical: spacing.sm, gap: spacing.xs,
+  },
+  zoomBannerText: { fontSize: 14, fontWeight: '700', color: colors.orange },
+  speedBanner: {
+    position: 'absolute', top: spacing.md, left: spacing.md, right: spacing.md,
+    backgroundColor: 'rgba(255,59,48,0.15)', borderRadius: radius.full,
+    borderWidth: 1, borderColor: '#FF3B30',
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    paddingVertical: spacing.sm, gap: spacing.xs,
+  },
+  speedBannerText: { fontSize: 13, fontWeight: '700', color: '#FF3B30' },
   runningOverlay: {
     position: 'absolute', bottom: 0, left: 0, right: 0,
     flexDirection: 'row', backgroundColor: 'rgba(0,0,0,0.85)',
@@ -1213,8 +1534,8 @@ const styles = StyleSheet.create({
   runStatLabel: { fontSize: 11, color: colors.textSecondary, textTransform: 'uppercase' },
   runStatDivider: { width: 1, height: 32, backgroundColor: colors.border },
   bottom: {
-    paddingHorizontal: spacing.md, paddingBottom: spacing.md, paddingTop: spacing.sm,
-    gap: spacing.sm, backgroundColor: colors.bg,
+    paddingHorizontal: spacing.lg, paddingBottom: spacing.lg, paddingTop: spacing.md,
+    gap: spacing.md, backgroundColor: colors.bg,
   },
   territoryRow: { flexDirection: 'row', justifyContent: 'space-around' },
   territoryStat: { alignItems: 'center' },
@@ -1235,6 +1556,15 @@ const styles = StyleSheet.create({
     width: 68, height: 68, borderRadius: 34, backgroundColor: colors.orange,
     alignItems: 'center', justifyContent: 'center',
     shadowColor: colors.orange, shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.6, shadowRadius: 16,
+  },
+  resumeBtn: {
+    width: 68, height: 68, borderRadius: 34, backgroundColor: colors.success,
+    alignItems: 'center', justifyContent: 'center',
+    shadowColor: colors.success, shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.6, shadowRadius: 16,
+  },
+  stopBtn: {
+    width: 52, height: 52, borderRadius: 26, backgroundColor: '#FF3B30',
+    alignItems: 'center', justifyContent: 'center',
   },
   // Resumen post-carrera
   summaryOverlay: {

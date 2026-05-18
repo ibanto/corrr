@@ -269,6 +269,53 @@ export default function PerfilScreen({ user, onLogout }: Props) {
 
       <View style={styles.section}>
         <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>Cómo funcionan los puntos</Text>
+        </View>
+        <View style={styles.pointsInfoCard}>
+          <View style={styles.pointsInfoRow}>
+            <View style={styles.pointsInfoIcon}><Ionicons name="navigate" size={16} color={colors.orange} /></View>
+            <View style={styles.pointsInfoBody}>
+              <Text style={styles.pointsInfoLabel}>Por kilómetro</Text>
+              <Text style={styles.pointsInfoValue}>50 pts/km</Text>
+            </View>
+          </View>
+          <View style={styles.pointsInfoDivider} />
+          <View style={styles.pointsInfoRow}>
+            <View style={styles.pointsInfoIcon}><Ionicons name="flag" size={16} color={colors.orange} /></View>
+            <View style={styles.pointsInfoBody}>
+              <Text style={styles.pointsInfoLabel}>Cerrar zona (≥ 3 km)</Text>
+              <Text style={styles.pointsInfoValue}>100 pts</Text>
+            </View>
+          </View>
+          <View style={styles.pointsInfoDivider} />
+          <View style={styles.pointsInfoRow}>
+            <View style={styles.pointsInfoIcon}><Ionicons name="flag-outline" size={16} color={colors.textSecondary} /></View>
+            <View style={styles.pointsInfoBody}>
+              <Text style={styles.pointsInfoLabel}>Cerrar zona ({'<'} 3 km)</Text>
+              <Text style={styles.pointsInfoValue}>50 pts</Text>
+            </View>
+          </View>
+          <View style={styles.pointsInfoDivider} />
+          <View style={styles.pointsInfoRow}>
+            <View style={styles.pointsInfoIcon}><Ionicons name="hand-left" size={16} color="#FF3B30" /></View>
+            <View style={styles.pointsInfoBody}>
+              <Text style={styles.pointsInfoLabel}>Robar zona rival</Text>
+              <Text style={styles.pointsInfoValue}>+50 pts/robo</Text>
+            </View>
+          </View>
+          <View style={styles.pointsInfoDivider} />
+          <View style={styles.pointsInfoRow}>
+            <View style={styles.pointsInfoIcon}><Ionicons name="flash" size={16} color="#FFD700" /></View>
+            <View style={styles.pointsInfoBody}>
+              <Text style={styles.pointsInfoLabel}>Experiencia (XP)</Text>
+              <Text style={styles.pointsInfoValue}>1 XP por cada 100 pts</Text>
+            </View>
+          </View>
+        </View>
+      </View>
+
+      <View style={styles.section}>
+        <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Actividad reciente</Text>
         </View>
         {runs.length === 0 ? (
@@ -454,6 +501,21 @@ const styles = StyleSheet.create({
   achievementLabel: { fontSize: 11, fontWeight: '700', color: colors.textPrimary, textAlign: 'center' },
   achievementSub: { fontSize: 10, color: colors.textSecondary, textAlign: 'center' },
   emptyText: { fontSize: 14, color: colors.textSecondary, textAlign: 'center', paddingVertical: spacing.md },
+  pointsInfoCard: {
+    backgroundColor: colors.bgCard, borderRadius: radius.lg,
+    padding: spacing.md, borderWidth: 1, borderColor: colors.border,
+  },
+  pointsInfoRow: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingVertical: 8,
+  },
+  pointsInfoIcon: {
+    width: 32, height: 32, borderRadius: radius.md, backgroundColor: colors.bgCardAlt,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  pointsInfoBody: { flex: 1, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  pointsInfoLabel: { fontSize: 13, fontWeight: '600', color: colors.textPrimary },
+  pointsInfoValue: { fontSize: 13, fontWeight: '800', color: colors.orange },
+  pointsInfoDivider: { height: 1, backgroundColor: colors.border, marginLeft: 44 },
   runRow: {
     flexDirection: 'row', alignItems: 'center', paddingVertical: spacing.sm,
     borderBottomWidth: 1, borderBottomColor: colors.border, gap: spacing.sm,

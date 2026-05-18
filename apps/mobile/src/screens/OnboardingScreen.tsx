@@ -14,10 +14,24 @@ import {
   FlatList,
   ImageBackground,
   ImageSourcePropType,
+  ScrollView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, radius } from '../theme';
 import { api } from '../services/api';
+let GoogleSignin: any = null;
+let statusCodes: any = {};
+try {
+  const gsi = require('@react-native-google-signin/google-signin');
+  GoogleSignin = gsi.GoogleSignin;
+  statusCodes = gsi.statusCodes;
+  GoogleSignin.configure({
+    webClientId: '972157866515-d0ee9tofuvth8k5j12n43e2feebm2plm.apps.googleusercontent.com',
+    offlineAccess: false,
+  });
+} catch {
+  // Módulo nativo no disponible (build antiguo)
+}
 
 const { width, height } = Dimensions.get('window');
 
@@ -100,6 +114,30 @@ export default function OnboardingScreen({ onAuthenticated }: Props) {
     }
   };
 
+  const handleGoogleSignIn = async () => {
+    if (!GoogleSignin) {
+      Alert.alert('No disponible', 'Google Sign-In requiere una versión más reciente de la app.');
+      return;
+    }
+    try {
+      await GoogleSignin.hasPlayServices();
+      const userInfo = await GoogleSignin.signIn();
+      const idToken = userInfo.data?.idToken;
+      if (!idToken) { Alert.alert('Error', 'No se pudo obtener el token de Google'); return; }
+      setLoading(true);
+      const res = await api.loginWithGoogle(idToken);
+      api.setToken(res.accessToken);
+      api.setUserId(res.user.id);
+      onAuthenticated(res.accessToken, res.user);
+    } catch (error: any) {
+      if (error.code === statusCodes.SIGN_IN_CANCELLED) return;
+      if (error.code === statusCodes.IN_PROGRESS) return;
+      Alert.alert('Error', String(error.message || error));
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const glowOpacity = glowAnim.interpolate({ inputRange: [0, 1], outputRange: [0.3, 0.8] });
 
   if (mode === 'intro') {
@@ -159,98 +197,117 @@ export default function OnboardingScreen({ onAuthenticated }: Props) {
 
   if (mode === 'splash') {
     return (
-      <ImageBackground
-        source={require('../../assets/onboarding/splash.png')}
-        style={styles.splashContainer}
-        resizeMode="cover"
-      >
-        <View style={styles.splashSpacer} />
+      <View style={styles.splashContainer}>
+        <ImageBackground
+          source={require('../../assets/onboarding/splash.png')}
+          style={styles.splashImage}
+          resizeMode="cover"
+        />
         <View style={styles.splashBottom}>
           <TouchableOpacity style={styles.btnPrimary} onPress={() => setMode('register')}>
             <Text style={styles.btnPrimaryText}>EMPEZAR  →</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.btnGoogle} onPress={handleGoogleSignIn}>
+            <Text style={styles.btnGoogleIcon}>G</Text>
+            <Text style={styles.btnGoogleText}>Continuar con Google</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.btnSecondary} onPress={() => setMode('login')}>
             <Text style={styles.btnSecondaryText}>Ya tengo cuenta</Text>
           </TouchableOpacity>
         </View>
-      </ImageBackground>
+      </View>
     );
   }
 
   return (
-    <KeyboardAvoidingView style={styles.authContainer} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <TouchableOpacity style={styles.backBtn} onPress={() => setMode('splash')}>
-        <Ionicons name="arrow-back" size={20} color={colors.textSecondary} />
-        <Text style={styles.backBtnText}>Volver</Text>
-      </TouchableOpacity>
-      <View style={styles.authHeader}>
-        <Text style={styles.flameEmoji}>🔥</Text>
-        <Text style={styles.authTitle}>{mode === 'login' ? 'Iniciar sesión' : 'Crear cuenta'}</Text>
-        <Text style={styles.authSubtitle}>
-          {mode === 'login' ? 'Bienvenido de vuelta, corredor' : 'Únete a miles de corredores en España'}
-        </Text>
-      </View>
-      <View style={styles.form}>
-        {mode === 'register' && (
-          <>
-            <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Nombre de usuario</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="RunnerMadrid"
-                placeholderTextColor={colors.textMuted}
-                value={username}
-                onChangeText={setUsername}
-                autoCapitalize="none"
-              />
-            </View>
-            <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Ciudad</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="Madrid"
-                placeholderTextColor={colors.textMuted}
-                value={city}
-                onChangeText={setCity}
-                autoCapitalize="words"
-              />
-            </View>
-          </>
-        )}
-        <View style={styles.inputGroup}>
-          <Text style={styles.inputLabel}>Email</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="tu@email.com"
-            placeholderTextColor={colors.textMuted}
-            value={email}
-            onChangeText={setEmail}
-            keyboardType="email-address"
-            autoCapitalize="none"
-          />
-        </View>
-        <View style={styles.inputGroup}>
-          <Text style={styles.inputLabel}>Contraseña</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="••••••••"
-            placeholderTextColor={colors.textMuted}
-            value={password}
-            onChangeText={setPassword}
-            secureTextEntry
-          />
-        </View>
-        <TouchableOpacity style={[styles.btnPrimary, { marginTop: spacing.lg }]} onPress={handleSubmit} disabled={loading}>
-          {loading ? <ActivityIndicator color="#fff" /> : (
-            <Text style={styles.btnPrimaryText}>{mode === 'login' ? 'Entrar →' : 'Crear cuenta →'}</Text>
-          )}
+    <KeyboardAvoidingView style={styles.authContainer} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+      <ScrollView
+        contentContainerStyle={styles.authScroll}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
+        <TouchableOpacity style={styles.backBtn} onPress={() => setMode('splash')}>
+          <Ionicons name="arrow-back" size={20} color={colors.textSecondary} />
+          <Text style={styles.backBtnText}>Volver</Text>
         </TouchableOpacity>
-        <TouchableOpacity onPress={() => setMode(mode === 'login' ? 'register' : 'login')} style={styles.switchMode}>
-          <Text style={styles.switchModeText}>
-            {mode === 'login' ? '¿No tienes cuenta? Regístrate' : '¿Ya tienes cuenta? Inicia sesión'}
+        <View style={styles.authHeader}>
+          <Text style={styles.flameEmoji}>🔥</Text>
+          <Text style={styles.authTitle}>{mode === 'login' ? 'Iniciar sesión' : 'Crear cuenta'}</Text>
+          <Text style={styles.authSubtitle}>
+            {mode === 'login' ? 'Bienvenido de vuelta, corredor' : 'Únete a miles de corredores en España'}
           </Text>
-        </TouchableOpacity>
-      </View>
+        </View>
+        <View style={styles.form}>
+          {mode === 'register' && (
+            <>
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>Nombre de usuario</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="RunnerMadrid"
+                  placeholderTextColor={colors.textMuted}
+                  value={username}
+                  onChangeText={setUsername}
+                  autoCapitalize="none"
+                />
+              </View>
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>Ciudad</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Madrid"
+                  placeholderTextColor={colors.textMuted}
+                  value={city}
+                  onChangeText={setCity}
+                  autoCapitalize="words"
+                />
+              </View>
+            </>
+          )}
+          <View style={styles.inputGroup}>
+            <Text style={styles.inputLabel}>Email</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="tu@email.com"
+              placeholderTextColor={colors.textMuted}
+              value={email}
+              onChangeText={setEmail}
+              keyboardType="email-address"
+              autoCapitalize="none"
+            />
+          </View>
+          <View style={styles.inputGroup}>
+            <Text style={styles.inputLabel}>Contraseña</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="••••••••"
+              placeholderTextColor={colors.textMuted}
+              value={password}
+              onChangeText={setPassword}
+              secureTextEntry
+            />
+          </View>
+          <TouchableOpacity style={[styles.btnPrimary, { marginTop: spacing.lg }]} onPress={handleSubmit} disabled={loading}>
+            {loading ? <ActivityIndicator color="#fff" /> : (
+              <Text style={styles.btnPrimaryText}>{mode === 'login' ? 'Entrar →' : 'Crear cuenta →'}</Text>
+            )}
+          </TouchableOpacity>
+          <View style={styles.dividerRow}>
+            <View style={styles.dividerLine} />
+            <Text style={styles.dividerText}>o</Text>
+            <View style={styles.dividerLine} />
+          </View>
+          <TouchableOpacity style={styles.btnGoogle} onPress={handleGoogleSignIn}>
+            <Text style={styles.btnGoogleIcon}>G</Text>
+            <Text style={styles.btnGoogleText}>Continuar con Google</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => setMode(mode === 'login' ? 'register' : 'login')} style={styles.switchMode}>
+            <Text style={styles.switchModeText}>
+              {mode === 'login' ? '¿No tienes cuenta? Regístrate' : '¿Ya tienes cuenta? Inicia sesión'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </ScrollView>
     </KeyboardAvoidingView>
   );
 }
@@ -271,7 +328,7 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     paddingHorizontal: spacing.lg,
-    paddingBottom: Platform.OS === 'ios' ? 50 : 40,
+    paddingBottom: Platform.OS === 'ios' ? 50 : 64,
     gap: 14,
   },
   dots: {
@@ -322,10 +379,11 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#000',
   },
-  splashSpacer: { flex: 1 },
+  splashImage: { flex: 1 },
   splashBottom: {
     paddingHorizontal: spacing.lg,
-    paddingBottom: Platform.OS === 'ios' ? 50 : 40,
+    paddingBottom: Platform.OS === 'ios' ? 50 : 64,
+    paddingTop: 20,
     gap: 12,
   },
   btnPrimary: {
@@ -338,7 +396,8 @@ const styles = StyleSheet.create({
     alignItems: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)',
   },
   btnSecondaryText: { color: 'rgba(255,255,255,0.5)', fontSize: 16, fontWeight: '600' },
-  authContainer: { flex: 1, backgroundColor: colors.bg, paddingHorizontal: spacing.lg, paddingTop: 60 },
+  authContainer: { flex: 1, backgroundColor: colors.bg },
+  authScroll: { flexGrow: 1, paddingHorizontal: spacing.lg, paddingTop: 60, paddingBottom: 40 },
   backBtn: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, marginBottom: spacing.xl },
   backBtnText: { color: colors.textSecondary, fontSize: 16 },
   authHeader: { marginBottom: spacing.xl },
@@ -354,4 +413,19 @@ const styles = StyleSheet.create({
   },
   switchMode: { alignItems: 'center', marginTop: spacing.md },
   switchModeText: { color: colors.orange, fontSize: 14, fontWeight: '500' },
+  btnGoogle: {
+    backgroundColor: '#fff', paddingVertical: 16, borderRadius: radius.full,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10,
+  },
+  btnGoogleIcon: {
+    fontSize: 20, fontWeight: '700', color: '#4285F4',
+    width: 24, textAlign: 'center',
+  },
+  btnGoogleText: { color: '#333', fontSize: 16, fontWeight: '700' },
+  dividerRow: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.md,
+    marginTop: spacing.md, marginBottom: spacing.xs,
+  },
+  dividerLine: { flex: 1, height: 1, backgroundColor: colors.border },
+  dividerText: { color: colors.textMuted, fontSize: 13, fontWeight: '600' },
 });

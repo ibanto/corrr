@@ -159,7 +159,7 @@ export default function App() {
                 onPress={() => setActiveTab(tab.key)}
                 activeOpacity={0.7}
               >
-                <View>
+                <View style={styles.tabItemInner}>
                   <Image
                     source={isActive ? icons.active : icons.inactive}
                     style={styles.tabIcon}
@@ -171,6 +171,7 @@ export default function App() {
                     </View>
                   )}
                 </View>
+                {/* <Text style={[styles.tabLabel, isActive && styles.tabLabelActive]}>{tab.label}</Text> */}
               </TouchableOpacity>
             );
           })}
@@ -195,10 +196,13 @@ const styles = StyleSheet.create({
   tabBar: {
     flexDirection: 'row', backgroundColor: colors.bgCard,
     borderTopWidth: 1, borderTopColor: colors.border,
-    paddingTop: 8, paddingBottom: Platform.OS === 'ios' ? 0 : 32,
+    paddingTop: 8, paddingBottom: Platform.OS === 'ios' ? 0 : 48,
   },
   tabItem: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 2 },
-  tabIcon: { width: 60, height: 92 },
+  tabItemInner: { position: 'relative' },
+  tabIcon: { width: 88, height: 88 },
+  tabLabel: { fontSize: 10, fontWeight: '600', color: colors.textMuted, marginTop: 2 },
+  tabLabelActive: { color: colors.orange, fontWeight: '700' },
   badge: {
     position: 'absolute', top: 2, right: -4,
     backgroundColor: '#FB0E01', borderRadius: 10,

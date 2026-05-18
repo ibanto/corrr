@@ -95,6 +95,7 @@ async function initDB() {
   await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT`);
 
   // Strava tokens
+  await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS google_id TEXT`);
   await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS strava_athlete_id BIGINT`);
   await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS strava_access_token TEXT`);
   await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS strava_refresh_token TEXT`);
@@ -176,6 +177,49 @@ app.post('/auth/login', async (req: any, reply) => {
       .setExpirationTime('7d')
       .sign(SECRET);
     return reply.send({ userId: rows[0].id, accessToken: token });
+  } catch (err) { return reply.status(500).send({ error: String(err) }); }
+});
+
+app.post('/auth/google', async (req: any, reply) => {
+  const { idToken } = req.body;
+  if (!idToken) return reply.status(400).send({ error: 'idToken requerido' });
+  try {
+    // Verificar el token de Google
+    const googleRes = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${idToken}`);
+    if (!googleRes.ok) return reply.status(401).send({ error: 'Token de Google inválido' });
+    const gUser: any = await googleRes.json();
+
+    const googleId = gUser.sub;
+    const email = gUser.email;
+    const name = gUser.name || email.split('@')[0];
+
+    // Buscar usuario existente por google_id o email
+    let { rows } = await db.query(
+      'SELECT id FROM users WHERE google_id = $1 OR email = $2 LIMIT 1',
+      [googleId, email]
+    );
+
+    let userId: string;
+    if (rows.length) {
+      userId = rows[0].id;
+      // Actualizar google_id si no lo tenía
+      await db.query('UPDATE users SET google_id = $1 WHERE id = $2 AND google_id IS NULL', [googleId, userId]);
+    } else {
+      // Crear usuario nuevo (sin password)
+      const res = await db.query(
+        'INSERT INTO users (email, display_name, google_id) VALUES ($1,$2,$3) RETURNING id',
+        [email, name, googleId]
+      );
+      userId = res.rows[0].id;
+      await db.query('INSERT INTO user_stats (user_id) VALUES ($1)', [userId]);
+    }
+
+    const token = await new SignJWT({ sub: userId })
+      .setProtectedHeader({ alg: 'HS256' })
+      .setExpirationTime('7d')
+      .sign(SECRET);
+
+    return reply.send({ userId, accessToken: token });
   } catch (err) { return reply.status(500).send({ error: String(err) }); }
 });
 
