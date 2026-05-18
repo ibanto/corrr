@@ -119,10 +119,7 @@ class ApiService {
       method: 'POST',
       body: JSON.stringify({ email, password }),
     });
-    return {
-      accessToken: res.accessToken,
-      user: { id: res.userId, username: email.split('@')[0], email },
-    };
+    return { accessToken: res.accessToken, user: res.user };
   }
 
   async loginWithGoogle(idToken: string): Promise<{ accessToken: string; user: { id: string; username: string; email: string } }> {
@@ -130,10 +127,7 @@ class ApiService {
       method: 'POST',
       body: JSON.stringify({ idToken }),
     });
-    return {
-      accessToken: res.accessToken,
-      user: { id: res.userId, username: '', email: '' },
-    };
+    return { accessToken: res.accessToken, user: res.user };
   }
 
   async register(username: string, email: string, password: string, city?: string): Promise<{ accessToken: string; user: { id: string; username: string; email: string; city?: string } }> {
@@ -141,10 +135,7 @@ class ApiService {
       method: 'POST',
       body: JSON.stringify({ email, password, displayName: username, city }),
     });
-    return {
-      accessToken: res.accessToken,
-      user: { id: res.userId, username, email, city },
-    };
+    return { accessToken: res.accessToken, user: res.user };
   }
 
   async getCitiesRanking(): Promise<RankingEntry[]> {

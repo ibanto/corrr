@@ -101,6 +101,7 @@ async function initDB() {
   await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS strava_refresh_token TEXT`);
   await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS strava_token_expires_at BIGINT`);
   await db.query(`CREATE INDEX IF NOT EXISTS users_strava_idx ON users(strava_athlete_id)`).catch(() => {});
+  await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS users_display_name_unique ON users(LOWER(display_name))`).catch(() => {});
 
   // Activar Row Level Security en todas las tablas (bloquea acceso directo vía Supabase API)
   for (const table of ['users', 'user_stats', 'runs', 'zones']) {
@@ -150,6 +151,9 @@ app.post('/auth/register', async (req: any, reply) => {
   try {
     const ex = await db.query('SELECT id FROM users WHERE email = $1', [email]);
     if (ex.rows.length) return reply.status(400).send({ error: 'Email ya registrado' });
+    // Comprobar nombre de usuario único (case-insensitive)
+    const nameCheck = await db.query('SELECT id FROM users WHERE LOWER(display_name) = LOWER($1)', [displayName]);
+    if (nameCheck.rows.length) return reply.status(400).send({ error: 'Ese nombre de usuario ya está en uso' });
     const ph = await hash(password);
     const { rows } = await db.query(
       'INSERT INTO users (email, password_hash, display_name, city) VALUES ($1,$2,$3,$4) RETURNING id',
@@ -161,22 +165,23 @@ app.post('/auth/register', async (req: any, reply) => {
       .setProtectedHeader({ alg: 'HS256' })
       .setExpirationTime('7d')
       .sign(SECRET);
-    return reply.status(201).send({ userId: uid, accessToken: token });
+    return reply.status(201).send({ accessToken: token, user: { id: uid, username: displayName, email, city } });
   } catch (err) { return reply.status(500).send({ error: String(err) }); }
 });
 
 app.post('/auth/login', async (req: any, reply) => {
   const { email, password } = req.body;
   try {
-    const { rows } = await db.query('SELECT id, password_hash FROM users WHERE email = $1', [email]);
+    const { rows } = await db.query('SELECT id, password_hash, display_name, email, city FROM users WHERE email = $1', [email]);
     if (!rows.length) return reply.status(401).send({ error: 'Credenciales incorrectas' });
     const valid = await verify(rows[0].password_hash, password);
     if (!valid) return reply.status(401).send({ error: 'Credenciales incorrectas' });
-    const token = await new SignJWT({ sub: rows[0].id })
+    const u = rows[0];
+    const token = await new SignJWT({ sub: u.id })
       .setProtectedHeader({ alg: 'HS256' })
       .setExpirationTime('7d')
       .sign(SECRET);
-    return reply.send({ userId: rows[0].id, accessToken: token });
+    return reply.send({ accessToken: token, user: { id: u.id, username: u.display_name, email: u.email, city: u.city } });
   } catch (err) { return reply.status(500).send({ error: String(err) }); }
 });
 
