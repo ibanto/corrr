@@ -214,12 +214,19 @@ app.post('/auth/google', async (req: any, reply) => {
       await db.query('INSERT INTO user_stats (user_id) VALUES ($1)', [userId]);
     }
 
+    // Obtener datos completos del usuario
+    const userRow = await db.query('SELECT id, email, display_name, city FROM users WHERE id = $1', [userId]);
+    const u = userRow.rows[0];
+
     const token = await new SignJWT({ sub: userId })
       .setProtectedHeader({ alg: 'HS256' })
       .setExpirationTime('7d')
       .sign(SECRET);
 
-    return reply.send({ userId, accessToken: token });
+    return reply.send({
+      accessToken: token,
+      user: { id: u.id, username: u.display_name, email: u.email, city: u.city },
+    });
   } catch (err) { return reply.status(500).send({ error: String(err) }); }
 });
 
