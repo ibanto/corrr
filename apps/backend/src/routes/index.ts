@@ -486,11 +486,11 @@ app.post('/users/push-token', { preHandler: requireAuth }, async (req: any, repl
 app.get('/ranking/global', async (req, reply) => {
   const { rows } = await db.query(`
     SELECT u.id AS user_id, u.display_name, u.city,
-           COALESCE(s.total_points, 0) + (s.total_zones * 450) AS total_points,
+           COALESCE(s.total_points, 0) AS total_points,
            s.total_zones
     FROM user_stats s
     JOIN users u ON u.id = s.user_id
-    ORDER BY (COALESCE(s.total_points, 0) + s.total_zones * 450) DESC
+    ORDER BY COALESCE(s.total_points, 0) DESC
     LIMIT 100
   `);
   return reply.send(rows);
@@ -501,12 +501,12 @@ app.get('/ranking/city', async (req: any, reply) => {
   if (!city) return reply.status(400).send({ error: 'city requerido' });
   const { rows } = await db.query(`
     SELECT u.id AS user_id, u.display_name, u.city,
-           COALESCE(s.total_points, 0) + (s.total_zones * 450) AS total_points,
+           COALESCE(s.total_points, 0) AS total_points,
            s.total_zones
     FROM user_stats s
     JOIN users u ON u.id = s.user_id
     WHERE LOWER(u.city) = LOWER($1)
-    ORDER BY (COALESCE(s.total_points, 0) + s.total_zones * 450) DESC
+    ORDER BY COALESCE(s.total_points, 0) DESC
     LIMIT 100
   `, [city]);
   return reply.send(rows);
@@ -517,12 +517,12 @@ app.get('/ranking/cities', async (req, reply) => {
   const { rows } = await db.query(`
     SELECT DISTINCT ON (LOWER(u.city))
            u.id AS user_id, u.display_name, u.city,
-           COALESCE(s.total_points, 0) + (s.total_zones * 450) AS total_points,
+           COALESCE(s.total_points, 0) AS total_points,
            s.total_zones
     FROM user_stats s
     JOIN users u ON u.id = s.user_id
     WHERE u.city IS NOT NULL AND u.city != ''
-    ORDER BY LOWER(u.city), (COALESCE(s.total_points, 0) + s.total_zones * 450) DESC
+    ORDER BY LOWER(u.city), COALESCE(s.total_points, 0) DESC
   `);
   return reply.send(rows);
 });
