@@ -407,6 +407,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
   const [selectedRivalZone, setSelectedRivalZone] = useState<RemoteZone | null>(null);
   const [zoomedOutTooMuch, setZoomedOutTooMuch] = useState(false);
   const [speedWarning, setSpeedWarning] = useState(false);
+  const [currentSpeed, setCurrentSpeed] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
   const speedWarningTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const invalidSegments = useRef(0);
@@ -805,6 +806,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     setCurrentPath([]);
     setLoopDetected(false);
     setSpeedWarning(false);
+    setCurrentSpeed(0);
     invalidSegments.current = 0;
     pathRef.current = [];
     lastLocationTimestamp.current = 0;
@@ -881,6 +883,10 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         }
 
         setDistance(d => d + segmentDistKm);
+        // Velocidad instantánea
+        if (timeDiffSecs > 0) {
+          setCurrentSpeed((segmentDistKm / timeDiffSecs) * 3600);
+        }
       }
 
       lastLocationTimestamp.current = now;
@@ -1483,7 +1489,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         <View style={styles.territoryRow}>
           {[
             { value: `${conqueredZones.filter(z => z.area > 0).length}`, label: 'Zonas' },
-            { value: isRunning ? `${pace}` : `${distance.toFixed(1)} km`, label: isRunning ? 'Min/km' : 'Distancia' },
+            { value: isRunning ? `${currentSpeed.toFixed(1)}` : `${distance.toFixed(1)} km`, label: isRunning ? 'Km/h' : 'Distancia' },
             { value: `${totalPoints}`, label: 'Puntos' },
           ].map((s, i) => (
             <View key={i} style={styles.territoryStat}>
