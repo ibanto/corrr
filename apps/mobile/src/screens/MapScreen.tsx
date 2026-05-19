@@ -64,6 +64,10 @@ const MAX_DELTA_FOR_ZONES = 0.15;
 // Anti-trampa: velocidad máxima permitida (km/h)
 // 30 km/h = ritmo de 2:00 min/km — margen para sprinters motivados
 const MAX_SPEED_KMH = 30;
+// Distancia máxima entre dos puntos consecutivos (metros) — filtra teleports por sleep
+const MAX_JUMP_METERS = 100;
+// Tiempo máximo sin señal antes de considerar gap (segundos)
+const MAX_GAP_SECONDS = 15;
 
 const MAP_STYLE = [
   { elementType: 'geometry', stylers: [{ color: '#1a1a2e' }] },
@@ -315,6 +319,38 @@ function getDistanceKm(a: Coord, b: Coord): number {
   return getDistance(a, b) / 1000;
 }
 
+/** Douglas-Peucker path simplification — reduce puntos conservando la forma */
+function simplifyPath(points: Coord[], tolerance: number): Coord[] {
+  if (points.length <= 3) return points;
+  let maxDist = 0;
+  let maxIdx = 0;
+  const first = points[0];
+  const last = points[points.length - 1];
+  for (let i = 1; i < points.length - 1; i++) {
+    const d = perpendicularDist(points[i], first, last);
+    if (d > maxDist) { maxDist = d; maxIdx = i; }
+  }
+  if (maxDist > tolerance) {
+    const left = simplifyPath(points.slice(0, maxIdx + 1), tolerance);
+    const right = simplifyPath(points.slice(maxIdx), tolerance);
+    return [...left.slice(0, -1), ...right];
+  }
+  return [first, last];
+}
+
+function perpendicularDist(point: Coord, lineStart: Coord, lineEnd: Coord): number {
+  const dx = lineEnd.latitude - lineStart.latitude;
+  const dy = lineEnd.longitude - lineStart.longitude;
+  if (dx === 0 && dy === 0) {
+    return Math.sqrt((point.latitude - lineStart.latitude) ** 2 + (point.longitude - lineStart.longitude) ** 2);
+  }
+  const t = ((point.latitude - lineStart.latitude) * dx + (point.longitude - lineStart.longitude) * dy) / (dx * dx + dy * dy);
+  const tc = Math.max(0, Math.min(1, t));
+  const projLat = lineStart.latitude + tc * dx;
+  const projLng = lineStart.longitude + tc * dy;
+  return Math.sqrt((point.latitude - projLat) ** 2 + (point.longitude - projLng) ** 2);
+}
+
 // Calcula el área del polígono en km²
 function polygonArea(coords: Coord[]): number {
   let area = 0;
@@ -387,15 +423,23 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       if (nextState === 'active') {
         // Volver a foreground: integrar puntos acumulados en background
         if (bgLocationBuffer.length > 0) {
+          let addedDist = 0;
           for (const point of bgLocationBuffer) {
             const newCoord = { latitude: point.latitude, longitude: point.longitude };
             if (pathRef.current.length > 0) {
               const prev = pathRef.current[pathRef.current.length - 1];
               const segmentDistKm = getDistanceKm(prev, newCoord);
-              // Usar timestamps reales para velocidad
+              const segmentDistM = segmentDistKm * 1000;
               const timeDiffSecs = lastLocationTimestamp.current > 0
                 ? (point.timestamp - lastLocationTimestamp.current) / 1000
                 : 3;
+              // Filtrar teleports: salto grande tras gap de tiempo
+              if (segmentDistM > MAX_JUMP_METERS && timeDiffSecs > MAX_GAP_SECONDS) {
+                console.log(`[BG] Teleport filtrado: ${segmentDistM.toFixed(0)}m en ${timeDiffSecs.toFixed(0)}s`);
+                lastLocationTimestamp.current = point.timestamp;
+                continue;
+              }
+              // Filtrar velocidad
               if (timeDiffSecs > 0) {
                 const speedKmh = (segmentDistKm / timeDiffSecs) * 3600;
                 if (speedKmh > MAX_SPEED_KMH) {
@@ -403,11 +447,12 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
                   continue;
                 }
               }
-              setDistance(d => d + segmentDistKm);
+              addedDist += segmentDistKm;
             }
             lastLocationTimestamp.current = point.timestamp;
             pathRef.current = [...pathRef.current, newCoord];
           }
+          if (addedDist > 0) setDistance(d => d + addedDist);
           setCurrentPath([...pathRef.current]);
           bgLocationBuffer = [];
 
@@ -427,9 +472,14 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
               if (pathRef.current.length > 0) {
                 const prev = pathRef.current[pathRef.current.length - 1];
                 const segmentDistKm = getDistanceKm(prev, newCoord);
+                const segmentDistM = segmentDistKm * 1000;
                 const timeDiffSecs = lastLocationTimestamp.current > 0
                   ? (now - lastLocationTimestamp.current) / 1000
                   : 3;
+                if (segmentDistM > MAX_JUMP_METERS && timeDiffSecs > MAX_GAP_SECONDS) {
+                  lastLocationTimestamp.current = now;
+                  return;
+                }
                 if (timeDiffSecs > 0) {
                   const speedKmh = (segmentDistKm / timeDiffSecs) * 3600;
                   if (speedKmh > MAX_SPEED_KMH) {
@@ -651,16 +701,21 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
   const closeLoop = async (path: Coord[]) => {
     setLoopDetected(true);
 
-    // Intentar snap to roads, si falla usar puntos raw
+    // Simplificar ruta: reducir puntos manteniendo la forma del perímetro
+    // Usamos Douglas-Peucker simplification en vez de snapToRoads para conservar el trazado real
+    const simplified = simplifyPath(path, 0.00005); // ~5m tolerancia
+
+    // Intentar snap to roads para mejorar el trazado, pero si falla usar simplificado
     let snapped: Coord[];
     try {
-      snapped = path.length > 50
-        ? await snapToRoads(path.filter((_, i) => i % 3 === 0))
-        : await snapToRoads(path);
-      // Si snap devuelve muy pocos puntos, usar raw
-      if (snapped.length < 4) snapped = path;
+      const toSnap = simplified.length > 100
+        ? simplified.filter((_, i) => i % 2 === 0)
+        : simplified;
+      snapped = await snapToRoads(toSnap);
+      // Si snap devuelve muy pocos puntos o pierde mucha forma, usar los puntos simplificados
+      if (snapped.length < Math.min(4, simplified.length * 0.3)) snapped = simplified;
     } catch {
-      snapped = path;
+      snapped = simplified;
     }
 
     // Asegurar que el polígono está cerrado
@@ -793,14 +848,26 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       };
       const now = loc.timestamp ?? Date.now();
 
-      // Anti-trampa: calcular velocidad con timestamps reales
+      // Anti-trampa y anti-teleport
       if (pathRef.current.length > 0) {
         const prev = pathRef.current[pathRef.current.length - 1];
         const segmentDistKm = getDistanceKm(prev, newCoord);
+        const segmentDistM = segmentDistKm * 1000;
         const timeDiffSecs = lastLocationTimestamp.current > 0
           ? (now - lastLocationTimestamp.current) / 1000
           : 3;
 
+        // Filtro 1: salto de distancia demasiado grande (teleport por sleep/pérdida GPS)
+        if (segmentDistM > MAX_JUMP_METERS && timeDiffSecs > MAX_GAP_SECONDS) {
+          console.log(`[GPS] Teleport filtrado: ${segmentDistM.toFixed(0)}m en ${timeDiffSecs.toFixed(0)}s`);
+          lastLocationTimestamp.current = now;
+          // Reiniciar path desde nuevo punto (no conectar con línea recta)
+          pathRef.current = [...pathRef.current, newCoord];
+          setCurrentPath([...pathRef.current]);
+          return;
+        }
+
+        // Filtro 2: velocidad
         if (timeDiffSecs > 0) {
           const speedKmh = (segmentDistKm / timeDiffSecs) * 3600;
           if (speedKmh > MAX_SPEED_KMH) {
@@ -812,6 +879,8 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
             return;
           }
         }
+
+        setDistance(d => d + segmentDistKm);
       }
 
       lastLocationTimestamp.current = now;
@@ -825,11 +894,6 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
           latitudeDelta: currentDelta.current.latDelta,
           longitudeDelta: currentDelta.current.lngDelta,
         }, 500);
-
-        if (pathRef.current.length > 1) {
-          const prev = pathRef.current[pathRef.current.length - 2];
-          setDistance(d => d + getDistanceKm(prev, newCoord));
-        }
 
         // Resetear warning si velocidad normal
         setSpeedWarning(false);
