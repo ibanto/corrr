@@ -19,19 +19,6 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, radius } from '../theme';
 import { api } from '../services/api';
-let GoogleSignin: any = null;
-let statusCodes: any = {};
-try {
-  const gsi = require('@react-native-google-signin/google-signin');
-  GoogleSignin = gsi.GoogleSignin;
-  statusCodes = gsi.statusCodes;
-  GoogleSignin.configure({
-    webClientId: '972157866515-d0ee9tofuvth8k5j12n43e2feebm2plm.apps.googleusercontent.com',
-    offlineAccess: false,
-  });
-} catch {
-  // Módulo nativo no disponible (build antiguo)
-}
 
 const { width, height } = Dimensions.get('window');
 
@@ -201,30 +188,6 @@ export default function OnboardingScreen({ onAuthenticated }: Props) {
     }
   };
 
-  const handleGoogleSignIn = async () => {
-    if (!GoogleSignin) {
-      Alert.alert('No disponible', 'Google Sign-In requiere una versión más reciente de la app.');
-      return;
-    }
-    try {
-      await GoogleSignin.hasPlayServices();
-      const userInfo = await GoogleSignin.signIn();
-      const idToken = userInfo.data?.idToken;
-      if (!idToken) { Alert.alert('Error', 'No se pudo obtener el token de Google'); return; }
-      setLoading(true);
-      const res = await api.loginWithGoogle(idToken);
-      api.setToken(res.accessToken);
-      api.setUserId(res.user.id);
-      onAuthenticated(res.accessToken, res.user);
-    } catch (error: any) {
-      if (error.code === statusCodes.SIGN_IN_CANCELLED) return;
-      if (error.code === statusCodes.IN_PROGRESS) return;
-      Alert.alert('Error', String(error.message || error));
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const glowOpacity = glowAnim.interpolate({ inputRange: [0, 1], outputRange: [0.3, 0.8] });
 
   if (mode === 'intro') {
@@ -294,10 +257,6 @@ export default function OnboardingScreen({ onAuthenticated }: Props) {
           <TouchableOpacity style={styles.btnPrimary} onPress={() => setMode('register')}>
             <Text style={styles.btnPrimaryText}>EMPEZAR  →</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.btnGoogle} onPress={handleGoogleSignIn}>
-            <Text style={styles.btnGoogleIcon}>G</Text>
-            <Text style={styles.btnGoogleText}>Continuar con Google</Text>
-          </TouchableOpacity>
           <TouchableOpacity style={styles.btnSecondary} onPress={() => setMode('login')}>
             <Text style={styles.btnSecondaryText}>Ya tengo cuenta</Text>
           </TouchableOpacity>
@@ -359,7 +318,7 @@ export default function OnboardingScreen({ onAuthenticated }: Props) {
           <Text style={styles.backBtnText}>Volver</Text>
         </TouchableOpacity>
         <View style={styles.authHeader}>
-          <Text style={styles.flameEmoji}>🔥</Text>
+          <Text style={{ fontSize: 48, textAlign: 'center' }}>🔥</Text>
           <Text style={styles.authTitle}>
             {mode === 'forgot' ? 'Recuperar contraseña' : mode === 'login' ? 'Iniciar sesión' : 'Crear cuenta'}
           </Text>
@@ -452,19 +411,6 @@ export default function OnboardingScreen({ onAuthenticated }: Props) {
                 <Text style={styles.btnPrimaryText}>{mode === 'login' ? 'Entrar →' : 'Crear cuenta →'}</Text>
               )}
             </TouchableOpacity>
-          )}
-          {mode !== 'forgot' && (
-            <>
-              <View style={styles.dividerRow}>
-                <View style={styles.dividerLine} />
-                <Text style={styles.dividerText}>o</Text>
-                <View style={styles.dividerLine} />
-              </View>
-              <TouchableOpacity style={styles.btnGoogle} onPress={handleGoogleSignIn}>
-                <Text style={styles.btnGoogleIcon}>G</Text>
-                <Text style={styles.btnGoogleText}>Continuar con Google</Text>
-              </TouchableOpacity>
-            </>
           )}
           <TouchableOpacity onPress={() => setMode(mode === 'forgot' ? 'login' : mode === 'login' ? 'register' : 'login')} style={styles.switchMode}>
             <Text style={styles.switchModeText}>
@@ -580,19 +526,4 @@ const styles = StyleSheet.create({
   switchMode: { alignItems: 'center', marginTop: spacing.md },
   switchModeText: { color: colors.orange, fontSize: 14, fontWeight: '500' },
   forgotText: { color: colors.textSecondary, fontSize: 13, textAlign: 'right' },
-  btnGoogle: {
-    backgroundColor: '#fff', paddingVertical: 16, borderRadius: radius.full,
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10,
-  },
-  btnGoogleIcon: {
-    fontSize: 20, fontWeight: '700', color: '#4285F4',
-    width: 24, textAlign: 'center',
-  },
-  btnGoogleText: { color: '#333', fontSize: 16, fontWeight: '700' },
-  dividerRow: {
-    flexDirection: 'row', alignItems: 'center', gap: spacing.md,
-    marginTop: spacing.md, marginBottom: spacing.xs,
-  },
-  dividerLine: { flex: 1, height: 1, backgroundColor: colors.border },
-  dividerText: { color: colors.textMuted, fontSize: 13, fontWeight: '600' },
 });
