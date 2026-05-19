@@ -138,6 +138,13 @@ class ApiService {
     return { accessToken: res.accessToken, user: res.user };
   }
 
+  async forgotPassword(email: string): Promise<void> {
+    await this.request<any>('/auth/forgot-password', {
+      method: 'POST',
+      body: JSON.stringify({ email }),
+    });
+  }
+
   async getCitiesRanking(): Promise<RankingEntry[]> {
     try {
       const rows = await this.request<any[]>('/ranking/cities');

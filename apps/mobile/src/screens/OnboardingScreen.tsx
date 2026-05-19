@@ -62,7 +62,7 @@ interface Props {
   onAuthenticated: (token: string, user: any) => void;
 }
 
-type Mode = 'intro' | 'splash' | 'login' | 'register';
+type Mode = 'intro' | 'splash' | 'login' | 'register' | 'forgot';
 
 export default function OnboardingScreen({ onAuthenticated }: Props) {
   const [mode, setMode] = useState<Mode>('intro');
@@ -93,6 +93,20 @@ export default function OnboardingScreen({ onAuthenticated }: Props) {
     ).start();
   }, []);
 
+  const handleForgotPassword = async () => {
+    if (!email) { Alert.alert('Email necesario', 'Introduce tu email para recuperar la contraseña.'); return; }
+    setLoading(true);
+    try {
+      await api.forgotPassword(email);
+      Alert.alert('Email enviado', 'Te hemos enviado un enlace para restablecer tu contraseña. Revisa tu bandeja de entrada.');
+      setMode('login');
+    } catch (err: any) {
+      Alert.alert('Error', err?.message || String(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleSubmit = async () => {
     if (!email || !password) return;
     setLoading(true);
@@ -107,8 +121,20 @@ export default function OnboardingScreen({ onAuthenticated }: Props) {
       api.setToken(res.accessToken);
       api.setUserId(res.user.id);
       onAuthenticated(res.accessToken, res.user);
-    } catch (err) {
-      Alert.alert('Error', String(err));
+    } catch (err: any) {
+      const msg = err?.message || String(err);
+      if (msg.includes('Email ya registrado')) {
+        Alert.alert('Email en uso', 'Ya existe una cuenta con este email. ¿Quieres iniciar sesión?', [
+          { text: 'Iniciar sesión', onPress: () => setMode('login') },
+          { text: 'Cancelar', style: 'cancel' },
+        ]);
+      } else if (msg.includes('nombre de usuario ya está en uso')) {
+        Alert.alert('Nombre en uso', 'Ese nombre de usuario ya está cogido. Prueba con otro.');
+      } else if (msg.includes('Credenciales incorrectas')) {
+        Alert.alert('Error', 'Email o contraseña incorrectos.');
+      } else {
+        Alert.alert('Error', msg);
+      }
     } finally {
       setLoading(false);
     }
@@ -232,9 +258,13 @@ export default function OnboardingScreen({ onAuthenticated }: Props) {
         </TouchableOpacity>
         <View style={styles.authHeader}>
           <Text style={styles.flameEmoji}>🔥</Text>
-          <Text style={styles.authTitle}>{mode === 'login' ? 'Iniciar sesión' : 'Crear cuenta'}</Text>
+          <Text style={styles.authTitle}>
+            {mode === 'forgot' ? 'Recuperar contraseña' : mode === 'login' ? 'Iniciar sesión' : 'Crear cuenta'}
+          </Text>
           <Text style={styles.authSubtitle}>
-            {mode === 'login' ? 'Bienvenido de vuelta, corredor' : 'Únete a miles de corredores en España'}
+            {mode === 'forgot'
+              ? 'Te enviaremos un enlace para restablecer tu contraseña'
+              : mode === 'login' ? 'Bienvenido de vuelta, corredor' : 'Únete a miles de corredores en España'}
           </Text>
         </View>
         <View style={styles.form}>
@@ -276,34 +306,54 @@ export default function OnboardingScreen({ onAuthenticated }: Props) {
               autoCapitalize="none"
             />
           </View>
-          <View style={styles.inputGroup}>
-            <Text style={styles.inputLabel}>Contraseña</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="••••••••"
-              placeholderTextColor={colors.textMuted}
-              value={password}
-              onChangeText={setPassword}
-              secureTextEntry
-            />
-          </View>
-          <TouchableOpacity style={[styles.btnPrimary, { marginTop: spacing.lg }]} onPress={handleSubmit} disabled={loading}>
-            {loading ? <ActivityIndicator color="#fff" /> : (
-              <Text style={styles.btnPrimaryText}>{mode === 'login' ? 'Entrar →' : 'Crear cuenta →'}</Text>
-            )}
-          </TouchableOpacity>
-          <View style={styles.dividerRow}>
-            <View style={styles.dividerLine} />
-            <Text style={styles.dividerText}>o</Text>
-            <View style={styles.dividerLine} />
-          </View>
-          <TouchableOpacity style={styles.btnGoogle} onPress={handleGoogleSignIn}>
-            <Text style={styles.btnGoogleIcon}>G</Text>
-            <Text style={styles.btnGoogleText}>Continuar con Google</Text>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={() => setMode(mode === 'login' ? 'register' : 'login')} style={styles.switchMode}>
+          {mode !== 'forgot' && (
+            <View style={styles.inputGroup}>
+              <Text style={styles.inputLabel}>Contraseña</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="••••••••"
+                placeholderTextColor={colors.textMuted}
+                value={password}
+                onChangeText={setPassword}
+                secureTextEntry
+              />
+              {mode === 'login' && (
+                <TouchableOpacity onPress={() => setMode('forgot')} style={{ marginTop: 8 }}>
+                  <Text style={styles.forgotText}>¿Has olvidado tu contraseña?</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
+          {mode === 'forgot' ? (
+            <TouchableOpacity style={[styles.btnPrimary, { marginTop: spacing.lg }]} onPress={handleForgotPassword} disabled={loading}>
+              {loading ? <ActivityIndicator color="#fff" /> : (
+                <Text style={styles.btnPrimaryText}>Enviar enlace →</Text>
+              )}
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity style={[styles.btnPrimary, { marginTop: spacing.lg }]} onPress={handleSubmit} disabled={loading}>
+              {loading ? <ActivityIndicator color="#fff" /> : (
+                <Text style={styles.btnPrimaryText}>{mode === 'login' ? 'Entrar →' : 'Crear cuenta →'}</Text>
+              )}
+            </TouchableOpacity>
+          )}
+          {mode !== 'forgot' && (
+            <>
+              <View style={styles.dividerRow}>
+                <View style={styles.dividerLine} />
+                <Text style={styles.dividerText}>o</Text>
+                <View style={styles.dividerLine} />
+              </View>
+              <TouchableOpacity style={styles.btnGoogle} onPress={handleGoogleSignIn}>
+                <Text style={styles.btnGoogleIcon}>G</Text>
+                <Text style={styles.btnGoogleText}>Continuar con Google</Text>
+              </TouchableOpacity>
+            </>
+          )}
+          <TouchableOpacity onPress={() => setMode(mode === 'forgot' ? 'login' : mode === 'login' ? 'register' : 'login')} style={styles.switchMode}>
             <Text style={styles.switchModeText}>
-              {mode === 'login' ? '¿No tienes cuenta? Regístrate' : '¿Ya tienes cuenta? Inicia sesión'}
+              {mode === 'forgot' ? 'Volver a iniciar sesión'
+                : mode === 'login' ? '¿No tienes cuenta? Regístrate' : '¿Ya tienes cuenta? Inicia sesión'}
             </Text>
           </TouchableOpacity>
         </View>
@@ -413,6 +463,7 @@ const styles = StyleSheet.create({
   },
   switchMode: { alignItems: 'center', marginTop: spacing.md },
   switchModeText: { color: colors.orange, fontSize: 14, fontWeight: '500' },
+  forgotText: { color: colors.textSecondary, fontSize: 13, textAlign: 'right' },
   btnGoogle: {
     backgroundColor: '#fff', paddingVertical: 16, borderRadius: radius.full,
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10,

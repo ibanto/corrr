@@ -4,6 +4,7 @@ import { Pool } from 'pg';
 import * as dotenv from 'dotenv';
 import { hash, verify } from 'argon2';
 import { SignJWT, jwtVerify } from 'jose';
+import { Resend } from 'resend';
 
 dotenv.config();
 
@@ -16,6 +17,7 @@ const RAILWAY_URL = process.env.RAILWAY_PUBLIC_DOMAIN
   : (process.env.RAILWAY_URL ?? 'http://localhost:3000');
 const db = new Pool({ connectionString: process.env.DATABASE_URL });
 const SECRET = new TextEncoder().encode(process.env.JWT_ACCESS_SECRET);
+const resend = new Resend(process.env.RESEND_API_KEY || '');
 
 app.register(cors, { origin: '*' });
 
@@ -102,6 +104,10 @@ async function initDB() {
   await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS strava_token_expires_at BIGINT`);
   await db.query(`CREATE INDEX IF NOT EXISTS users_strava_idx ON users(strava_athlete_id)`).catch(() => {});
   await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS users_display_name_unique ON users(LOWER(display_name))`).catch(() => {});
+  await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token TEXT`).catch(() => {});
+  await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token_expires TIMESTAMPTZ`).catch(() => {});
+  await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN DEFAULT FALSE`).catch(() => {});
+  await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS verify_token TEXT`).catch(() => {});
 
   // Activar Row Level Security en todas las tablas (bloquea acceso directo vía Supabase API)
   for (const table of ['users', 'user_stats', 'runs', 'zones']) {
@@ -161,6 +167,32 @@ app.post('/auth/register', async (req: any, reply) => {
     );
     const uid = rows[0].id;
     await db.query('INSERT INTO user_stats (user_id) VALUES ($1)', [uid]);
+
+    // Enviar email de verificación
+    const verifyToken = Math.random().toString(36).slice(2) + Date.now().toString(36);
+    await db.query('UPDATE users SET verify_token = $1 WHERE id = $2', [verifyToken, uid]);
+    const verifyUrl = `${RAILWAY_URL}/auth/verify-email?token=${verifyToken}`;
+    try {
+      await resend.emails.send({
+        from: 'CORRR <hola@corrr.es>',
+        to: email,
+        subject: 'Verifica tu email — CORRR',
+        html: `
+          <div style="font-family:sans-serif;max-width:480px;margin:0 auto;background:#0A0A0A;padding:32px;border-radius:12px;">
+            <h1 style="color:#FF6600;text-align:center;font-size:28px;letter-spacing:3px;">CORRR</h1>
+            <p style="color:#fff;font-size:16px;">Hola ${displayName},</p>
+            <p style="color:#ccc;font-size:14px;">Bienvenido a CORRR. Verifica tu email para activar todas las funciones:</p>
+            <div style="text-align:center;margin:24px 0;">
+              <a href="${verifyUrl}" style="background:#FF6600;color:#fff;padding:14px 32px;border-radius:50px;text-decoration:none;font-weight:bold;font-size:16px;">Verificar email</a>
+            </div>
+            <p style="color:#888;font-size:12px;">Si no has creado esta cuenta, ignora este email.</p>
+          </div>
+        `,
+      });
+    } catch (emailErr) {
+      console.error('[Email] Error enviando verificación:', emailErr);
+    }
+
     const token = await new SignJWT({ sub: uid })
       .setProtectedHeader({ alg: 'HS256' })
       .setExpirationTime('7d')
@@ -232,6 +264,103 @@ app.post('/auth/google', async (req: any, reply) => {
       accessToken: token,
       user: { id: u.id, username: u.display_name, email: u.email, city: u.city },
     });
+  } catch (err) { return reply.status(500).send({ error: String(err) }); }
+});
+
+// ── Recuperar contraseña ─────────────────────────────────────────────────────
+
+app.post('/auth/forgot-password', async (req: any, reply) => {
+  const { email } = req.body;
+  if (!email) return reply.status(400).send({ error: 'Email requerido' });
+  try {
+    const { rows } = await db.query('SELECT id, display_name FROM users WHERE email = $1', [email]);
+    if (!rows.length) {
+      // No revelar si el email existe o no
+      return reply.send({ ok: true });
+    }
+    const userId = rows[0].id;
+    const name = rows[0].display_name || 'Corredor';
+    // Generar token aleatorio
+    const resetToken = Math.random().toString(36).slice(2) + Date.now().toString(36);
+    const expires = new Date(Date.now() + 60 * 60 * 1000); // 1 hora
+    await db.query('UPDATE users SET reset_token = $1, reset_token_expires = $2 WHERE id = $3', [resetToken, expires, userId]);
+
+    // Enviar email
+    const resetUrl = `${RAILWAY_URL}/auth/reset-password?token=${resetToken}`;
+    try {
+      await resend.emails.send({
+        from: 'CORRR <hola@corrr.es>',
+        to: email,
+        subject: 'Restablecer tu contraseña — CORRR',
+        html: `
+          <div style="font-family:sans-serif;max-width:480px;margin:0 auto;background:#0A0A0A;padding:32px;border-radius:12px;">
+            <h1 style="color:#FF6600;text-align:center;font-size:28px;letter-spacing:3px;">CORRR</h1>
+            <p style="color:#fff;font-size:16px;">Hola ${name},</p>
+            <p style="color:#ccc;font-size:14px;">Has solicitado restablecer tu contraseña. Haz clic en el botón para crear una nueva:</p>
+            <div style="text-align:center;margin:24px 0;">
+              <a href="${resetUrl}" style="background:#FF6600;color:#fff;padding:14px 32px;border-radius:50px;text-decoration:none;font-weight:bold;font-size:16px;">Restablecer contraseña</a>
+            </div>
+            <p style="color:#888;font-size:12px;">Este enlace expira en 1 hora. Si no has sido tú, ignora este email.</p>
+          </div>
+        `,
+      });
+    } catch (emailErr) {
+      console.error('[Email] Error enviando reset:', emailErr);
+    }
+
+    return reply.send({ ok: true });
+  } catch (err) { return reply.status(500).send({ error: String(err) }); }
+});
+
+// Página web para resetear contraseña (el usuario abre el enlace del email)
+app.get('/auth/reset-password', async (req: any, reply) => {
+  const { token } = req.query;
+  reply.type('text/html').send(`
+    <!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>CORRR — Nueva contraseña</title>
+    <style>body{font-family:sans-serif;background:#0A0A0A;color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;}
+    .box{max-width:400px;width:90%;padding:32px;text-align:center;}
+    h1{color:#FF6600;letter-spacing:3px;}input{width:100%;padding:14px;border-radius:8px;border:1px solid #333;background:#1a1a1a;color:#fff;font-size:16px;margin:8px 0;box-sizing:border-box;}
+    button{width:100%;padding:16px;border-radius:50px;border:none;background:#FF6600;color:#fff;font-size:16px;font-weight:bold;cursor:pointer;margin-top:16px;}
+    .msg{margin-top:16px;font-size:14px;}</style></head><body>
+    <div class="box"><h1>CORRR</h1><p>Introduce tu nueva contraseña</p>
+    <input type="password" id="pw" placeholder="Nueva contraseña" />
+    <input type="password" id="pw2" placeholder="Repetir contraseña" />
+    <button onclick="doReset()">Cambiar contraseña</button>
+    <p class="msg" id="msg"></p></div>
+    <script>async function doReset(){const pw=document.getElementById('pw').value;const pw2=document.getElementById('pw2').value;
+    if(!pw||pw.length<6){document.getElementById('msg').textContent='Mínimo 6 caracteres';return;}
+    if(pw!==pw2){document.getElementById('msg').textContent='Las contraseñas no coinciden';return;}
+    const r=await fetch('/auth/reset-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:'${token}',password:pw})});
+    const d=await r.json();document.getElementById('msg').textContent=d.ok?'✅ Contraseña cambiada. Ya puedes abrir CORRR.':d.error||'Error';}</script></body></html>
+  `);
+});
+
+app.post('/auth/reset-password', async (req: any, reply) => {
+  const { token, password } = req.body;
+  if (!token || !password) return reply.status(400).send({ error: 'Datos incompletos' });
+  if (password.length < 6) return reply.status(400).send({ error: 'Mínimo 6 caracteres' });
+  try {
+    const { rows } = await db.query('SELECT id FROM users WHERE reset_token = $1 AND reset_token_expires > NOW()', [token]);
+    if (!rows.length) return reply.status(400).send({ error: 'Enlace inválido o expirado' });
+    const ph = await hash(password);
+    await db.query('UPDATE users SET password_hash = $1, reset_token = NULL, reset_token_expires = NULL WHERE id = $2', [ph, rows[0].id]);
+    return reply.send({ ok: true });
+  } catch (err) { return reply.status(500).send({ error: String(err) }); }
+});
+
+// ── Verificación de email ───────────────────────────────────────────────────
+
+app.get('/auth/verify-email', async (req: any, reply) => {
+  const { token } = req.query;
+  try {
+    const { rows } = await db.query('SELECT id FROM users WHERE verify_token = $1', [token]);
+    if (!rows.length) {
+      reply.type('text/html').send('<html><body style="font-family:sans-serif;background:#0A0A0A;color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;"><div style="text-align:center;"><h1 style="color:#FF6600;">CORRR</h1><p>Enlace inválido o ya verificado.</p></div></body></html>');
+      return;
+    }
+    await db.query('UPDATE users SET email_verified = TRUE, verify_token = NULL WHERE id = $1', [rows[0].id]);
+    reply.type('text/html').send('<html><body style="font-family:sans-serif;background:#0A0A0A;color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;"><div style="text-align:center;"><h1 style="color:#FF6600;">CORRR</h1><p style="font-size:24px;">✅ Email verificado</p><p>Ya puedes usar CORRR con todas las funciones.</p></div></body></html>');
   } catch (err) { return reply.status(500).send({ error: String(err) }); }
 });
 

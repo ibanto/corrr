@@ -101,19 +101,48 @@ export default function PerfilScreen({ user, onLogout }: Props) {
     detectCity();
   }, [loadStats, detectCity]);
 
-  const pickAvatar = async () => {
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
-      allowsEditing: true,
-      aspect: [1, 1],
-      quality: 0.5,
-      base64: true,
-    });
+  const handleAvatarResult = async (result: ImagePicker.ImagePickerResult) => {
     if (!result.canceled && result.assets[0].base64) {
       const dataUri = `data:image/jpeg;base64,${result.assets[0].base64}`;
       setAvatarUrl(dataUri);
       try { await api.updateProfile({ avatarUrl: dataUri }); } catch {}
     }
+  };
+
+  const pickAvatar = () => {
+    Alert.alert('Foto de perfil', 'Elige una opción', [
+      {
+        text: 'Hacer foto',
+        onPress: async () => {
+          const { status } = await ImagePicker.requestCameraPermissionsAsync();
+          if (status !== 'granted') {
+            Alert.alert('Permiso necesario', 'CORRR necesita acceso a la cámara.');
+            return;
+          }
+          const result = await ImagePicker.launchCameraAsync({
+            allowsEditing: true,
+            aspect: [1, 1],
+            quality: 0.5,
+            base64: true,
+          });
+          handleAvatarResult(result);
+        },
+      },
+      {
+        text: 'Elegir de galería',
+        onPress: async () => {
+          const result = await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ['images'],
+            allowsEditing: true,
+            aspect: [1, 1],
+            quality: 0.5,
+            base64: true,
+          });
+          handleAvatarResult(result);
+        },
+      },
+      { text: 'Cancelar', style: 'cancel' },
+    ]);
   };
 
   const saveProfile = async () => {
