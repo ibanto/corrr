@@ -62,7 +62,7 @@ interface Props {
   onAuthenticated: (token: string, user: any) => void;
 }
 
-type Mode = 'intro' | 'splash' | 'login' | 'register' | 'forgot';
+type Mode = 'intro' | 'splash' | 'login' | 'register' | 'forgot' | 'verify';
 
 export default function OnboardingScreen({ onAuthenticated }: Props) {
   const [mode, setMode] = useState<Mode>('intro');
@@ -73,6 +73,11 @@ export default function OnboardingScreen({ onAuthenticated }: Props) {
   const [username, setUsername] = useState('');
   const [city, setCity] = useState('');
   const [loading, setLoading] = useState(false);
+  const [usernameStatus, setUsernameStatus] = useState<'idle' | 'checking' | 'available' | 'taken' | 'invalid'>('idle');
+  const [usernameMsg, setUsernameMsg] = useState('');
+  const usernameTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [resendLoading, setResendLoading] = useState(false);
+  const [resendDone, setResendDone] = useState(false);
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(40)).current;
@@ -93,6 +98,44 @@ export default function OnboardingScreen({ onAuthenticated }: Props) {
     ).start();
   }, []);
 
+  const checkUsername = (text: string) => {
+    setUsername(text);
+    if (usernameTimer.current) clearTimeout(usernameTimer.current);
+    if (!text || text.length < 3) {
+      setUsernameStatus(text.length > 0 ? 'invalid' : 'idle');
+      setUsernameMsg(text.length > 0 ? 'Mínimo 3 caracteres' : '');
+      return;
+    }
+    setUsernameStatus('checking');
+    setUsernameMsg('');
+    usernameTimer.current = setTimeout(async () => {
+      try {
+        const res = await api.checkUsername(text);
+        if (res.available) {
+          setUsernameStatus('available');
+          setUsernameMsg('✓ Disponible');
+        } else {
+          setUsernameStatus('taken');
+          setUsernameMsg(res.reason || 'No disponible');
+        }
+      } catch {
+        setUsernameStatus('idle');
+      }
+    }, 500);
+  };
+
+  const handleResendVerification = async () => {
+    setResendLoading(true);
+    try {
+      await api.resendVerification(email);
+      setResendDone(true);
+    } catch {
+      Alert.alert('Error', 'No se pudo reenviar el email');
+    } finally {
+      setResendLoading(false);
+    }
+  };
+
   const handleForgotPassword = async () => {
     if (!email) { Alert.alert('Email necesario', 'Introduce tu email para recuperar la contraseña.'); return; }
     setLoading(true);
@@ -109,21 +152,36 @@ export default function OnboardingScreen({ onAuthenticated }: Props) {
 
   const handleSubmit = async () => {
     if (!email || !password) return;
+    if (mode === 'register' && usernameStatus === 'taken') {
+      Alert.alert('Nombre no disponible', 'Elige otro nombre de usuario.');
+      return;
+    }
     setLoading(true);
     try {
-      let res;
       if (mode === 'login') {
-        res = await api.login(email, password);
+        const res = await api.login(email, password);
+        api.setToken(res.accessToken);
+        api.setUserId(res.user.id);
+        onAuthenticated(res.accessToken, res.user);
       } else {
         if (!username) { Alert.alert('Falta el nombre de usuario'); setLoading(false); return; }
-        res = await api.register(username, email, password, city || undefined);
+        const res = await api.register(username, email, password, city || undefined);
+        if (res.pendingVerification) {
+          setResendDone(false);
+          setMode('verify');
+        } else if (res.accessToken && res.user) {
+          api.setToken(res.accessToken);
+          api.setUserId(res.user.id);
+          onAuthenticated(res.accessToken, res.user);
+        }
       }
-      api.setToken(res.accessToken);
-      api.setUserId(res.user.id);
-      onAuthenticated(res.accessToken, res.user);
     } catch (err: any) {
       const msg = err?.message || String(err);
-      if (msg.includes('Email ya registrado')) {
+      const body = err?.body;
+      if (body?.pendingVerification) {
+        setResendDone(false);
+        setMode('verify');
+      } else if (msg.includes('Email ya registrado')) {
         Alert.alert('Email en uso', 'Ya existe una cuenta con este email. ¿Quieres iniciar sesión?', [
           { text: 'Iniciar sesión', onPress: () => setMode('login') },
           { text: 'Cancelar', style: 'cancel' },
@@ -132,6 +190,9 @@ export default function OnboardingScreen({ onAuthenticated }: Props) {
         Alert.alert('Nombre en uso', 'Ese nombre de usuario ya está cogido. Prueba con otro.');
       } else if (msg.includes('Credenciales incorrectas')) {
         Alert.alert('Error', 'Email o contraseña incorrectos.');
+      } else if (msg.includes('Email no verificado')) {
+        setResendDone(false);
+        setMode('verify');
       } else {
         Alert.alert('Error', msg);
       }
@@ -245,6 +306,47 @@ export default function OnboardingScreen({ onAuthenticated }: Props) {
     );
   }
 
+  if (mode === 'verify') {
+    return (
+      <View style={styles.authContainer}>
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: spacing.lg }}>
+          <Text style={{ fontSize: 64, marginBottom: spacing.lg }}>📧</Text>
+          <Text style={{ fontSize: 28, fontWeight: '900', color: colors.textPrimary, textAlign: 'center', marginBottom: spacing.sm }}>
+            Verifica tu email
+          </Text>
+          <Text style={{ fontSize: 15, color: colors.textSecondary, textAlign: 'center', marginBottom: spacing.xs }}>
+            Hemos enviado un enlace de verificación a:
+          </Text>
+          <Text style={{ fontSize: 16, fontWeight: '700', color: colors.orange, textAlign: 'center', marginBottom: spacing.xl }}>
+            {email}
+          </Text>
+          <Text style={{ fontSize: 14, color: colors.textMuted, textAlign: 'center', marginBottom: spacing.xl, lineHeight: 20 }}>
+            Haz clic en el enlace del email para activar tu cuenta. Después vuelve aquí e inicia sesión.
+          </Text>
+          <TouchableOpacity
+            style={[styles.btnPrimary, { width: '100%' }]}
+            onPress={() => setMode('login')}
+          >
+            <Text style={styles.btnPrimaryText}>Iniciar sesión →</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={{ marginTop: spacing.lg, padding: spacing.sm }}
+            onPress={handleResendVerification}
+            disabled={resendLoading || resendDone}
+          >
+            {resendLoading ? (
+              <ActivityIndicator color={colors.orange} />
+            ) : (
+              <Text style={{ color: resendDone ? colors.textMuted : colors.orange, fontSize: 14 }}>
+                {resendDone ? '✓ Email reenviado' : 'Reenviar email de verificación'}
+              </Text>
+            )}
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
+
   return (
     <KeyboardAvoidingView style={styles.authContainer} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
       <ScrollView
@@ -272,14 +374,28 @@ export default function OnboardingScreen({ onAuthenticated }: Props) {
             <>
               <View style={styles.inputGroup}>
                 <Text style={styles.inputLabel}>Nombre de usuario</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="RunnerMadrid"
-                  placeholderTextColor={colors.textMuted}
-                  value={username}
-                  onChangeText={setUsername}
-                  autoCapitalize="none"
-                />
+                <View style={{ position: 'relative' }}>
+                  <TextInput
+                    style={[styles.input, usernameStatus === 'available' && { borderColor: '#22C55E' }, usernameStatus === 'taken' && { borderColor: '#EF4444' }, usernameStatus === 'invalid' && { borderColor: '#EF4444' }]}
+                    placeholder="RunnerMadrid"
+                    placeholderTextColor={colors.textMuted}
+                    value={username}
+                    onChangeText={checkUsername}
+                    autoCapitalize="none"
+                  />
+                  {usernameStatus === 'checking' && (
+                    <ActivityIndicator size="small" color={colors.orange} style={{ position: 'absolute', right: 14, top: 14 }} />
+                  )}
+                  {usernameStatus === 'available' && (
+                    <Text style={{ position: 'absolute', right: 14, top: 14, color: '#22C55E', fontSize: 16 }}>✓</Text>
+                  )}
+                  {(usernameStatus === 'taken' || usernameStatus === 'invalid') && (
+                    <Text style={{ position: 'absolute', right: 14, top: 14, color: '#EF4444', fontSize: 16 }}>✗</Text>
+                  )}
+                </View>
+                {usernameMsg !== '' && (
+                  <Text style={{ color: usernameStatus === 'available' ? '#22C55E' : '#EF4444', fontSize: 12, marginTop: 4 }}>{usernameMsg}</Text>
+                )}
               </View>
               <View style={styles.inputGroup}>
                 <Text style={styles.inputLabel}>Ciudad</Text>

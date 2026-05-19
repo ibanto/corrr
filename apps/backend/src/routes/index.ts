@@ -207,22 +207,22 @@ app.post('/auth/register', async (req: any, reply) => {
       console.error('[Email] Error enviando verificación:', emailErr);
     }
 
-    const token = await new SignJWT({ sub: uid })
-      .setProtectedHeader({ alg: 'HS256' })
-      .setExpirationTime('7d')
-      .sign(SECRET);
-    return reply.status(201).send({ accessToken: token, user: { id: uid, username: displayName, email, city } });
+    // No devolver token — el usuario debe verificar su email primero
+    return reply.status(201).send({ pendingVerification: true, message: 'Revisa tu email para verificar tu cuenta' });
   } catch (err) { return reply.status(500).send({ error: String(err) }); }
 });
 
 app.post('/auth/login', async (req: any, reply) => {
   const { email, password } = req.body;
   try {
-    const { rows } = await db.query('SELECT id, password_hash, display_name, email, city FROM users WHERE email = $1', [email]);
+    const { rows } = await db.query('SELECT id, password_hash, display_name, email, city, email_verified FROM users WHERE email = $1', [email]);
     if (!rows.length) return reply.status(401).send({ error: 'Credenciales incorrectas' });
     const valid = await verify(rows[0].password_hash, password);
     if (!valid) return reply.status(401).send({ error: 'Credenciales incorrectas' });
     const u = rows[0];
+    if (!u.email_verified) {
+      return reply.status(403).send({ error: 'Email no verificado', pendingVerification: true });
+    }
     const token = await new SignJWT({ sub: u.id })
       .setProtectedHeader({ alg: 'HS256' })
       .setExpirationTime('7d')
@@ -359,6 +359,54 @@ app.post('/auth/reset-password', async (req: any, reply) => {
     if (!rows.length) return reply.status(400).send({ error: 'Enlace inválido o expirado' });
     const ph = await hash(password);
     await db.query('UPDATE users SET password_hash = $1, reset_token = NULL, reset_token_expires = NULL WHERE id = $2', [ph, rows[0].id]);
+    return reply.send({ ok: true });
+  } catch (err) { return reply.status(500).send({ error: String(err) }); }
+});
+
+// ── Check username disponible ───────────────────────────────────────────────
+
+app.get('/auth/check-username', async (req: any, reply) => {
+  const { username } = req.query;
+  if (!username || username.length < 3) return reply.send({ available: false, reason: 'Mínimo 3 caracteres' });
+  if (username.length > 20) return reply.send({ available: false, reason: 'Máximo 20 caracteres' });
+  if (!/^[a-zA-Z0-9_áéíóúÁÉÍÓÚñÑ]+$/.test(username)) return reply.send({ available: false, reason: 'Solo letras, números y _' });
+  try {
+    const { rows } = await db.query('SELECT id FROM users WHERE LOWER(display_name) = LOWER($1)', [username]);
+    return reply.send({ available: rows.length === 0 });
+  } catch (err) { return reply.status(500).send({ error: String(err) }); }
+});
+
+// ── Reenviar verificación ──────────────────────────────────────────────────
+
+app.post('/auth/resend-verification', async (req: any, reply) => {
+  const { email } = req.body;
+  if (!email) return reply.status(400).send({ error: 'Email requerido' });
+  try {
+    const { rows } = await db.query('SELECT id, display_name, email_verified FROM users WHERE email = $1', [email]);
+    if (!rows.length) return reply.send({ ok: true }); // No revelar si existe
+    if (rows[0].email_verified) return reply.send({ ok: true, alreadyVerified: true });
+    const verifyToken = Math.random().toString(36).slice(2) + Date.now().toString(36);
+    await db.query('UPDATE users SET verify_token = $1 WHERE id = $2', [verifyToken, rows[0].id]);
+    const verifyUrl = `${RAILWAY_URL}/auth/verify-email?token=${verifyToken}`;
+    try {
+      await resend.emails.send({
+        from: 'CORRR <hola@corrr.es>',
+        to: email,
+        subject: 'Verifica tu email — CORRR',
+        html: `
+          <div style="font-family:sans-serif;max-width:480px;margin:0 auto;background:#0A0A0A;padding:32px;border-radius:12px;">
+            <h1 style="color:#FF6600;text-align:center;font-size:28px;letter-spacing:3px;">CORRR</h1>
+            <p style="color:#fff;font-size:16px;">Hola ${rows[0].display_name},</p>
+            <p style="color:#ccc;font-size:14px;">Verifica tu email para acceder a CORRR:</p>
+            <div style="text-align:center;margin:24px 0;">
+              <a href="${verifyUrl}" style="background:#FF6600;color:#fff;padding:14px 32px;border-radius:50px;text-decoration:none;font-weight:bold;font-size:16px;">Verificar email</a>
+            </div>
+          </div>
+        `,
+      });
+    } catch (emailErr) {
+      console.error('[Email] Error reenviando verificación:', emailErr);
+    }
     return reply.send({ ok: true });
   } catch (err) { return reply.status(500).send({ error: String(err) }); }
 });

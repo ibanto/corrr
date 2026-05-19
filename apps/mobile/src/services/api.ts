@@ -122,7 +122,11 @@ class ApiService {
       headers: { ...headers, ...options?.headers },
     });
     if (!res.ok) {
-      throw new Error(`API error ${res.status}`);
+      const body = await res.json().catch(() => ({}));
+      const err: any = new Error(body.error || `API error ${res.status}`);
+      err.body = body;
+      err.status = res.status;
+      throw err;
     }
     return res.json();
   }
@@ -143,16 +147,27 @@ class ApiService {
     return { accessToken: res.accessToken, user: res.user };
   }
 
-  async register(username: string, email: string, password: string, city?: string): Promise<{ accessToken: string; user: { id: string; username: string; email: string; city?: string } }> {
+  async register(username: string, email: string, password: string, city?: string): Promise<{ accessToken?: string; pendingVerification?: boolean; user?: { id: string; username: string; email: string; city?: string } }> {
     const res = await this.request<any>('/auth/register', {
       method: 'POST',
       body: JSON.stringify({ email, password, displayName: username, city }),
     });
-    return { accessToken: res.accessToken, user: res.user };
+    return res;
   }
 
   async forgotPassword(email: string): Promise<void> {
     await this.request<any>('/auth/forgot-password', {
+      method: 'POST',
+      body: JSON.stringify({ email }),
+    });
+  }
+
+  async checkUsername(username: string): Promise<{ available: boolean; reason?: string }> {
+    return this.request<{ available: boolean; reason?: string }>(`/auth/check-username?username=${encodeURIComponent(username)}`);
+  }
+
+  async resendVerification(email: string): Promise<void> {
+    await this.request<any>('/auth/resend-verification', {
       method: 'POST',
       body: JSON.stringify({ email }),
     });
