@@ -23,11 +23,9 @@ import { api, RemoteZone } from '../services/api';
 import ZonePopup, { PopupType } from '../components/ZonePopup';
 import TauntSelector from '../components/TauntSelector';
 
-const GOOGLE_API_KEY = 'AIzaSyC_1Y2Fo6S9X6GJU5Upx4EZxrw4JFf_xNU';
-
 // Background location task
 const BACKGROUND_LOCATION_TASK = 'corrr-background-location';
-let bgLocationBuffer: { latitude: number; longitude: number; timestamp: number }[] = [];
+let bgLocationBuffer: { latitude: number; longitude: number; timestamp: number; accuracy: number; speed: number }[] = [];
 
 TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
   if (error) return;
@@ -38,6 +36,8 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
         latitude: loc.coords.latitude,
         longitude: loc.coords.longitude,
         timestamp: loc.timestamp ?? Date.now(),
+        accuracy: loc.coords.accuracy ?? 999,
+        speed: loc.coords.speed ?? -1,
       });
     }
   }
@@ -61,13 +61,12 @@ const SPAIN_BOUNDS = {
 // Delta máximo para cargar zonas (si se aleja más → no cargar)
 const MAX_DELTA_FOR_ZONES = 0.15;
 
-// Anti-trampa: velocidad máxima permitida (km/h)
-// 30 km/h = ritmo de 2:00 min/km — margen para sprinters motivados
-const MAX_SPEED_KMH = 30;
-// Distancia máxima entre dos puntos consecutivos (metros) — filtra teleports por sleep
-const MAX_JUMP_METERS = 100;
-// Tiempo máximo sin señal antes de considerar gap (segundos)
-const MAX_GAP_SECONDS = 15;
+// ── GPS Filtering (Strava-grade) ──────────────────────────────────────────
+const MAX_SPEED_KMH = 30;        // Anti-cheat: max speed allowed
+const MAX_ACCURACY_M = 30;       // Ignore GPS points with accuracy worse than 30m
+const MIN_POINT_DIST_M = 3;      // Ignore points closer than 3m (noise)
+const MAX_POINT_DIST_M = 150;    // Teleport if jump > 150m in a single update
+const TELEPORT_TIME_THRESHOLD = 10; // Only count as teleport if also >10s gap
 
 const MAP_STYLE = [
   { elementType: 'geometry', stylers: [{ color: '#1a1a2e' }] },
@@ -364,22 +363,50 @@ function polygonArea(coords: Coord[]): number {
   return Math.abs(area) * 111 * 111 * Math.cos(coords[0].latitude * Math.PI / 180) / 2;
 }
 
-async function snapToRoads(coords: Coord[]): Promise<Coord[]> {
-  if (coords.length < 2) return coords;
-  const path = coords.map(c => `${c.latitude},${c.longitude}`).join('|');
-  try {
-    const res = await fetch(
-      `https://roads.googleapis.com/v1/snapToRoads?path=${path}&interpolate=true&key=${GOOGLE_API_KEY}`
-    );
-    const data = await res.json();
-    if (data.snappedPoints) {
-      return data.snappedPoints.map((p: any) => ({
-        latitude: p.location.latitude,
-        longitude: p.location.longitude,
-      }));
-    }
-  } catch {}
-  return coords;
+/**
+ * Central GPS point filter — returns action to take:
+ * - 'accept': good point, add to path and accumulate distance
+ * - 'skip': bad point (noise, low accuracy), ignore completely
+ * - 'teleport': jump detected, start new path segment
+ */
+function filterGpsPoint(
+  newCoord: Coord,
+  prevCoord: Coord | null,
+  newTimestamp: number,
+  prevTimestamp: number,
+  accuracy: number,
+  speed: number,
+): { action: 'accept' | 'skip' | 'teleport'; distKm: number; speedKmh: number } {
+  // Filter 1: accuracy too bad (GPS still warming up or indoor)
+  if (accuracy > MAX_ACCURACY_M) {
+    return { action: 'skip', distKm: 0, speedKmh: 0 };
+  }
+
+  if (!prevCoord) {
+    return { action: 'accept', distKm: 0, speedKmh: 0 };
+  }
+
+  const distKm = getDistanceKm(prevCoord, newCoord);
+  const distM = distKm * 1000;
+  const timeDiff = prevTimestamp > 0 ? (newTimestamp - prevTimestamp) / 1000 : 3;
+
+  // Filter 2: too close (GPS noise / standing still)
+  if (distM < MIN_POINT_DIST_M) {
+    return { action: 'skip', distKm: 0, speedKmh: 0 };
+  }
+
+  // Filter 3: teleport (big jump after time gap — phone slept)
+  if (distM > MAX_POINT_DIST_M && timeDiff > TELEPORT_TIME_THRESHOLD) {
+    return { action: 'teleport', distKm: 0, speedKmh: 0 };
+  }
+
+  // Filter 4: speed check (anti-cheat + catches shorter teleports)
+  const speedKmh = timeDiff > 0 ? (distKm / timeDiff) * 3600 : 0;
+  if (speedKmh > MAX_SPEED_KMH) {
+    return { action: 'skip', distKm: 0, speedKmh };
+  }
+
+  return { action: 'accept', distKm, speedKmh };
 }
 
 export default function MapScreen({ user, onNavigateToShop }: Props) {
@@ -412,6 +439,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
   const speedWarningTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const invalidSegments = useRef(0);
   const isRunningRef = useRef(false);
+  const handleLocationUpdateRef = useRef<(loc: Location.LocationObject) => void>(() => {});
 
   // Timestamp del último punto GPS para cálculo de velocidad real
   const lastLocationTimestamp = useRef<number>(0);
@@ -427,31 +455,24 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
           let addedDist = 0;
           for (const point of bgLocationBuffer) {
             const newCoord = { latitude: point.latitude, longitude: point.longitude };
-            if (pathRef.current.length > 0) {
-              const prev = pathRef.current[pathRef.current.length - 1];
-              const segmentDistKm = getDistanceKm(prev, newCoord);
-              const segmentDistM = segmentDistKm * 1000;
-              const timeDiffSecs = lastLocationTimestamp.current > 0
-                ? (point.timestamp - lastLocationTimestamp.current) / 1000
-                : 3;
-              // Filtrar teleports: salto grande tras gap de tiempo
-              if (segmentDistM > MAX_JUMP_METERS && timeDiffSecs > MAX_GAP_SECONDS) {
-                console.log(`[BG] Teleport filtrado: ${segmentDistM.toFixed(0)}m en ${timeDiffSecs.toFixed(0)}s`);
-                lastLocationTimestamp.current = point.timestamp;
-                continue;
+            const prev = pathRef.current.length > 0 ? pathRef.current[pathRef.current.length - 1] : null;
+            const result = filterGpsPoint(newCoord, prev, point.timestamp, lastLocationTimestamp.current, point.accuracy, point.speed);
+
+            if (result.action === 'skip') continue;
+
+            if (result.action === 'teleport') {
+              if (pathRef.current.length > 1) {
+                setPathSegments(segs => [...segs, [...pathRef.current]]);
               }
-              // Filtrar velocidad
-              if (timeDiffSecs > 0) {
-                const speedKmh = (segmentDistKm / timeDiffSecs) * 3600;
-                if (speedKmh > MAX_SPEED_KMH) {
-                  lastLocationTimestamp.current = point.timestamp;
-                  continue;
-                }
-              }
-              addedDist += segmentDistKm;
+              pathRef.current = [newCoord];
+              lastLocationTimestamp.current = point.timestamp;
+              continue;
             }
+
+            // accept
             lastLocationTimestamp.current = point.timestamp;
             pathRef.current = [...pathRef.current, newCoord];
+            addedDist += result.distKm;
           }
           if (addedDist > 0) setDistance(d => d + addedDist);
           setCurrentPath([...pathRef.current]);
@@ -463,45 +484,11 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
           }
         }
 
-        // Reanudar foreground watcher si se perdió
+        // Reanudar foreground watcher si se perdió — reutiliza handleLocationUpdate del startRun
         if (isRunningRef.current && !locationRef.current) {
           locationRef.current = await Location.watchPositionAsync(
-            { accuracy: Location.Accuracy.BestForNavigation, distanceInterval: 5, timeInterval: 2000 },
-            (loc) => {
-              const newCoord = { latitude: loc.coords.latitude, longitude: loc.coords.longitude };
-              const now = loc.timestamp ?? Date.now();
-              if (pathRef.current.length > 0) {
-                const prev = pathRef.current[pathRef.current.length - 1];
-                const segmentDistKm = getDistanceKm(prev, newCoord);
-                const segmentDistM = segmentDistKm * 1000;
-                const timeDiffSecs = lastLocationTimestamp.current > 0
-                  ? (now - lastLocationTimestamp.current) / 1000
-                  : 3;
-                if (segmentDistM > MAX_JUMP_METERS && timeDiffSecs > MAX_GAP_SECONDS) {
-                  lastLocationTimestamp.current = now;
-                  return;
-                }
-                if (timeDiffSecs > 0) {
-                  const speedKmh = (segmentDistKm / timeDiffSecs) * 3600;
-                  if (speedKmh > MAX_SPEED_KMH) {
-                    lastLocationTimestamp.current = now;
-                    return;
-                  }
-                }
-                setDistance(d => d + segmentDistKm);
-              }
-              lastLocationTimestamp.current = now;
-              pathRef.current = [...pathRef.current, newCoord];
-              setCurrentPath([...pathRef.current]);
-              mapRef.current?.animateToRegion({
-                latitude: newCoord.latitude, longitude: newCoord.longitude,
-                latitudeDelta: currentDelta.current.latDelta, longitudeDelta: currentDelta.current.lngDelta,
-              }, 500);
-              setSpeedWarning(false);
-              if (!loopDetected && pathRef.current.length >= 10) {
-                if (checkLoop(pathRef.current)) closeLoop([...pathRef.current]);
-              }
-            },
+            { accuracy: Location.Accuracy.BestForNavigation, distanceInterval: 8, timeInterval: 3000 },
+            handleLocationUpdateRef.current,
           );
         }
       }
@@ -534,6 +521,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const locationRef = useRef<any>(null);
   const pathRef = useRef<Coord[]>([]);
+  const [pathSegments, setPathSegments] = useState<Coord[][]>([]);
   const mapRef = useRef<MapView>(null);
   const currentDelta = useRef({ latDelta: 0.02, lngDelta: 0.02 });
 
@@ -687,37 +675,29 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
   };
 
   const checkLoop = (path: Coord[]) => {
-    if (path.length < 10) return false;
-    const start = path[0];
-    const current = path[path.length - 1];
+    // Unir todos los segmentos + path actual
+    const allPoints = [...pathSegments.flat(), ...path];
+    if (allPoints.length < 10) return false;
+    const start = allPoints[0];
+    const current = allPoints[allPoints.length - 1];
     const dist = getDistance(start, current);
-    // Si volvemos a menos de 80m del inicio y hemos recorrido más de 200m
-    const totalDist = path.reduce((acc, p, i) => {
+    // Si volvemos a menos de 30m del inicio y hemos recorrido más de 200m
+    const totalDist = allPoints.reduce((acc, p, i) => {
       if (i === 0) return 0;
-      return acc + getDistance(path[i-1], p);
+      return acc + getDistance(allPoints[i-1], p);
     }, 0);
-    return dist < 15 && totalDist > 200;
+    return dist < 30 && totalDist > 200;
   };
 
   const closeLoop = async (path: Coord[]) => {
     setLoopDetected(true);
 
-    // Simplificar ruta: reducir puntos manteniendo la forma del perímetro
-    // Usamos Douglas-Peucker simplification en vez de snapToRoads para conservar el trazado real
-    const simplified = simplifyPath(path, 0.00005); // ~5m tolerancia
+    // Unir todos los segmentos + path actual para tener la ruta completa
+    const allPoints = [...pathSegments.flat(), ...path];
 
-    // Intentar snap to roads para mejorar el trazado, pero si falla usar simplificado
-    let snapped: Coord[];
-    try {
-      const toSnap = simplified.length > 100
-        ? simplified.filter((_, i) => i % 2 === 0)
-        : simplified;
-      snapped = await snapToRoads(toSnap);
-      // Si snap devuelve muy pocos puntos o pierde mucha forma, usar los puntos simplificados
-      if (snapped.length < Math.min(4, simplified.length * 0.3)) snapped = simplified;
-    } catch {
-      snapped = simplified;
-    }
+    // Simplificar con Douglas-Peucker manteniendo la forma real de la ruta
+    // NO usar snapToRoads — deforma el polígono y crea zonas incorrectas
+    const snapped = simplifyPath(allPoints, 0.00003); // ~3m tolerancia, preserva bien la forma
 
     // Asegurar que el polígono está cerrado
     if (snapped.length >= 3) {
@@ -787,6 +767,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
 
     pathRef.current = [path[path.length - 1]];
     setCurrentPath([path[path.length - 1]]);
+    setPathSegments([]);
     setLoopDetected(false);
   };
 
@@ -807,6 +788,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     setLoopDetected(false);
     setSpeedWarning(false);
     setCurrentSpeed(0);
+    setPathSegments([]);
     invalidSegments.current = 0;
     pathRef.current = [];
     lastLocationTimestamp.current = 0;
@@ -828,8 +810,8 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       try {
         await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, {
           accuracy: Location.Accuracy.BestForNavigation,
-          distanceInterval: 5,
-          timeInterval: 2000,
+          distanceInterval: 8,
+          timeInterval: 3000,
           foregroundService: {
             notificationTitle: 'CORRR — Carrera en curso',
             notificationBody: 'Registrando tu recorrido...',
@@ -843,82 +825,65 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       }
     }
 
+    /** Single location handler used everywhere — foreground watcher, resume, appState */
     const handleLocationUpdate = (loc: Location.LocationObject) => {
-      const newCoord = {
-        latitude: loc.coords.latitude,
-        longitude: loc.coords.longitude,
-      };
+      const newCoord = { latitude: loc.coords.latitude, longitude: loc.coords.longitude };
       const now = loc.timestamp ?? Date.now();
+      const accuracy = loc.coords.accuracy ?? 999;
+      const speed = loc.coords.speed ?? -1;
+      const prev = pathRef.current.length > 0 ? pathRef.current[pathRef.current.length - 1] : null;
 
-      // Anti-trampa y anti-teleport
-      if (pathRef.current.length > 0) {
-        const prev = pathRef.current[pathRef.current.length - 1];
-        const segmentDistKm = getDistanceKm(prev, newCoord);
-        const segmentDistM = segmentDistKm * 1000;
-        const timeDiffSecs = lastLocationTimestamp.current > 0
-          ? (now - lastLocationTimestamp.current) / 1000
-          : 3;
+      const result = filterGpsPoint(newCoord, prev, now, lastLocationTimestamp.current, accuracy, speed);
 
-        // Filtro 1: salto de distancia demasiado grande (teleport por sleep/pérdida GPS)
-        if (segmentDistM > MAX_JUMP_METERS && timeDiffSecs > MAX_GAP_SECONDS) {
-          console.log(`[GPS] Teleport filtrado: ${segmentDistM.toFixed(0)}m en ${timeDiffSecs.toFixed(0)}s`);
-          lastLocationTimestamp.current = now;
-          // Reiniciar path desde nuevo punto (no conectar con línea recta)
-          pathRef.current = [...pathRef.current, newCoord];
-          setCurrentPath([...pathRef.current]);
-          return;
-        }
-
-        // Filtro 2: velocidad
-        if (timeDiffSecs > 0) {
-          const speedKmh = (segmentDistKm / timeDiffSecs) * 3600;
-          if (speedKmh > MAX_SPEED_KMH) {
-            invalidSegments.current += 1;
-            setSpeedWarning(true);
-            if (speedWarningTimeout.current) clearTimeout(speedWarningTimeout.current);
-            speedWarningTimeout.current = setTimeout(() => setSpeedWarning(false), 5000);
-            lastLocationTimestamp.current = now;
-            return;
-          }
-        }
-
-        setDistance(d => d + segmentDistKm);
-        // Velocidad instantánea
-        if (timeDiffSecs > 0) {
-          setCurrentSpeed((segmentDistKm / timeDiffSecs) * 3600);
-        }
+      if (result.action === 'skip') {
+        // Bad point — don't update timestamp so next point measures from last good one
+        return;
       }
 
+      if (result.action === 'teleport') {
+        // Phone slept or lost GPS — start new visual segment
+        if (pathRef.current.length > 1) {
+          setPathSegments(segs => [...segs, [...pathRef.current]]);
+        }
+        pathRef.current = [newCoord];
+        setCurrentPath([newCoord]);
+        lastLocationTimestamp.current = now;
+        return;
+      }
+
+      // 'accept' — good point
       lastLocationTimestamp.current = now;
       pathRef.current = [...pathRef.current, newCoord];
       setCurrentPath([...pathRef.current]);
 
-        // Centrar mapa en la posición actual respetando el zoom del usuario
-        mapRef.current?.animateToRegion({
-          latitude: newCoord.latitude,
-          longitude: newCoord.longitude,
-          latitudeDelta: currentDelta.current.latDelta,
-          longitudeDelta: currentDelta.current.lngDelta,
-        }, 500);
+      if (result.distKm > 0) {
+        setDistance(d => d + result.distKm);
+      }
+      if (result.speedKmh > 0) {
+        setCurrentSpeed(result.speedKmh);
+      }
+      setSpeedWarning(false);
 
-        // Resetear warning si velocidad normal
-        setSpeedWarning(false);
+      // Center map on current position
+      mapRef.current?.animateToRegion({
+        latitude: newCoord.latitude,
+        longitude: newCoord.longitude,
+        latitudeDelta: currentDelta.current.latDelta,
+        longitudeDelta: currentDelta.current.lngDelta,
+      }, 500);
 
-        // Detectar loop cerrado
-        if (!loopDetected && pathRef.current.length >= 10) {
-          const start = pathRef.current[0];
-          const dist = getDistance(start, newCoord);
-          console.log(`[Loop] pts=${pathRef.current.length} distToStart=${dist.toFixed(0)}m`);
-          if (checkLoop(pathRef.current)) {
-            console.log('[Loop] ¡CERRADO!');
-            closeLoop([...pathRef.current]);
-          }
+      // Check for closed loop
+      if (!loopDetected && pathRef.current.length >= 10) {
+        if (checkLoop(pathRef.current)) {
+          closeLoop([...pathRef.current]);
         }
+      }
     };
 
     isRunningRef.current = true;
+    handleLocationUpdateRef.current = handleLocationUpdate;
     locationRef.current = await Location.watchPositionAsync(
-      { accuracy: Location.Accuracy.BestForNavigation, distanceInterval: 5, timeInterval: 2000 },
+      { accuracy: Location.Accuracy.BestForNavigation, distanceInterval: 8, timeInterval: 3000 },
       handleLocationUpdate,
     );
   };
@@ -948,8 +913,8 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
           bgLocationBuffer = [];
           await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, {
             accuracy: Location.Accuracy.BestForNavigation,
-            distanceInterval: 5,
-            timeInterval: 2000,
+            distanceInterval: 8,
+            timeInterval: 3000,
             foregroundService: {
               notificationTitle: 'CORRR — Carrera en curso',
               notificationBody: 'Registrando tu recorrido...',
@@ -963,37 +928,8 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     } catch {}
 
     locationRef.current = await Location.watchPositionAsync(
-      { accuracy: Location.Accuracy.BestForNavigation, distanceInterval: 5, timeInterval: 2000 },
-      (loc) => {
-        const newCoord = { latitude: loc.coords.latitude, longitude: loc.coords.longitude };
-        const now = loc.timestamp ?? Date.now();
-        if (pathRef.current.length > 0) {
-          const prev = pathRef.current[pathRef.current.length - 1];
-          const segmentDistKm = getDistanceKm(prev, newCoord);
-          const timeDiffSecs = lastLocationTimestamp.current > 0
-            ? (now - lastLocationTimestamp.current) / 1000
-            : 3;
-          if (timeDiffSecs > 0) {
-            const speedKmh = (segmentDistKm / timeDiffSecs) * 3600;
-            if (speedKmh > MAX_SPEED_KMH) {
-              lastLocationTimestamp.current = now;
-              return;
-            }
-          }
-          setDistance(d => d + segmentDistKm);
-        }
-        lastLocationTimestamp.current = now;
-        pathRef.current = [...pathRef.current, newCoord];
-        setCurrentPath([...pathRef.current]);
-        mapRef.current?.animateToRegion({
-          latitude: newCoord.latitude, longitude: newCoord.longitude,
-          latitudeDelta: currentDelta.current.latDelta, longitudeDelta: currentDelta.current.lngDelta,
-        }, 500);
-        setSpeedWarning(false);
-        if (!loopDetected && pathRef.current.length >= 10) {
-          if (checkLoop(pathRef.current)) closeLoop([...pathRef.current]);
-        }
-      },
+      { accuracy: Location.Accuracy.BestForNavigation, distanceInterval: 8, timeInterval: 3000 },
+      handleLocationUpdateRef.current,
     );
   };
 
@@ -1011,11 +947,12 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     bgLocationBuffer = [];
 
     // Si no cerró loop durante la carrera, comprobar si está cerca del inicio al parar
-    if (!loopDetected && pathRef.current.length >= 10) {
-      const start = pathRef.current[0];
-      const end = pathRef.current[pathRef.current.length - 1];
+    const allPts = [...pathSegments.flat(), ...pathRef.current];
+    if (!loopDetected && allPts.length >= 10) {
+      const start = allPts[0];
+      const end = allPts[allPts.length - 1];
       const distToStart = getDistance(start, end);
-      console.log(`[StopRun] Auto-close check: pts=${pathRef.current.length} distToStart=${distToStart.toFixed(0)}m`);
+      console.log(`[StopRun] Auto-close check: pts=${allPts.length} distToStart=${distToStart.toFixed(0)}m`);
       if (distToStart < 300) {
         console.log('[StopRun] Auto-cerrando loop');
         pathRef.current.push(start);
@@ -1057,11 +994,10 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     }
 
     if (pathRef.current.length >= 2) {
-      const snapped = await snapToRoads(
-        pathRef.current.filter((_, i) => i % 3 === 0 || i === pathRef.current.length - 1)
-      );
+      const allRunPts = [...pathSegments.flat(), ...pathRef.current];
+      const simplified = simplifyPath(allRunPts, 0.00003);
       setConqueredZones(prev => [...prev, {
-        coords: snapped,
+        coords: simplified,
         area: 0,
         points: kmPoints,
       }]);
@@ -1399,7 +1335,18 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
             )
           ))}
 
-          {/* Ruta actual */}
+          {/* Ruta actual — segmentos anteriores (sin teleport lines) */}
+          {pathSegments.map((seg, i) => seg.length > 1 && (
+            <Polyline
+              key={`seg-${i}`}
+              coordinates={seg}
+              strokeColor={colors.orangeLight}
+              strokeWidth={4}
+              lineDashPattern={[8, 4]}
+              lineCap="round"
+            />
+          ))}
+          {/* Segmento actual */}
           {currentPath.length > 1 && (
             <Polyline
               coordinates={currentPath}

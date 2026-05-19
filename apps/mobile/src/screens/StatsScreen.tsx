@@ -9,10 +9,11 @@ import {
   ActivityIndicator,
   RefreshControl,
   Modal,
+  Image,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, radius } from '../theme';
-import { api, RunRecord, UserStats } from '../services/api';
+import { api, RunRecord, UserStats, Achievement } from '../services/api';
 
 const { width } = Dimensions.get('window');
 type Period = 'Semana' | 'Mes' | 'Año' | 'Todo';
@@ -62,6 +63,14 @@ function getYearStart(): Date {
   return new Date(now.getFullYear(), 0, 1);
 }
 
+const logroImages: Record<string, any> = {
+  distancia: require('../../assets/logros/logro-distancia.png'),
+  carreras: require('../../assets/logros/logro-carreras.png'),
+  racha: require('../../assets/logros/logro-robos.png'),
+  zonas: require('../../assets/logros/logro-zonas.png'),
+  robos: require('../../assets/logros/logro-robos.png'),
+};
+
 export default function StatsScreen({ user }: Props) {
   const [period, setPeriod] = useState<Period>('Semana');
   const [stats, setStats] = useState<UserStats | null>(null);
@@ -71,13 +80,18 @@ export default function StatsScreen({ user }: Props) {
   const [showCalendar, setShowCalendar] = useState(false);
   const [calMonth, setCalMonth] = useState(new Date().getMonth());
   const [calYear, setCalYear] = useState(new Date().getFullYear());
+  const [achievements, setAchievements] = useState<Achievement[]>([]);
 
   const load = async (silent = false) => {
     if (!silent) setLoading(true);
     try {
-      const data = await api.getMyStats();
+      const [data, achs] = await Promise.all([
+        api.getMyStats(),
+        api.getAchievements().catch(() => []),
+      ]);
       setStats(data.stats);
       setRuns(data.runs);
+      setAchievements(achs);
     } catch {
       // sin token o sin conexión — mantenemos valores vacíos
     } finally {
@@ -300,6 +314,28 @@ export default function StatsScreen({ user }: Props) {
               </View>
             ))}
           </View>
+
+          {/* Logros desbloqueados */}
+          {achievements.filter(a => a.unlocked).length > 0 && (
+            <View style={styles.section}>
+              <View style={styles.sectionHeader}>
+                <Text style={styles.sectionTitle}>Logros</Text>
+                <Text style={styles.achCount}>{achievements.filter(a => a.unlocked).length}/{achievements.length}</Text>
+              </View>
+              {achievements.filter(a => a.unlocked).map((a) => (
+                <View key={a.key} style={styles.achRow}>
+                  <View style={styles.achIconBox}>
+                    <Image source={logroImages[a.category] ?? logroImages.distancia} style={{ width: 40, height: 40 }} resizeMode="contain" />
+                  </View>
+                  <View style={styles.achInfo}>
+                    <Text style={styles.achTitle}>{a.title}</Text>
+                    <Text style={styles.achDesc}>{a.description}</Text>
+                  </View>
+                  <Text style={styles.achReward}>+{a.reward} pts</Text>
+                </View>
+              ))}
+            </View>
+          )}
 
           <View style={styles.chartCard}>
             <Text style={styles.chartTitle}>{chartData.title}</Text>
@@ -547,6 +583,20 @@ const styles = StyleSheet.create({
   runNums: { alignItems: 'flex-end' },
   runKm: { fontSize: 14, fontWeight: '700', color: colors.textPrimary },
   runPace: { fontSize: 11, color: colors.textSecondary },
+  // Achievements
+  achCount: { fontSize: 13, color: colors.orange, fontWeight: '600' },
+  achRow: {
+    flexDirection: 'row', alignItems: 'center', paddingVertical: 10,
+    borderBottomWidth: 1, borderBottomColor: colors.border, gap: spacing.sm,
+  },
+  achIconBox: {
+    width: 48, height: 48, borderRadius: radius.md, backgroundColor: colors.bgCard,
+    borderWidth: 1, borderColor: '#4CAF50', alignItems: 'center', justifyContent: 'center',
+  },
+  achInfo: { flex: 1 },
+  achTitle: { fontSize: 14, fontWeight: '700', color: colors.textPrimary },
+  achDesc: { fontSize: 12, color: colors.textSecondary, marginTop: 2 },
+  achReward: { fontSize: 13, fontWeight: '800', color: colors.orange },
   // Calendar
   calOverlay: {
     flex: 1, backgroundColor: 'rgba(0,0,0,0.7)',

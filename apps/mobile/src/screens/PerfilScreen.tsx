@@ -67,7 +67,8 @@ export default function PerfilScreen({ user, onLogout }: Props) {
   const [editName, setEditName] = useState(displayName);
   const [editCity, setEditCity] = useState(user?.city ?? '');
   const [achievements, setAchievements] = useState<Achievement[]>([]);
-  const [pointsOpen, setPointsOpen] = useState(false);
+  const [pointsModalVisible, setPointsModalVisible] = useState(false);
+  const [achievementModalVisible, setAchievementModalVisible] = useState(false);
 
   const detectCity = useCallback(async () => {
     try {
@@ -294,92 +295,38 @@ export default function PerfilScreen({ user, onLogout }: Props) {
         </View>
         <View style={styles.achievementsRow}>
           {(achievements.length > 0
-            ? // Show first 4 closest to completion (or unlocked)
+            ? // Show first 4 NOT unlocked, sorted by closest to completion
               [...achievements]
-                .sort((a, b) => {
-                  if (a.unlocked !== b.unlocked) return a.unlocked ? -1 : 1;
-                  return (b.progress / b.target) - (a.progress / a.target);
-                })
+                .filter(a => !a.unlocked)
+                .sort((a, b) => (b.progress / b.target) - (a.progress / a.target))
                 .slice(0, 4)
                 .map(a => ({
                   category: a.category,
-                  label: a.title.split(' ')[0],
-                  sub: a.unlocked ? '✅' : `${Math.round(a.progress)}/${a.target}`,
-                  unlocked: a.unlocked,
+                  label: a.title,
+                  sub: `${Math.round(a.progress)}/${a.target}`,
+                  unlocked: false,
                   pct: Math.min(100, (a.progress / a.target) * 100),
                 }))
             : // Fallback while loading
               [
-                { category: 'distancia' as const, label: 'Distancia', sub: '0/10', unlocked: false, pct: 0 },
-                { category: 'carreras' as const, label: 'Carreras', sub: '0/5', unlocked: false, pct: 0 },
-                { category: 'zonas' as const, label: 'Zonas', sub: '0/5', unlocked: false, pct: 0 },
-                { category: 'robos' as const, label: 'Robos', sub: '0/1', unlocked: false, pct: 0 },
+                { category: 'distancia' as const, label: 'Primeros pasos', sub: '0/10', unlocked: false, pct: 0 },
+                { category: 'carreras' as const, label: 'Calentamiento', sub: '0/5', unlocked: false, pct: 0 },
+                { category: 'zonas' as const, label: 'Conquistador novato', sub: '0/5', unlocked: false, pct: 0 },
+                { category: 'robos' as const, label: 'Primer robo', sub: '0/1', unlocked: false, pct: 0 },
               ]
           ).map((a, i) => (
             <View key={i} style={styles.achievement}>
-              <View style={[styles.achievementIcon, a.unlocked && styles.achievementIconDone]}>
+              <View style={styles.achievementIcon}>
                 <Image source={logroImages[a.category] ?? logroImages.distancia} style={{ width: 52, height: 52 }} resizeMode="contain" />
               </View>
-              <Text style={styles.achievementLabel}>{a.label}</Text>
-              <Text style={[styles.achievementSub, a.unlocked && { color: '#4CAF50' }]}>{a.sub}</Text>
-              {!a.unlocked && (
-                <View style={styles.achProgress}>
-                  <View style={[styles.achProgressFill, { width: `${a.pct}%` }]} />
-                </View>
-              )}
+              <Text style={styles.achievementLabel} numberOfLines={2}>{a.label}</Text>
+              <Text style={styles.achievementSub}>{a.sub}</Text>
+              <View style={styles.achProgress}>
+                <View style={[styles.achProgressFill, { width: `${a.pct}%` }]} />
+              </View>
             </View>
           ))}
         </View>
-      </View>
-
-      <View style={styles.section}>
-        <TouchableOpacity style={styles.pointsToggle} activeOpacity={0.7} onPress={() => setPointsOpen(!pointsOpen)}>
-          <Text style={styles.sectionTitle}>Cómo funcionan los puntos</Text>
-          <Ionicons name={pointsOpen ? 'chevron-up' : 'chevron-down'} size={20} color={colors.textSecondary} />
-        </TouchableOpacity>
-        {pointsOpen && (
-        <View style={styles.pointsInfoCard}>
-          <View style={styles.pointsInfoRow}>
-            <View style={styles.pointsInfoIcon}><Ionicons name="navigate" size={16} color={colors.orange} /></View>
-            <View style={styles.pointsInfoBody}>
-              <Text style={styles.pointsInfoLabel}>Por kilómetro</Text>
-              <Text style={styles.pointsInfoValue}>50 pts/km</Text>
-            </View>
-          </View>
-          <View style={styles.pointsInfoDivider} />
-          <View style={styles.pointsInfoRow}>
-            <View style={styles.pointsInfoIcon}><Ionicons name="flag" size={16} color={colors.orange} /></View>
-            <View style={styles.pointsInfoBody}>
-              <Text style={styles.pointsInfoLabel}>Cerrar zona (≥ 3 km)</Text>
-              <Text style={styles.pointsInfoValue}>100 pts</Text>
-            </View>
-          </View>
-          <View style={styles.pointsInfoDivider} />
-          <View style={styles.pointsInfoRow}>
-            <View style={styles.pointsInfoIcon}><Ionicons name="flag-outline" size={16} color={colors.textSecondary} /></View>
-            <View style={styles.pointsInfoBody}>
-              <Text style={styles.pointsInfoLabel}>Cerrar zona ({'<'} 3 km)</Text>
-              <Text style={styles.pointsInfoValue}>50 pts</Text>
-            </View>
-          </View>
-          <View style={styles.pointsInfoDivider} />
-          <View style={styles.pointsInfoRow}>
-            <View style={styles.pointsInfoIcon}><Ionicons name="hand-left" size={16} color="#FF3B30" /></View>
-            <View style={styles.pointsInfoBody}>
-              <Text style={styles.pointsInfoLabel}>Robar zona rival</Text>
-              <Text style={styles.pointsInfoValue}>+50 pts/robo</Text>
-            </View>
-          </View>
-          <View style={styles.pointsInfoDivider} />
-          <View style={styles.pointsInfoRow}>
-            <View style={styles.pointsInfoIcon}><Ionicons name="flash" size={16} color="#FFD700" /></View>
-            <View style={styles.pointsInfoBody}>
-              <Text style={styles.pointsInfoLabel}>Experiencia (XP)</Text>
-              <Text style={styles.pointsInfoValue}>1 XP por cada 100 pts</Text>
-            </View>
-          </View>
-        </View>
-        )}
       </View>
 
       <View style={styles.section}>
@@ -451,6 +398,8 @@ export default function PerfilScreen({ user, onLogout }: Props) {
 
       <View style={styles.section}>
         {[
+          { icon: 'flame-outline' as const, label: 'Cómo funcionan los puntos', onPress: () => setPointsModalVisible(true) },
+          { icon: 'trophy-outline' as const, label: 'Puntos por logros', onPress: () => setAchievementModalVisible(true) },
           { icon: 'trash-outline' as const, label: 'Eliminar cuenta', onPress: handleDeleteAccount },
           { icon: 'notifications-outline' as const, label: 'Notificaciones', onPress: () => {
             if (Platform.OS === 'ios') {
@@ -513,6 +462,180 @@ export default function PerfilScreen({ user, onLogout }: Props) {
       </KeyboardAvoidingView>
     </Modal>
 
+    {/* Modal: Cómo funcionan los puntos */}
+    <Modal visible={pointsModalVisible} animationType="slide" transparent={false}>
+      <View style={styles.infoModalContainer}>
+        <View style={styles.infoModalHeader}>
+          <TouchableOpacity onPress={() => setPointsModalVisible(false)}>
+            <Ionicons name="arrow-back" size={24} color={colors.textPrimary} />
+          </TouchableOpacity>
+          <Text style={styles.infoModalTitle}>Cómo funcionan los puntos</Text>
+          <View style={{ width: 24 }} />
+        </View>
+        <ScrollView style={styles.infoModalScroll} contentContainerStyle={{ paddingBottom: 40 }}>
+          <View style={styles.infoCard}>
+            <View style={styles.infoRow}>
+              <View style={styles.infoIcon}><Ionicons name="navigate" size={18} color={colors.orange} /></View>
+              <View style={styles.infoBody}>
+                <Text style={styles.infoLabel}>Por kilómetro</Text>
+                <Text style={styles.infoDesc}>Ganas puntos por cada km que corras</Text>
+              </View>
+              <Text style={styles.infoValue}>50 pts/km</Text>
+            </View>
+            <View style={styles.infoDivider} />
+            <View style={styles.infoRow}>
+              <View style={styles.infoIcon}><Ionicons name="flag" size={18} color={colors.orange} /></View>
+              <View style={styles.infoBody}>
+                <Text style={styles.infoLabel}>Cerrar zona grande</Text>
+                <Text style={styles.infoDesc}>Cierra un loop de 3 km o más</Text>
+              </View>
+              <Text style={styles.infoValue}>100 pts</Text>
+            </View>
+            <View style={styles.infoDivider} />
+            <View style={styles.infoRow}>
+              <View style={styles.infoIcon}><Ionicons name="flag-outline" size={18} color={colors.textSecondary} /></View>
+              <View style={styles.infoBody}>
+                <Text style={styles.infoLabel}>Cerrar zona pequeña</Text>
+                <Text style={styles.infoDesc}>Cierra un loop de menos de 3 km</Text>
+              </View>
+              <Text style={styles.infoValue}>50 pts</Text>
+            </View>
+            <View style={styles.infoDivider} />
+            <View style={styles.infoRow}>
+              <View style={styles.infoIcon}><Ionicons name="hand-left" size={18} color="#FF3B30" /></View>
+              <View style={styles.infoBody}>
+                <Text style={styles.infoLabel}>Robar zona rival</Text>
+                <Text style={styles.infoDesc}>Conquista territorio de otro corredor</Text>
+              </View>
+              <Text style={styles.infoValue}>+50 pts</Text>
+            </View>
+            <View style={styles.infoDivider} />
+            <View style={styles.infoRow}>
+              <View style={styles.infoIcon}><Ionicons name="flash" size={18} color="#FFD700" /></View>
+              <View style={styles.infoBody}>
+                <Text style={styles.infoLabel}>Experiencia (XP)</Text>
+                <Text style={styles.infoDesc}>Sube de nivel acumulando puntos</Text>
+              </View>
+              <Text style={styles.infoValue}>1 XP / 100 pts</Text>
+            </View>
+          </View>
+        </ScrollView>
+      </View>
+    </Modal>
+
+    {/* Modal: Puntos por logros */}
+    <Modal visible={achievementModalVisible} animationType="slide" transparent={false}>
+      <View style={styles.infoModalContainer}>
+        <View style={styles.infoModalHeader}>
+          <TouchableOpacity onPress={() => setAchievementModalVisible(false)}>
+            <Ionicons name="arrow-back" size={24} color={colors.textPrimary} />
+          </TouchableOpacity>
+          <Text style={styles.infoModalTitle}>Puntos por logros</Text>
+          <View style={{ width: 24 }} />
+        </View>
+        <ScrollView style={styles.infoModalScroll} contentContainerStyle={{ paddingBottom: 40 }}>
+          <Text style={styles.achInfoSubtitle}>Los logros se desbloquean automáticamente al alcanzar el objetivo. Los puntos se suman a tu total.</Text>
+
+          {/* Distancia */}
+          <View style={styles.infoCard}>
+            <Text style={styles.achCategoryHeader}>📏  Distancia</Text>
+            {[
+              { name: 'Primeros pasos 👟', goal: '10 km', pts: '100 pts' },
+              { name: 'Medio maratón 🏃', goal: '50 km', pts: '300 pts' },
+              { name: 'Centenario 💯', goal: '100 km', pts: '600 pts' },
+              { name: 'Ultra runner 🏅', goal: '500 km', pts: '1.500 pts' },
+            ].map((a, i) => (
+              <View key={i}>
+                {i > 0 && <View style={styles.infoDivider} />}
+                <View style={styles.achInfoRow}>
+                  <Text style={styles.achInfoName}>{a.name}</Text>
+                  <Text style={styles.achInfoGoal}>{a.goal}</Text>
+                  <Text style={styles.achInfoPts}>{a.pts}</Text>
+                </View>
+              </View>
+            ))}
+          </View>
+
+          {/* Zonas */}
+          <View style={styles.infoCard}>
+            <Text style={styles.achCategoryHeader}>🗺️  Zonas</Text>
+            {[
+              { name: 'Conquistador novato', goal: '5 zonas', pts: '100 pts' },
+              { name: 'Señor del territorio 🏰', goal: '25 zonas', pts: '400 pts' },
+              { name: 'Emperador 👑', goal: '50 zonas', pts: '800 pts' },
+              { name: 'Leyenda territorial ⚔️', goal: '100 zonas', pts: '2.000 pts' },
+            ].map((a, i) => (
+              <View key={i}>
+                {i > 0 && <View style={styles.infoDivider} />}
+                <View style={styles.achInfoRow}>
+                  <Text style={styles.achInfoName}>{a.name}</Text>
+                  <Text style={styles.achInfoGoal}>{a.goal}</Text>
+                  <Text style={styles.achInfoPts}>{a.pts}</Text>
+                </View>
+              </View>
+            ))}
+          </View>
+
+          {/* Carreras */}
+          <View style={styles.infoCard}>
+            <Text style={styles.achCategoryHeader}>🏃  Carreras</Text>
+            {[
+              { name: 'Calentamiento 🔥', goal: '5 carreras', pts: '100 pts' },
+              { name: 'Rutina sana 💪', goal: '20 carreras', pts: '400 pts' },
+              { name: 'Máquina imparable ⚡', goal: '50 carreras', pts: '1.000 pts' },
+            ].map((a, i) => (
+              <View key={i}>
+                {i > 0 && <View style={styles.infoDivider} />}
+                <View style={styles.achInfoRow}>
+                  <Text style={styles.achInfoName}>{a.name}</Text>
+                  <Text style={styles.achInfoGoal}>{a.goal}</Text>
+                  <Text style={styles.achInfoPts}>{a.pts}</Text>
+                </View>
+              </View>
+            ))}
+          </View>
+
+          {/* Robos */}
+          <View style={styles.infoCard}>
+            <Text style={styles.achCategoryHeader}>🎭  Robos</Text>
+            {[
+              { name: 'Primer robo 🎭', goal: '1 robo', pts: '150 pts' },
+              { name: 'Ladrón experto 🦹', goal: '10 robos', pts: '500 pts' },
+              { name: 'El terror del barrio 😈', goal: '25 robos', pts: '1.200 pts' },
+            ].map((a, i) => (
+              <View key={i}>
+                {i > 0 && <View style={styles.infoDivider} />}
+                <View style={styles.achInfoRow}>
+                  <Text style={styles.achInfoName}>{a.name}</Text>
+                  <Text style={styles.achInfoGoal}>{a.goal}</Text>
+                  <Text style={styles.achInfoPts}>{a.pts}</Text>
+                </View>
+              </View>
+            ))}
+          </View>
+
+          {/* Rachas */}
+          <View style={styles.infoCard}>
+            <Text style={styles.achCategoryHeader}>🔥  Rachas</Text>
+            {[
+              { name: 'Racha de 3 🔥', goal: '3 días seguidos', pts: '200 pts' },
+              { name: 'Semana perfecta 📅', goal: '7 días seguidos', pts: '500 pts' },
+              { name: 'Imparable 🌟', goal: '14 días seguidos', pts: '1.000 pts' },
+            ].map((a, i) => (
+              <View key={i}>
+                {i > 0 && <View style={styles.infoDivider} />}
+                <View style={styles.achInfoRow}>
+                  <Text style={styles.achInfoName}>{a.name}</Text>
+                  <Text style={styles.achInfoGoal}>{a.goal}</Text>
+                  <Text style={styles.achInfoPts}>{a.pts}</Text>
+                </View>
+              </View>
+            ))}
+          </View>
+        </ScrollView>
+      </View>
+    </Modal>
+
     </>
   );
 }
@@ -567,27 +690,43 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center',
   },
   achievementIconDone: { borderColor: '#4CAF50', borderWidth: 1.5 },
-  achievementLabel: { fontSize: 11, fontWeight: '700', color: colors.textPrimary, textAlign: 'center' },
+  achievementLabel: { fontSize: 11, fontWeight: '700', color: colors.textPrimary, textAlign: 'center', lineHeight: 14 },
   achievementSub: { fontSize: 10, color: colors.textSecondary, textAlign: 'center' },
   achProgress: { width: '80%', height: 3, backgroundColor: colors.bgCardAlt, borderRadius: 2, overflow: 'hidden', marginTop: 2 },
   achProgressFill: { height: '100%', backgroundColor: colors.orange, borderRadius: 2 },
-  pointsToggle: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.sm },
   emptyText: { fontSize: 14, color: colors.textSecondary, textAlign: 'center', paddingVertical: spacing.md },
-  pointsInfoCard: {
+  // Info modals (puntos & logros)
+  infoModalContainer: { flex: 1, backgroundColor: colors.bg, paddingTop: Platform.OS === 'ios' ? 56 : 24 },
+  infoModalHeader: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: spacing.md, paddingBottom: spacing.md,
+    borderBottomWidth: 1, borderBottomColor: colors.border,
+  },
+  infoModalTitle: { fontSize: 18, fontWeight: '800', color: colors.textPrimary },
+  infoModalScroll: { flex: 1, paddingHorizontal: spacing.md, paddingTop: spacing.md },
+  infoCard: {
     backgroundColor: colors.bgCard, borderRadius: radius.lg,
-    padding: spacing.md, borderWidth: 1, borderColor: colors.border,
+    padding: spacing.md, borderWidth: 1, borderColor: colors.border, marginBottom: spacing.md,
   },
-  pointsInfoRow: {
-    flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingVertical: 8,
-  },
-  pointsInfoIcon: {
-    width: 32, height: 32, borderRadius: radius.md, backgroundColor: colors.bgCardAlt,
+  infoRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingVertical: 10 },
+  infoIcon: {
+    width: 36, height: 36, borderRadius: radius.md, backgroundColor: colors.bgCardAlt,
     alignItems: 'center', justifyContent: 'center',
   },
-  pointsInfoBody: { flex: 1, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  pointsInfoLabel: { fontSize: 13, fontWeight: '600', color: colors.textPrimary },
-  pointsInfoValue: { fontSize: 13, fontWeight: '800', color: colors.orange },
-  pointsInfoDivider: { height: 1, backgroundColor: colors.border, marginLeft: 44 },
+  infoBody: { flex: 1 },
+  infoLabel: { fontSize: 14, fontWeight: '700', color: colors.textPrimary },
+  infoDesc: { fontSize: 12, color: colors.textSecondary, marginTop: 2 },
+  infoValue: { fontSize: 14, fontWeight: '800', color: colors.orange },
+  infoDivider: { height: 1, backgroundColor: colors.border },
+  achInfoSubtitle: {
+    fontSize: 13, color: colors.textSecondary, lineHeight: 18,
+    marginBottom: spacing.md, paddingHorizontal: 2,
+  },
+  achCategoryHeader: { fontSize: 15, fontWeight: '800', color: colors.textPrimary, marginBottom: 8 },
+  achInfoRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10 },
+  achInfoName: { flex: 1, fontSize: 13, fontWeight: '600', color: colors.textPrimary },
+  achInfoGoal: { fontSize: 12, color: colors.textSecondary, marginRight: spacing.sm },
+  achInfoPts: { fontSize: 13, fontWeight: '800', color: colors.orange, minWidth: 65, textAlign: 'right' },
   runRow: {
     flexDirection: 'row', alignItems: 'center', paddingVertical: spacing.sm,
     borderBottomWidth: 1, borderBottomColor: colors.border, gap: spacing.sm,
