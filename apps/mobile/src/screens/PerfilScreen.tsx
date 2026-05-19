@@ -19,7 +19,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
 import { colors, spacing, radius } from '../theme';
-import { api, MyStats, RunRecord } from '../services/api';
+import { api, MyStats, RunRecord, Achievement } from '../services/api';
 
 interface Props {
   user: { username: string; id: string; city?: string } | null;
@@ -58,6 +58,8 @@ export default function PerfilScreen({ user, onLogout }: Props) {
   const [editModal, setEditModal] = useState(false);
   const [editName, setEditName] = useState(displayName);
   const [editCity, setEditCity] = useState(user?.city ?? '');
+  const [achievements, setAchievements] = useState<Achievement[]>([]);
+  const [pointsOpen, setPointsOpen] = useState(false);
 
   const detectCity = useCallback(async () => {
     try {
@@ -80,14 +82,18 @@ export default function PerfilScreen({ user, onLogout }: Props) {
 
   const loadStats = useCallback(async () => {
     try {
-      const [data, profile] = await Promise.all([api.getMyStats(), api.getProfile()]);
+      const [data, profile, achs] = await Promise.all([
+        api.getMyStats(),
+        api.getProfile(),
+        api.getAchievements().catch(() => []),
+      ]);
       setStats(data);
+      setAchievements(achs);
       if (profile.avatar_url) setAvatarUrl(profile.avatar_url);
       if (profile.display_name) setProfileName(profile.display_name);
       if (profile.city) {
         setProfileCity(profile.city);
       } else {
-        // Si no tiene ciudad en el backend, detectar por GPS
         detectCity();
       }
     } catch {
@@ -276,30 +282,54 @@ export default function PerfilScreen({ user, onLogout }: Props) {
       <View style={styles.section}>
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Logros</Text>
-          <TouchableOpacity><Text style={styles.sectionLink}>Ver todos</Text></TouchableOpacity>
+          <Text style={styles.sectionLink}>{achievements.filter(a => a.unlocked).length}/{achievements.length}</Text>
         </View>
         <View style={styles.achievementsRow}>
-          {[
-            { img: require('../../assets/logros/conquistador.png'), label: 'Conquistador', sub: '10 zonas' },
-            { img: require('../../assets/logros/imparable.png'), label: 'Imparable', sub: '10 rachas' },
-            { img: require('../../assets/logros/explorador.png'), label: 'Explorador', sub: '100 km' },
-            { img: require('../../assets/logros/leyenda.png'), label: 'Leyenda', sub: 'Top 5%' },
-          ].map((a, i) => (
+          {(achievements.length > 0
+            ? // Show first 4 closest to completion (or unlocked)
+              [...achievements]
+                .sort((a, b) => {
+                  if (a.unlocked !== b.unlocked) return a.unlocked ? -1 : 1;
+                  return (b.progress / b.target) - (a.progress / a.target);
+                })
+                .slice(0, 4)
+                .map(a => ({
+                  icon: a.icon,
+                  label: a.title.length > 12 ? a.title.slice(0, 11) + '…' : a.title,
+                  sub: a.unlocked ? '✅' : `${Math.round(a.progress)}/${a.target}`,
+                  unlocked: a.unlocked,
+                  pct: Math.min(100, (a.progress / a.target) * 100),
+                }))
+            : // Fallback while loading
+              [
+                { icon: '🗺️', label: 'Conquistador', sub: '0/5', unlocked: false, pct: 0 },
+                { icon: '🔥', label: 'Calentamiento', sub: '0/5', unlocked: false, pct: 0 },
+                { icon: '👟', label: 'Primeros pasos', sub: '0/10', unlocked: false, pct: 0 },
+                { icon: '🎭', label: 'Primer robo', sub: '0/1', unlocked: false, pct: 0 },
+              ]
+          ).map((a, i) => (
             <View key={i} style={styles.achievement}>
-              <View style={styles.achievementIcon}>
-                <Image source={a.img} style={{ width: 48, height: 48 }} resizeMode="contain" />
+              <View style={[styles.achievementIcon, a.unlocked && styles.achievementIconDone]}>
+                <Text style={{ fontSize: 24 }}>{a.icon}</Text>
               </View>
               <Text style={styles.achievementLabel}>{a.label}</Text>
-              <Text style={styles.achievementSub}>{a.sub}</Text>
+              <Text style={[styles.achievementSub, a.unlocked && { color: '#4CAF50' }]}>{a.sub}</Text>
+              {!a.unlocked && (
+                <View style={styles.achProgress}>
+                  <View style={[styles.achProgressFill, { width: `${a.pct}%` }]} />
+                </View>
+              )}
             </View>
           ))}
         </View>
       </View>
 
       <View style={styles.section}>
-        <View style={styles.sectionHeader}>
+        <TouchableOpacity style={styles.pointsToggle} activeOpacity={0.7} onPress={() => setPointsOpen(!pointsOpen)}>
           <Text style={styles.sectionTitle}>Cómo funcionan los puntos</Text>
-        </View>
+          <Ionicons name={pointsOpen ? 'chevron-up' : 'chevron-down'} size={20} color={colors.textSecondary} />
+        </TouchableOpacity>
+        {pointsOpen && (
         <View style={styles.pointsInfoCard}>
           <View style={styles.pointsInfoRow}>
             <View style={styles.pointsInfoIcon}><Ionicons name="navigate" size={16} color={colors.orange} /></View>
@@ -341,6 +371,7 @@ export default function PerfilScreen({ user, onLogout }: Props) {
             </View>
           </View>
         </View>
+        )}
       </View>
 
       <View style={styles.section}>
@@ -527,8 +558,12 @@ const styles = StyleSheet.create({
     width: 52, height: 52, borderRadius: radius.md, backgroundColor: colors.bgCard,
     borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center',
   },
+  achievementIconDone: { borderColor: '#4CAF50', borderWidth: 1.5 },
   achievementLabel: { fontSize: 11, fontWeight: '700', color: colors.textPrimary, textAlign: 'center' },
   achievementSub: { fontSize: 10, color: colors.textSecondary, textAlign: 'center' },
+  achProgress: { width: '80%', height: 3, backgroundColor: colors.bgCardAlt, borderRadius: 2, overflow: 'hidden', marginTop: 2 },
+  achProgressFill: { height: '100%', backgroundColor: colors.orange, borderRadius: 2 },
+  pointsToggle: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.sm },
   emptyText: { fontSize: 14, color: colors.textSecondary, textAlign: 'center', paddingVertical: spacing.md },
   pointsInfoCard: {
     backgroundColor: colors.bgCard, borderRadius: radius.lg,
