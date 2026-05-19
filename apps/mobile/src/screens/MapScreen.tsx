@@ -1483,7 +1483,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         <View style={styles.territoryRow}>
           {[
             { value: `${conqueredZones.filter(z => z.area > 0).length}`, label: 'Zonas' },
-            { value: `${distance.toFixed(1)} km`, label: 'Distancia' },
+            { value: isRunning ? `${pace}` : `${distance.toFixed(1)} km`, label: isRunning ? 'Min/km' : 'Distancia' },
             { value: `${totalPoints}`, label: 'Puntos' },
           ].map((s, i) => (
             <View key={i} style={styles.territoryStat}>
