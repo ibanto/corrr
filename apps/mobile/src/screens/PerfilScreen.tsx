@@ -47,6 +47,14 @@ function formatKm(km: number): string {
   return km >= 1000 ? `${(km / 1000).toFixed(1)}k` : km.toFixed(1);
 }
 
+const logroImages: Record<string, any> = {
+  distancia: require('../../assets/logros/logro-distancia.png'),
+  carreras: require('../../assets/logros/logro-carreras.png'),
+  racha: require('../../assets/logros/logro-robos.png'),
+  zonas: require('../../assets/logros/logro-zonas.png'),
+  robos: require('../../assets/logros/logro-robos.png'),
+};
+
 export default function PerfilScreen({ user, onLogout }: Props) {
   const displayName = user?.username ?? 'Runner';
   const [stravaLoading, setStravaLoading] = useState(false);
@@ -294,23 +302,23 @@ export default function PerfilScreen({ user, onLogout }: Props) {
                 })
                 .slice(0, 4)
                 .map(a => ({
-                  icon: a.icon,
-                  label: a.title.length > 12 ? a.title.slice(0, 11) + '…' : a.title,
+                  category: a.category,
+                  label: a.title.split(' ')[0],
                   sub: a.unlocked ? '✅' : `${Math.round(a.progress)}/${a.target}`,
                   unlocked: a.unlocked,
                   pct: Math.min(100, (a.progress / a.target) * 100),
                 }))
             : // Fallback while loading
               [
-                { icon: '🗺️', label: 'Conquistador', sub: '0/5', unlocked: false, pct: 0 },
-                { icon: '🔥', label: 'Calentamiento', sub: '0/5', unlocked: false, pct: 0 },
-                { icon: '👟', label: 'Primeros pasos', sub: '0/10', unlocked: false, pct: 0 },
-                { icon: '🎭', label: 'Primer robo', sub: '0/1', unlocked: false, pct: 0 },
+                { category: 'distancia' as const, label: 'Distancia', sub: '0/10', unlocked: false, pct: 0 },
+                { category: 'carreras' as const, label: 'Carreras', sub: '0/5', unlocked: false, pct: 0 },
+                { category: 'zonas' as const, label: 'Zonas', sub: '0/5', unlocked: false, pct: 0 },
+                { category: 'robos' as const, label: 'Robos', sub: '0/1', unlocked: false, pct: 0 },
               ]
           ).map((a, i) => (
             <View key={i} style={styles.achievement}>
               <View style={[styles.achievementIcon, a.unlocked && styles.achievementIconDone]}>
-                <Text style={{ fontSize: 24 }}>{a.icon}</Text>
+                <Image source={logroImages[a.category] ?? logroImages.distancia} style={{ width: 52, height: 52 }} resizeMode="contain" />
               </View>
               <Text style={styles.achievementLabel}>{a.label}</Text>
               <Text style={[styles.achievementSub, a.unlocked && { color: '#4CAF50' }]}>{a.sub}</Text>
@@ -555,7 +563,7 @@ const styles = StyleSheet.create({
   achievementsRow: { flexDirection: 'row', gap: spacing.sm },
   achievement: { flex: 1, alignItems: 'center', gap: 4 },
   achievementIcon: {
-    width: 52, height: 52, borderRadius: radius.md, backgroundColor: colors.bgCard,
+    width: 64, height: 64, borderRadius: radius.md, backgroundColor: colors.bgCard,
     borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center',
   },
   achievementIconDone: { borderColor: '#4CAF50', borderWidth: 1.5 },
