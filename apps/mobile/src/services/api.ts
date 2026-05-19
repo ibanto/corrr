@@ -31,6 +31,19 @@ interface Challenge {
   icon: string;
 }
 
+interface Achievement {
+  key: string;
+  title: string;
+  description: string;
+  icon: string;
+  category: 'distancia' | 'zonas' | 'carreras' | 'robos' | 'racha';
+  target: number;
+  progress: number;
+  reward: number;
+  unlocked: boolean;
+  unlockedAt: string | null;
+}
+
 interface ZoneCoord {
   latitude: number;
   longitude: number;
@@ -235,6 +248,10 @@ class ApiService {
     });
   }
 
+  async getAchievements(): Promise<Achievement[]> {
+    return this.request<Achievement[]>('/achievements');
+  }
+
   async deleteAccount(): Promise<void> {
     await this.request('/users/me', { method: 'DELETE' });
   }
@@ -295,7 +312,7 @@ interface Friend {
 }
 
 export const api = new ApiService();
-export type { LoginResponse, RankingEntry, Challenge, RunRecord, UserStats, MyStats, RemoteZone, ZonePayload, FriendRequest, Friend };
+export type { LoginResponse, RankingEntry, Challenge, Achievement, RunRecord, UserStats, MyStats, RemoteZone, ZonePayload, FriendRequest, Friend };
 
 const MOCK_RANKING: RankingEntry[] = [
   { position: 1, username: 'Laura R.', city: 'Barcelona', points: 28480, zones: 87 },

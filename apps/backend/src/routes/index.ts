@@ -109,6 +109,20 @@ async function initDB() {
   await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN DEFAULT FALSE`).catch(() => {});
   await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS verify_token TEXT`).catch(() => {});
 
+  // Track stolen zones in user_stats
+  await db.query(`ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS total_steals INT DEFAULT 0`).catch(() => {});
+
+  // Achievements unlocked per user
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS user_achievements (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+      achievement_key TEXT NOT NULL,
+      unlocked_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(user_id, achievement_key)
+    )
+  `);
+
   // Activar Row Level Security en todas las tablas (bloquea acceso directo vía Supabase API)
   for (const table of ['users', 'user_stats', 'runs', 'zones']) {
     await db.query(`ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY`).catch(() => {});
@@ -482,6 +496,66 @@ app.get('/challenges', async (req, reply) => {
   return reply.send(challenges);
 });
 
+// ── Achievements (logros) ──────────────────────────────────────────────────
+
+app.get('/achievements', { preHandler: requireAuth }, async (req: any, reply) => {
+  const userId = req.userId;
+
+  // Get user stats
+  const { rows: statsRows } = await db.query(
+    'SELECT total_zones, total_points, total_km, total_runs, COALESCE(total_steals,0) AS total_steals FROM user_stats WHERE user_id = $1',
+    [userId]
+  );
+  const stats = statsRows[0] || { total_zones: 0, total_points: 0, total_km: 0, total_runs: 0, total_steals: 0 };
+
+  // Get streak
+  const { rows: runDays } = await db.query(
+    `SELECT DISTINCT DATE(created_at AT TIME ZONE 'Europe/Madrid') AS d
+     FROM runs WHERE user_id = $1 ORDER BY d DESC LIMIT 60`,
+    [userId]
+  );
+  let streak = 0;
+  if (runDays.length) {
+    streak = 1;
+    for (let i = 1; i < runDays.length; i++) {
+      const prev = new Date(runDays[i - 1].d);
+      const curr = new Date(runDays[i].d);
+      const diff = (prev.getTime() - curr.getTime()) / (1000 * 60 * 60 * 24);
+      if (Math.round(diff) === 1) streak++;
+      else break;
+    }
+  }
+
+  // Get unlocked achievements
+  const { rows: unlocked } = await db.query(
+    'SELECT achievement_key, unlocked_at FROM user_achievements WHERE user_id = $1',
+    [userId]
+  );
+  const unlockedMap = new Map(unlocked.map((r: any) => [r.achievement_key, r.unlocked_at]));
+
+  // Build all achievements with progress
+  const allAchievements = [
+    ...ACHIEVEMENTS.map(a => ({
+      key: a.key,
+      title: a.title,
+      description: a.description,
+      icon: a.icon,
+      category: a.category,
+      target: a.target,
+      progress: Math.min(parseFloat(stats[a.stat] ?? 0), a.target),
+      reward: a.reward,
+      unlocked: unlockedMap.has(a.key),
+      unlockedAt: unlockedMap.get(a.key) || null,
+    })),
+    // Streak achievements
+    { key: 'streak_3',  title: 'Racha de 3',      description: 'Corre 3 días seguidos',  icon: '🔥', category: 'racha', target: 3,  progress: Math.min(streak, 3),  reward: 200,  unlocked: unlockedMap.has('streak_3'),  unlockedAt: unlockedMap.get('streak_3') || null },
+    { key: 'streak_7',  title: 'Semana perfecta',  description: 'Corre 7 días seguidos',  icon: '📅', category: 'racha', target: 7,  progress: Math.min(streak, 7),  reward: 500,  unlocked: unlockedMap.has('streak_7'),  unlockedAt: unlockedMap.get('streak_7') || null },
+    { key: 'streak_14', title: 'Imparable',         description: 'Corre 14 días seguidos', icon: '🌟', category: 'racha', target: 14, progress: Math.min(streak, 14), reward: 1000, unlocked: unlockedMap.has('streak_14'), unlockedAt: unlockedMap.get('streak_14') || null },
+  ];
+
+  return reply.send(allAchievements);
+});
+
 // ── Admin: Challenges CRUD ──────────────────────────────────────────────────
 
 const ADMIN_KEY = process.env.ADMIN_KEY || 'corrr-admin-2024';
@@ -637,6 +711,114 @@ function pointInPolygon(lat: number, lng: number, polygon: Coord[]): boolean {
   return inside;
 }
 
+// ── Achievements system ────────────────────────────────────────────────────────
+
+interface AchievementDef {
+  key: string;
+  title: string;
+  description: string;
+  icon: string;
+  category: 'distancia' | 'zonas' | 'carreras' | 'robos' | 'racha';
+  target: number;
+  stat: string; // which stat to check
+  reward: number;
+}
+
+const ACHIEVEMENTS: AchievementDef[] = [
+  // Distancia
+  { key: 'dist_10',   title: 'Primeros pasos',       description: 'Acumula 10 km corriendo',       icon: '👟', category: 'distancia', target: 10,   stat: 'total_km',     reward: 100 },
+  { key: 'dist_50',   title: 'Medio maratón',        description: 'Acumula 50 km corriendo',       icon: '🏃', category: 'distancia', target: 50,   stat: 'total_km',     reward: 300 },
+  { key: 'dist_100',  title: 'Centenario',           description: 'Acumula 100 km corriendo',      icon: '💯', category: 'distancia', target: 100,  stat: 'total_km',     reward: 600 },
+  { key: 'dist_500',  title: 'Ultra runner',          description: 'Acumula 500 km corriendo',      icon: '🏅', category: 'distancia', target: 500,  stat: 'total_km',     reward: 1500 },
+  // Zonas
+  { key: 'zones_5',   title: 'Conquistador novato',   description: 'Conquista 5 zonas',             icon: '🗺️', category: 'zonas',     target: 5,    stat: 'total_zones',  reward: 100 },
+  { key: 'zones_25',  title: 'Señor del territorio',  description: 'Conquista 25 zonas',            icon: '🏰', category: 'zonas',     target: 25,   stat: 'total_zones',  reward: 400 },
+  { key: 'zones_50',  title: 'Emperador',             description: 'Conquista 50 zonas',            icon: '👑', category: 'zonas',     target: 50,   stat: 'total_zones',  reward: 800 },
+  { key: 'zones_100', title: 'Leyenda territorial',   description: 'Conquista 100 zonas',           icon: '⚔️', category: 'zonas',     target: 100,  stat: 'total_zones',  reward: 2000 },
+  // Carreras
+  { key: 'runs_5',    title: 'Calentamiento',         description: 'Completa 5 carreras',           icon: '🔥', category: 'carreras',  target: 5,    stat: 'total_runs',   reward: 100 },
+  { key: 'runs_20',   title: 'Rutina sana',           description: 'Completa 20 carreras',          icon: '💪', category: 'carreras',  target: 20,   stat: 'total_runs',   reward: 400 },
+  { key: 'runs_50',   title: 'Máquina imparable',     description: 'Completa 50 carreras',          icon: '⚡', category: 'carreras',  target: 50,   stat: 'total_runs',   reward: 1000 },
+  // Robos
+  { key: 'steals_1',  title: 'Primer robo',           description: 'Roba tu primera zona',          icon: '🎭', category: 'robos',     target: 1,    stat: 'total_steals', reward: 150 },
+  { key: 'steals_10', title: 'Ladrón experto',        description: 'Roba 10 zonas a rivales',       icon: '🦹', category: 'robos',     target: 10,   stat: 'total_steals', reward: 500 },
+  { key: 'steals_25', title: 'El terror del barrio',  description: 'Roba 25 zonas a rivales',       icon: '😈', category: 'robos',     target: 25,   stat: 'total_steals', reward: 1200 },
+];
+
+async function getRunStreak(client: any, userId: string): Promise<number> {
+  const { rows } = await client.query(
+    `SELECT DISTINCT DATE(created_at AT TIME ZONE 'Europe/Madrid') AS d
+     FROM runs WHERE user_id = $1
+     ORDER BY d DESC LIMIT 60`,
+    [userId]
+  );
+  if (!rows.length) return 0;
+  let streak = 1;
+  for (let i = 1; i < rows.length; i++) {
+    const prev = new Date(rows[i - 1].d);
+    const curr = new Date(rows[i].d);
+    const diff = (prev.getTime() - curr.getTime()) / (1000 * 60 * 60 * 24);
+    if (Math.round(diff) === 1) streak++;
+    else break;
+  }
+  return streak;
+}
+
+async function checkAchievements(client: any, userId: string) {
+  // Get user stats
+  const { rows: statsRows } = await client.query(
+    'SELECT total_zones, total_points, total_km, total_runs, COALESCE(total_steals,0) AS total_steals FROM user_stats WHERE user_id = $1',
+    [userId]
+  );
+  if (!statsRows.length) return;
+  const stats = statsRows[0];
+
+  // Get already unlocked
+  const { rows: unlocked } = await client.query(
+    'SELECT achievement_key FROM user_achievements WHERE user_id = $1',
+    [userId]
+  );
+  const unlockedSet = new Set(unlocked.map((r: any) => r.achievement_key));
+
+  // Check stat-based achievements
+  for (const ach of ACHIEVEMENTS) {
+    if (unlockedSet.has(ach.key)) continue;
+    const val = parseFloat(stats[ach.stat] ?? 0);
+    if (val >= ach.target) {
+      await client.query(
+        'INSERT INTO user_achievements (user_id, achievement_key) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+        [userId, ach.key]
+      );
+      // Award bonus points
+      await client.query(
+        'UPDATE user_stats SET total_points = total_points + $2 WHERE user_id = $1',
+        [userId, ach.reward]
+      );
+    }
+  }
+
+  // Check streak achievements
+  const streak = await getRunStreak(client, userId);
+  const streakAchievements = [
+    { key: 'streak_3',  target: 3,  title: 'Racha de 3',   description: 'Corre 3 días seguidos',  icon: '🔥', reward: 200 },
+    { key: 'streak_7',  target: 7,  title: 'Semana perfecta', description: 'Corre 7 días seguidos', icon: '📅', reward: 500 },
+    { key: 'streak_14', target: 14, title: 'Imparable',     description: 'Corre 14 días seguidos', icon: '🌟', reward: 1000 },
+  ];
+  for (const sa of streakAchievements) {
+    if (unlockedSet.has(sa.key)) continue;
+    if (streak >= sa.target) {
+      await client.query(
+        'INSERT INTO user_achievements (user_id, achievement_key) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+        [userId, sa.key]
+      );
+      await client.query(
+        'UPDATE user_stats SET total_points = total_points + $2 WHERE user_id = $1',
+        [userId, sa.reward]
+      );
+    }
+  }
+}
+
 // ── Runs ──────────────────────────────────────────────────────────────────────
 
 app.post('/runs', { preHandler: requireAuth }, async (req: any, reply) => {
@@ -723,10 +905,14 @@ app.post('/runs', { preHandler: requireAuth }, async (req: any, reply) => {
        SET total_zones  = total_zones  + $2,
            total_points = total_points + $3,
            total_km     = total_km     + $4,
-           total_runs   = total_runs   + 1
+           total_runs   = total_runs   + 1,
+           total_steals = COALESCE(total_steals, 0) + $5
        WHERE user_id = $1`,
-      [userId, zonesCount, points, distanceKm]
+      [userId, zonesCount, points, distanceKm, stolenZones.length]
     );
+
+    // Check and unlock achievements
+    await checkAchievements(client, userId);
 
     await client.query('COMMIT');
     return reply.status(201).send({ runId, stolenZones });
