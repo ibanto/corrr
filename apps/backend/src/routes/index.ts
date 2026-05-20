@@ -1138,12 +1138,12 @@ app.get('/auth/strava/callback', async (req: any, reply) => {
 
   if (error || !code) {
     return reply.type('text/html').send(htmlPage('❌ Conexión cancelada',
-      'Cerraste la ventana sin conectar Strava. Vuelve a la app e inténtalo de nuevo.', '#FF3B30'));
+      'Cerraste la ventana sin conectar Strava. Vuelve a la app e inténtalo de nuevo.', '#FF3B30', true));
   }
 
   let userId: string;
   try { userId = Buffer.from(state, 'base64url').toString('utf8'); } catch {
-    return reply.type('text/html').send(htmlPage('❌ Error', 'Estado inválido.', '#FF3B30'));
+    return reply.type('text/html').send(htmlPage('❌ Error', 'Estado inválido.', '#FF3B30', true));
   }
 
   // 1. Intercambiar code → access_token
@@ -1156,7 +1156,7 @@ app.get('/auth/strava/callback', async (req: any, reply) => {
   const tokenData = await tokenRes.json() as any;
   if (!tokenData.access_token) {
     return reply.type('text/html').send(htmlPage('❌ Error al conectar',
-      `Strava dijo: ${tokenData.message ?? 'token inválido'}`, '#FF3B30'));
+      `Strava dijo: ${tokenData.message ?? 'token inválido'}`, '#FF3B30', true));
   }
 
   // 1b. Guardar tokens de Strava en el usuario
@@ -1174,7 +1174,7 @@ app.get('/auth/strava/callback', async (req: any, reply) => {
 
   if (runs.length === 0) {
     return reply.type('text/html').send(htmlPage('😕 Sin carreras',
-      'No encontramos carreras recientes con ruta GPS en tu cuenta de Strava.', '#FF9500'));
+      'No encontramos carreras recientes con ruta GPS en tu cuenta de Strava.', '#FF9500', true));
   }
 
   // 3. Guardar zonas en BD
@@ -1215,12 +1215,12 @@ app.get('/auth/strava/callback', async (req: any, reply) => {
   } catch (err) {
     await client.query('ROLLBACK');
     return reply.type('text/html').send(htmlPage('❌ Error al importar',
-      `Error interno: ${String(err)}`, '#FF3B30'));
+      `Error interno: ${String(err)}`, '#FF3B30', true));
   } finally { client.release(); }
 
   return reply.type('text/html').send(htmlPage('✅ ¡Zonas importadas!',
-    `Se han conquistado <strong>${created} zona${created !== 1 ? 's' : ''}</strong> a partir de tus últimas carreras en Strava.<br><br>Cierra esta ventana y abre CORRR para verlas en el mapa.`,
-    '#FF6600'));
+    `Se han conquistado <strong>${created} zona${created !== 1 ? 's' : ''}</strong> a partir de tus últimas carreras en Strava.`,
+    '#FF6600', true));
 });
 
 // ── Strava Webhook ────────────────────────────────────────────────────────────
@@ -1416,7 +1416,10 @@ app.get('/app/version', async (_req: any, reply) => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-function htmlPage(title: string, body: string, accent: string): string {
+function htmlPage(title: string, body: string, accent: string, showBackBtn = false): string {
+  const backBtn = showBackBtn
+    ? `<a href="corrr://" style="display:inline-block;margin-top:24px;background:${accent};color:#fff;padding:14px 32px;border-radius:50px;text-decoration:none;font-weight:bold;font-size:16px;">Volver a CORRR</a>`
+    : '';
   return `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>CORRR × Strava</title>
@@ -1425,14 +1428,15 @@ function htmlPage(title: string, body: string, accent: string): string {
     body{background:#0A0A0A;color:#fff;font-family:-apple-system,sans-serif;
          display:flex;flex-direction:column;align-items:center;justify-content:center;
          min-height:100vh;padding:32px;text-align:center}
-    .logo{font-size:36px;font-weight:900;letter-spacing:-1px;margin-bottom:24px;color:${accent}}
+    img.logo{width:160px;margin-bottom:24px}
     h2{font-size:22px;font-weight:800;margin-bottom:12px}
     p{font-size:15px;color:#aaa;line-height:1.6}
     strong{color:#fff}
   </style></head><body>
-  <div class="logo">CORRR</div>
+  <img class="logo" src="https://ibanto.github.io/corrr/logo.png" alt="CORRR">
   <h2>${title}</h2>
   <p>${body}</p>
+  ${backBtn}
   </body></html>`;
 }
 
