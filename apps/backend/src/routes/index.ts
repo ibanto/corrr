@@ -671,6 +671,15 @@ app.get('/admin/challenges', { preHandler: requireAdmin }, async (req: any, repl
   return reply.send(rows);
 });
 
+app.get('/admin/zones', { preHandler: requireAdmin }, async (req: any, reply) => {
+  const { rows } = await db.query(
+    `SELECT z.id, z.area_km2, z.points, z.center_lat, z.center_lng, z.conquered_at,
+            u.display_name, array_length(regexp_split_to_array(z.polygon::text, ','), 1) as poly_size
+     FROM zones z JOIN users u ON z.owner_id = u.id ORDER BY z.conquered_at DESC`
+  );
+  return reply.send(rows);
+});
+
 // ── Admin Stats ──────────────────────────────────────────────────────────────
 
 app.get('/admin/stats', { preHandler: requireAdmin }, async (req: any, reply) => {
