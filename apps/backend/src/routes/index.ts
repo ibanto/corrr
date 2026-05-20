@@ -193,7 +193,7 @@ app.post('/auth/register', async (req: any, reply) => {
         subject: 'Verifica tu email — CORRR',
         html: `
           <div style="font-family:sans-serif;max-width:480px;margin:0 auto;background:#0A0A0A;padding:32px;border-radius:12px;">
-            <h1 style="color:#FF6600;text-align:center;font-size:28px;letter-spacing:3px;">CORRR</h1>
+            <div style="text-align:center;margin-bottom:16px;"><img src="https://ibanto.github.io/corrr/logo.png" alt="CORRR" style="width:140px;"></div>
             <p style="color:#fff;font-size:16px;">Hola ${displayName},</p>
             <p style="color:#ccc;font-size:14px;">Bienvenido a CORRR. Verifica tu email para activar todas las funciones:</p>
             <div style="text-align:center;margin:24px 0;">
@@ -395,7 +395,7 @@ app.post('/auth/resend-verification', async (req: any, reply) => {
         subject: 'Verifica tu email — CORRR',
         html: `
           <div style="font-family:sans-serif;max-width:480px;margin:0 auto;background:#0A0A0A;padding:32px;border-radius:12px;">
-            <h1 style="color:#FF6600;text-align:center;font-size:28px;letter-spacing:3px;">CORRR</h1>
+            <div style="text-align:center;margin-bottom:16px;"><img src="https://ibanto.github.io/corrr/logo.png" alt="CORRR" style="width:140px;"></div>
             <p style="color:#fff;font-size:16px;">Hola ${rows[0].display_name},</p>
             <p style="color:#ccc;font-size:14px;">Verifica tu email para acceder a CORRR:</p>
             <div style="text-align:center;margin:24px 0;">
@@ -418,11 +418,11 @@ app.get('/auth/verify-email', async (req: any, reply) => {
   try {
     const { rows } = await db.query('SELECT id FROM users WHERE verify_token = $1', [token]);
     if (!rows.length) {
-      reply.type('text/html').send('<html><head><meta charset="utf-8"></head><body style="font-family:sans-serif;background:#0A0A0A;color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;"><div style="text-align:center;"><h1 style="color:#FF6600;">CORRR</h1><p>Enlace inválido o ya verificado.</p></div></body></html>');
+      reply.type('text/html').send('<html><head><meta charset="utf-8"></head><body style="font-family:sans-serif;background:#0A0A0A;color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;"><div style="text-align:center;"><img src="https://ibanto.github.io/corrr/logo.png" alt="CORRR" style="width:180px;margin-bottom:24px;"><p>Enlace inválido o ya verificado.</p></div></body></html>');
       return;
     }
     await db.query('UPDATE users SET email_verified = TRUE, verify_token = NULL WHERE id = $1', [rows[0].id]);
-    reply.type('text/html').send('<html><head><meta charset="utf-8"></head><body style="font-family:sans-serif;background:#0A0A0A;color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;"><div style="text-align:center;"><h1 style="color:#FF6600;">CORRR</h1><p style="font-size:24px;">✅ Email verificado</p><p>Ya puedes usar CORRR con todas las funciones.</p></div></body></html>');
+    reply.type('text/html').send('<html><head><meta charset="utf-8"></head><body style="font-family:sans-serif;background:#0A0A0A;color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;"><div style="text-align:center;"><img src="https://ibanto.github.io/corrr/logo.png" alt="CORRR" style="width:180px;margin-bottom:24px;"><p style="font-size:24px;">✅ Email verificado</p><p>Ya puedes usar CORRR con todas las funciones.</p></div></body></html>');
   } catch (err) { return reply.status(500).send({ error: String(err) }); }
 });
 
