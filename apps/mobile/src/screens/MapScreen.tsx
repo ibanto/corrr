@@ -11,6 +11,8 @@ import {
   Image,
   AppState,
   AppStateStatus,
+  NativeModules,
+  Platform,
 } from 'react-native';
 import MapView, { Polygon, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import * as Location from 'expo-location';
@@ -22,6 +24,16 @@ import { colors, spacing, radius } from '../theme';
 import { api, RemoteZone } from '../services/api';
 import ZonePopup, { PopupType } from '../components/ZonePopup';
 import TauntSelector from '../components/TauntSelector';
+
+// Keep screen awake using ExpoKeepAwake native module directly
+// This avoids Metro resolution issues with expo-keep-awake package
+const ExpoKeepAwake = NativeModules.ExpoKeepAwake;
+const activateScreenAwake = async () => {
+  try { if (ExpoKeepAwake?.activate) ExpoKeepAwake.activate('corrr-run'); } catch {}
+};
+const deactivateScreenAwake = () => {
+  try { if (ExpoKeepAwake?.deactivate) ExpoKeepAwake.deactivate('corrr-run'); } catch {}
+};
 
 // Background location task
 const BACKGROUND_LOCATION_TASK = 'corrr-background-location';
@@ -69,7 +81,6 @@ const WARMUP_POINTS = 5;         // Number of initial points with strict accurac
 const MIN_POINT_DIST_M = 3;      // Ignore points closer than 3m (noise)
 const MAX_POINT_DIST_M = 100;    // Teleport if jump > 100m in a single update
 const TELEPORT_TIME_THRESHOLD = 8; // Only count as teleport if also >8s gap
-const SLEEP_GAP_THRESHOLD = 15;    // If no GPS for 15s+, phone was sleeping → new segment always
 const SINUOSITY_THRESHOLD = 1.3; // Buffer path/straight ratio below this = straight line = teleport
 
 const MAP_STYLE = [
@@ -135,6 +146,17 @@ function polyIntersection(a: Coord[], b: Coord[]): Coord[][] {
     );
     return result.map(poly => ringToCoords(poly[0]));
   } catch { return []; }
+}
+
+/** Unión de dos polígonos */
+function polyUnion(a: Coord[], b: Coord[]): Coord[][] {
+  try {
+    const result = polygonClipping.union(
+      [coordsToRing(a)],
+      [coordsToRing(b)]
+    );
+    return result.map(poly => ringToCoords(poly[0]));
+  } catch { return [a]; }
 }
 
 /** Diferencia a - b (lo que queda de A después de quitar B) */
@@ -245,6 +267,43 @@ function deconflictZones(zones: RemoteZone[]): RemoteZone[] {
     }
 
     return result.length > 0 ? result : zones;
+  } catch {
+    return zones;
+  }
+}
+
+/** Merge own zones that overlap into single larger zones */
+function mergeOwnZones(zones: RemoteZone[]): RemoteZone[] {
+  try {
+    const mine = zones.filter(z => z.is_mine && z.polygon?.length >= 3);
+    const others = zones.filter(z => !z.is_mine || !z.polygon || z.polygon.length < 3);
+    if (mine.length < 2) return zones;
+
+    const merged: RemoteZone[] = [];
+    const used = new Set<number>();
+
+    for (let i = 0; i < mine.length; i++) {
+      if (used.has(i)) continue;
+      let current = mine[i].polygon;
+      let currentZone = mine[i];
+      for (let j = i + 1; j < mine.length; j++) {
+        if (used.has(j)) continue;
+        const bbox1 = polyBBox(current);
+        const bbox2 = polyBBox(mine[j].polygon);
+        if (!bboxOverlap(bbox1, bbox2)) continue;
+        try {
+          const result = polyUnion(current, mine[j].polygon);
+          if (result.length > 0 && result[0].length >= 3) {
+            current = result[0];
+            currentZone = { ...currentZone, polygon: current, area_km2: polygonArea(current) };
+            used.add(j);
+          }
+        } catch {}
+      }
+      merged.push({ ...currentZone, polygon: current });
+    }
+
+    return [...others, ...merged];
   } catch {
     return zones;
   }
@@ -401,14 +460,7 @@ function filterGpsPoint(
     return { action: 'skip', distKm: 0, speedKmh: 0 };
   }
 
-  // Filter 3a: sleep gap — no GPS for 15+ seconds means phone was sleeping
-  // This is the KEY fix for Xiaomi/MIUI: even if distance is short (small block),
-  // a time gap always means we lost GPS and must start a new segment
-  if (timeDiff > SLEEP_GAP_THRESHOLD) {
-    return { action: 'teleport', distKm: 0, speedKmh: 0 };
-  }
-
-  // Filter 3b: teleport (big jump in short time — GPS glitch)
+  // Filter 3: teleport (big jump after time gap — GPS glitch or phone slept)
   if (distM > MAX_POINT_DIST_M && timeDiff > TELEPORT_TIME_THRESHOLD) {
     return { action: 'teleport', distKm: 0, speedKmh: 0 };
   }
@@ -494,6 +546,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
   const [speedWarning, setSpeedWarning] = useState(false);
   const [currentSpeed, setCurrentSpeed] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
+  const [isLocked, setIsLocked] = useState(false);
   const speedWarningTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const invalidSegments = useRef(0);
   const isRunningRef = useRef(false);
@@ -502,32 +555,33 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
   // Timestamp del último punto GPS para cálculo de velocidad real
   const lastLocationTimestamp = useRef<number>(0);
 
+  // Auto-pause: detect when runner is standing still for 30+ seconds
+  const lastMovementTime = useRef<number>(0);
+  const autoPauseTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [autoPausePrompt, setAutoPausePrompt] = useState(false);
+
+  // Auto-pause: when still for 30s, pause and ask
+  useEffect(() => {
+    if (!autoPausePrompt || !isRunning || isPaused) return;
+    // Pause the run
+    pauseRun();
+    Alert.alert(
+      '⏸️ Carrera en pausa',
+      'Llevas más de 30 segundos parado. ¿Quieres continuar la carrera?',
+      [
+        { text: 'Finalizar', style: 'destructive', onPress: () => stopRun() },
+        { text: 'Reanudar', onPress: () => resumeRun() },
+      ],
+      { cancelable: false }
+    );
+  }, [autoPausePrompt]);
+
   // Background location: integrar puntos del buffer cuando la app vuelve a foreground
   useEffect(() => {
     const handleAppState = async (nextState: AppStateStatus) => {
       if (!isRunningRef.current) return;
 
       if (nextState === 'active') {
-        // Volver a foreground: check time since last GPS point
-        const timeSinceLastGPS = lastLocationTimestamp.current > 0
-          ? (Date.now() - lastLocationTimestamp.current) / 1000
-          : 0;
-
-        // If buffer is empty but there was a long gap, MIUI killed the service
-        // Force new segment from current position so we don't draw a straight line
-        if (bgLocationBuffer.length === 0 && timeSinceLastGPS > SLEEP_GAP_THRESHOLD && pathRef.current.length > 1) {
-          try {
-            const pos = await Location.getLastKnownPositionAsync();
-            if (pos) {
-              setPathSegments(segs => [...segs, [...pathRef.current]]);
-              const newStart = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
-              pathRef.current = [newStart];
-              setCurrentPath([newStart]);
-              lastLocationTimestamp.current = pos.timestamp ?? Date.now();
-            }
-          } catch {}
-        }
-
         // Integrar puntos acumulados en background
         if (bgLocationBuffer.length > 0) {
           const lastGood = pathRef.current.length > 0 ? pathRef.current[pathRef.current.length - 1] : null;
@@ -700,9 +754,10 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       }
       const zones = await api.getNearbyZones(useLat, useLng);
 
-      // Deconflictar y luego mostrar
+      // Deconflictar rivales + merge propias solapadas
       const fixed = deconflictZones(zones);
-      const finalZones = fixed.length > 0 ? fixed : zones;
+      const merged = mergeOwnZones(fixed.length > 0 ? fixed : zones);
+      const finalZones = merged.length > 0 ? merged : zones;
       setRemoteZones(finalZones);
       setMapLoading(false);
 
@@ -863,12 +918,32 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     const loopBase = distance >= 3 ? 100 : 50;
     const loopPoints = loopBase + (stealCount * 50);
 
-    // Añadir zona propia + piezas robadas
-    setConqueredZones(prev => [
-      ...prev,
-      { coords: snapped, area, points: 100 },
-      ...stolenPieces,
-    ]);
+    // Merge new zone with existing own zones (union, not stack)
+    setConqueredZones(prev => {
+      let merged = snapped;
+      const remaining: ConqueredZone[] = [];
+      for (const z of prev) {
+        if (z.area <= 0) { remaining.push(z); continue; }
+        // Try to union with existing own zone
+        try {
+          const bbox1 = polyBBox(merged);
+          const bbox2 = polyBBox(z.coords);
+          if (bboxOverlap(bbox1, bbox2)) {
+            const unionResult = polyUnion(merged, z.coords);
+            if (unionResult.length > 0 && unionResult[0].length >= 3) {
+              merged = unionResult[0]; // Merged into one bigger zone
+              continue; // Don't keep the old zone separately
+            }
+          }
+        } catch {}
+        remaining.push(z); // No overlap, keep separate
+      }
+      return [
+        ...remaining,
+        { coords: merged, area: polygonArea(merged), points: 100 },
+        ...stolenPieces,
+      ];
+    });
     setTotalPoints(p => p + loopPoints);
 
     setPopup({
@@ -891,8 +966,23 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       return;
     }
 
+    // Mostrar aviso sobre pantalla activa antes de iniciar
+    Alert.alert(
+      '📍 Pantalla activa',
+      'Durante la carrera, la pantalla permanecerá encendida para garantizar el seguimiento GPS.\n\nNo apagues la pantalla manualmente o podrías perder datos de geolocalización y las zonas conquistadas pueden verse afectadas.',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        { text: 'Entendido', onPress: () => doStartRun() },
+      ]
+    );
+  };
+
+  const doStartRun = async () => {
     // Pedir permiso de background para que el GPS siga activo con pantalla apagada
     const { status: bgStatus } = await Location.requestBackgroundPermissionsAsync();
+
+    // Mantener pantalla activa durante la carrera (evita que MIUI mate el GPS)
+    await activateScreenAwake();
 
     setIsRunning(true);
     setRunTime(0);
@@ -900,6 +990,18 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     setCurrentPath([]);
     setLoopDetected(false);
     setSpeedWarning(false);
+    setAutoPausePrompt(false);
+    lastMovementTime.current = Date.now();
+
+    // Auto-pause timer: check every 5s if runner has been still for 30s
+    if (autoPauseTimer.current) clearInterval(autoPauseTimer.current);
+    autoPauseTimer.current = setInterval(() => {
+      if (!isRunningRef.current) return;
+      const stillFor = (Date.now() - lastMovementTime.current) / 1000;
+      if (stillFor >= 30 && !autoPausePrompt) {
+        setAutoPausePrompt(true);
+      }
+    }, 5000);
     setCurrentSpeed(0);
     setPathSegments([]);
     invalidSegments.current = 0;
@@ -971,19 +1073,31 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
 
       if (result.distKm > 0) {
         setDistance(d => d + result.distKm);
+        lastMovementTime.current = Date.now(); // Runner is moving
       }
       if (result.speedKmh > 0) {
         setCurrentSpeed(result.speedKmh);
       }
       setSpeedWarning(false);
 
-      // Center map on current position
-      mapRef.current?.animateToRegion({
-        latitude: newCoord.latitude,
-        longitude: newCoord.longitude,
-        latitudeDelta: currentDelta.current.latDelta,
-        longitudeDelta: currentDelta.current.lngDelta,
-      }, 500);
+      // Center map on current position with heading (direction of movement)
+      const heading = loc.coords.heading;
+      if (heading != null && heading >= 0 && result.speedKmh > 2) {
+        // Moving: rotate map to face direction of travel
+        mapRef.current?.animateCamera({
+          center: newCoord,
+          heading: heading,
+          pitch: 45,
+          zoom: 17,
+        }, { duration: 500 });
+      } else {
+        // Standing still or no heading: just center without rotation
+        mapRef.current?.animateCamera({
+          center: newCoord,
+          pitch: 0,
+          zoom: 17,
+        }, { duration: 500 });
+      }
 
       // Check for closed loop
       if (!loopDetected && pathRef.current.length >= 10) {
@@ -1003,6 +1117,9 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
 
   const pauseRun = async () => {
     setIsPaused(true);
+    setAutoPausePrompt(false);
+    if (autoPauseTimer.current) { clearInterval(autoPauseTimer.current); autoPauseTimer.current = null; }
+    deactivateScreenAwake();
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
     if (locationRef.current) { locationRef.current.remove(); locationRef.current = null; }
     // Parar background task al pausar
@@ -1015,6 +1132,16 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
 
   const resumeRun = async () => {
     setIsPaused(false);
+    setAutoPausePrompt(false);
+    lastMovementTime.current = Date.now();
+    await activateScreenAwake();
+    // Reiniciar auto-pause timer
+    if (autoPauseTimer.current) clearInterval(autoPauseTimer.current);
+    autoPauseTimer.current = setInterval(() => {
+      if (!isRunningRef.current) return;
+      const stillFor = (Date.now() - lastMovementTime.current) / 1000;
+      if (stillFor >= 30) setAutoPausePrompt(true);
+    }, 5000);
     timerRef.current = setInterval(() => setRunTime(t => t + 1), 1000);
 
     // Reiniciar background task
@@ -1049,7 +1176,11 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
   const stopRun = async () => {
     setIsRunning(false);
     setIsPaused(false);
+    setIsLocked(false);
+    setAutoPausePrompt(false);
     isRunningRef.current = false;
+    if (autoPauseTimer.current) { clearInterval(autoPauseTimer.current); autoPauseTimer.current = null; }
+    deactivateScreenAwake();
     if (timerRef.current) clearInterval(timerRef.current);
     if (locationRef.current) locationRef.current.remove();
     // Parar background task si estaba activo
@@ -1108,6 +1239,9 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
 
     setCurrentPath([]);
     pathRef.current = [];
+
+    // Reset camera to north-up flat view
+    mapRef.current?.animateCamera({ heading: 0, pitch: 0 }, { duration: 500 });
 
     // Mostrar resumen de carrera
     if (distance > 0.05 || zonesCount > 0) {
@@ -1548,15 +1682,13 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
           </TouchableOpacity>
         ) : !isPaused ? (
           <View style={styles.runControls}>
-            <TouchableOpacity style={styles.runControlBtn}>
-              <Ionicons name="lock-closed" size={22} color={colors.textSecondary} />
+            <TouchableOpacity style={[styles.runControlBtn, isLocked && { borderColor: '#22C55E' }]} onPress={() => setIsLocked(l => !l)}>
+              <Ionicons name={isLocked ? 'lock-closed' : 'lock-open'} size={22} color={isLocked ? '#22C55E' : colors.textSecondary} />
             </TouchableOpacity>
-            <TouchableOpacity style={styles.pauseBtn} onPress={pauseRun}>
+            <TouchableOpacity style={[styles.pauseBtn, isLocked && { opacity: 0.3 }]} onPress={isLocked ? undefined : pauseRun} disabled={isLocked}>
               <Ionicons name="pause" size={28} color="#fff" />
             </TouchableOpacity>
-            <TouchableOpacity style={styles.runControlBtn}>
-              <Ionicons name="location" size={22} color={colors.textSecondary} />
-            </TouchableOpacity>
+            <View style={styles.runControlBtn} />
           </View>
         ) : (
           <View style={styles.runControls}>
