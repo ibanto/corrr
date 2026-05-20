@@ -1407,8 +1407,8 @@ app.post('/strava/webhook', async (req: any, reply) => {
 // ── App version check ────────────────────────────────────────────────────────
 app.get('/app/version', async (_req: any, reply) => {
   reply.send({
-    latestVersion: '1.4.2',
-    latestVersionCode: 11,
+    latestVersion: '1.4.5',
+    latestVersionCode: 16,
     minVersion: '1.0.0',       // below this → force update
     updateUrl: 'https://play.google.com/store/apps/details?id=app.corrr',
   });
