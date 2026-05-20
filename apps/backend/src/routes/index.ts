@@ -418,11 +418,11 @@ app.get('/auth/verify-email', async (req: any, reply) => {
   try {
     const { rows } = await db.query('SELECT id FROM users WHERE verify_token = $1', [token]);
     if (!rows.length) {
-      reply.type('text/html').send('<html><body style="font-family:sans-serif;background:#0A0A0A;color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;"><div style="text-align:center;"><h1 style="color:#FF6600;">CORRR</h1><p>Enlace inválido o ya verificado.</p></div></body></html>');
+      reply.type('text/html').send('<html><head><meta charset="utf-8"></head><body style="font-family:sans-serif;background:#0A0A0A;color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;"><div style="text-align:center;"><h1 style="color:#FF6600;">CORRR</h1><p>Enlace inválido o ya verificado.</p></div></body></html>');
       return;
     }
     await db.query('UPDATE users SET email_verified = TRUE, verify_token = NULL WHERE id = $1', [rows[0].id]);
-    reply.type('text/html').send('<html><body style="font-family:sans-serif;background:#0A0A0A;color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;"><div style="text-align:center;"><h1 style="color:#FF6600;">CORRR</h1><p style="font-size:24px;">✅ Email verificado</p><p>Ya puedes usar CORRR con todas las funciones.</p></div></body></html>');
+    reply.type('text/html').send('<html><head><meta charset="utf-8"></head><body style="font-family:sans-serif;background:#0A0A0A;color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;"><div style="text-align:center;"><h1 style="color:#FF6600;">CORRR</h1><p style="font-size:24px;">✅ Email verificado</p><p>Ya puedes usar CORRR con todas las funciones.</p></div></body></html>');
   } catch (err) { return reply.status(500).send({ error: String(err) }); }
 });
 
