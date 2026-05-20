@@ -11,6 +11,8 @@ import {
   Dimensions,
   Image,
   ImageSourcePropType,
+  Alert,
+  Linking,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
@@ -45,6 +47,7 @@ const TABS: { key: Tab; label: string }[] = [
 ];
 
 const SESSION_KEY = '@corrr_session';
+const CURRENT_VERSION = '1.4.0';
 interface User { id: string; username: string; email: string; city?: string; }
 interface Session { token: string; user: User; }
 
@@ -86,6 +89,34 @@ export default function App() {
         }
       } catch {}
       setLoading(false);
+    })();
+  }, []);
+
+  // Check for app updates
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch('https://corrr-api-production.up.railway.app/app/version');
+        const data = await res.json();
+        if (data.latestVersion && data.latestVersion !== CURRENT_VERSION) {
+          // Compare version numbers
+          const current = CURRENT_VERSION.split('.').map(Number);
+          const latest = data.latestVersion.split('.').map(Number);
+          const isNewer = latest[0] > current[0] ||
+            (latest[0] === current[0] && latest[1] > current[1]) ||
+            (latest[0] === current[0] && latest[1] === current[1] && latest[2] > current[2]);
+          if (isNewer) {
+            Alert.alert(
+              '¡Nueva versión disponible!',
+              `CORRR ${data.latestVersion} ya está disponible. Actualiza para disfrutar de las últimas mejoras.`,
+              [
+                { text: 'Ahora no', style: 'cancel' },
+                { text: 'Actualizar', onPress: () => Linking.openURL(data.updateUrl) },
+              ]
+            );
+          }
+        }
+      } catch {}
     })();
   }, []);
 
