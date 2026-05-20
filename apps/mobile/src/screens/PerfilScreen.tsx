@@ -690,7 +690,7 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center',
   },
   achievementIconDone: { borderColor: '#4CAF50', borderWidth: 1.5 },
-  achievementLabel: { fontSize: 11, fontWeight: '700', color: colors.textPrimary, textAlign: 'center', lineHeight: 14 },
+  achievementLabel: { fontSize: 11, fontWeight: '700', color: colors.textPrimary, textAlign: 'center', lineHeight: 14, height: 28, textAlignVertical: 'top' },
   achievementSub: { fontSize: 10, color: colors.textSecondary, textAlign: 'center' },
   achProgress: { width: '80%', height: 3, backgroundColor: colors.bgCardAlt, borderRadius: 2, overflow: 'hidden', marginTop: 2 },
   achProgressFill: { height: '100%', backgroundColor: colors.orange, borderRadius: 2 },

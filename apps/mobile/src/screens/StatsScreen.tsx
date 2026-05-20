@@ -16,7 +16,7 @@ import { colors, spacing, radius } from '../theme';
 import { api, RunRecord, UserStats, Achievement } from '../services/api';
 
 const { width } = Dimensions.get('window');
-type Period = 'Semana' | 'Mes' | 'Año' | 'Todo';
+type Period = 'Semana' | 'Mes' | 'Año' | 'Todo' | 'Logros';
 
 const DAYS = ['L', 'M', 'X', 'J', 'V', 'S', 'D'];
 const MONTHS_SHORT = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
@@ -284,7 +284,7 @@ export default function StatsScreen({ user }: Props) {
       </View>
 
       <View style={styles.periodRow}>
-        {(['Semana', 'Mes', 'Año', 'Todo'] as Period[]).map(p => (
+        {(['Semana', 'Mes', 'Año', 'Todo', 'Logros'] as Period[]).map(p => (
           <TouchableOpacity key={p} style={[styles.periodBtn, period === p && styles.periodBtnActive]} onPress={() => setPeriod(p)}>
             <Text style={[styles.periodText, period === p && styles.periodTextActive]}>{p}</Text>
           </TouchableOpacity>
@@ -295,7 +295,64 @@ export default function StatsScreen({ user }: Props) {
         <View style={styles.centered}>
           <ActivityIndicator color={colors.orange} size="large" />
         </View>
+      ) : period === 'Logros' ? (
+        /* ── Vista Logros ── */
+        <View style={styles.section}>
+          <Text style={styles.achSectionSubtitle}>
+            {achievements.filter(a => a.unlocked).length} de {achievements.length} logros conseguidos
+          </Text>
+
+          {/* Logros conseguidos */}
+          {achievements.filter(a => a.unlocked).length > 0 && (
+            <View style={{ marginBottom: spacing.md }}>
+              <Text style={styles.achGroupTitle}>Conseguidos</Text>
+              {achievements.filter(a => a.unlocked).map((a) => (
+                <View key={a.key} style={styles.achRow}>
+                  <View style={[styles.achIconBox, styles.achIconBoxDone]}>
+                    <Image source={logroImages[a.category] ?? logroImages.distancia} style={{ width: 40, height: 40 }} resizeMode="contain" />
+                  </View>
+                  <View style={styles.achInfo}>
+                    <Text style={styles.achTitle}>{a.title}</Text>
+                    <Text style={styles.achDesc}>{a.description}</Text>
+                  </View>
+                  <Text style={styles.achReward}>+{a.reward} pts</Text>
+                </View>
+              ))}
+            </View>
+          )}
+
+          {/* Logros pendientes */}
+          {achievements.filter(a => !a.unlocked).length > 0 && (
+            <View>
+              <Text style={styles.achGroupTitle}>En progreso</Text>
+              {achievements.filter(a => !a.unlocked)
+                .sort((a, b) => (b.progress / b.target) - (a.progress / a.target))
+                .map((a) => (
+                <View key={a.key} style={styles.achRow}>
+                  <View style={styles.achIconBox}>
+                    <Image source={logroImages[a.category] ?? logroImages.distancia} style={{ width: 40, height: 40, opacity: 0.5 }} resizeMode="contain" />
+                  </View>
+                  <View style={styles.achInfo}>
+                    <Text style={[styles.achTitle, { color: colors.textSecondary }]}>{a.title}</Text>
+                    <Text style={styles.achDesc}>{a.description}</Text>
+                    <View style={styles.achProgressBar}>
+                      <View style={[styles.achProgressFill, { width: `${Math.min(100, (a.progress / a.target) * 100)}%` }]} />
+                    </View>
+                  </View>
+                  <Text style={styles.achProgressText}>{Math.round(a.progress)}/{a.target}</Text>
+                </View>
+              ))}
+            </View>
+          )}
+
+          {achievements.length === 0 && (
+            <View style={styles.emptyBox}>
+              <Text style={styles.emptyText}>Sal a correr para desbloquear logros</Text>
+            </View>
+          )}
+        </View>
       ) : (
+        /* ── Vista Stats normal ── */
         <>
           <View style={styles.bigStatsGrid}>
             {[
@@ -314,28 +371,6 @@ export default function StatsScreen({ user }: Props) {
               </View>
             ))}
           </View>
-
-          {/* Logros desbloqueados */}
-          {achievements.filter(a => a.unlocked).length > 0 && (
-            <View style={styles.section}>
-              <View style={styles.sectionHeader}>
-                <Text style={styles.sectionTitle}>Logros</Text>
-                <Text style={styles.achCount}>{achievements.filter(a => a.unlocked).length}/{achievements.length}</Text>
-              </View>
-              {achievements.filter(a => a.unlocked).map((a) => (
-                <View key={a.key} style={styles.achRow}>
-                  <View style={styles.achIconBox}>
-                    <Image source={logroImages[a.category] ?? logroImages.distancia} style={{ width: 40, height: 40 }} resizeMode="contain" />
-                  </View>
-                  <View style={styles.achInfo}>
-                    <Text style={styles.achTitle}>{a.title}</Text>
-                    <Text style={styles.achDesc}>{a.description}</Text>
-                  </View>
-                  <Text style={styles.achReward}>+{a.reward} pts</Text>
-                </View>
-              ))}
-            </View>
-          )}
 
           <View style={styles.chartCard}>
             <Text style={styles.chartTitle}>{chartData.title}</Text>
@@ -597,6 +632,12 @@ const styles = StyleSheet.create({
   achTitle: { fontSize: 14, fontWeight: '700', color: colors.textPrimary },
   achDesc: { fontSize: 12, color: colors.textSecondary, marginTop: 2 },
   achReward: { fontSize: 13, fontWeight: '800', color: colors.orange },
+  achIconBoxDone: { borderColor: '#4CAF50' },
+  achSectionSubtitle: { fontSize: 13, color: colors.textSecondary, marginBottom: spacing.md },
+  achGroupTitle: { fontSize: 16, fontWeight: '800', color: colors.textPrimary, marginBottom: spacing.sm, marginTop: 4 },
+  achProgressBar: { height: 3, backgroundColor: colors.bgCardAlt, borderRadius: 2, overflow: 'hidden', marginTop: 6 },
+  achProgressFill: { height: '100%', backgroundColor: colors.orange, borderRadius: 2 },
+  achProgressText: { fontSize: 12, fontWeight: '700', color: colors.textSecondary, minWidth: 45, textAlign: 'right' },
   // Calendar
   calOverlay: {
     flex: 1, backgroundColor: 'rgba(0,0,0,0.7)',

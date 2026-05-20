@@ -46,8 +46,8 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
 const DEFAULT_REGION = {
   latitude: 40.4168,
   longitude: -3.7038,
-  latitudeDelta: 0.06,
-  longitudeDelta: 0.06,
+  latitudeDelta: 0.012,
+  longitudeDelta: 0.012,
 };
 
 // Límites de España (incluye Canarias, Baleares)
@@ -63,10 +63,14 @@ const MAX_DELTA_FOR_ZONES = 0.15;
 
 // ── GPS Filtering (Strava-grade) ──────────────────────────────────────────
 const MAX_SPEED_KMH = 30;        // Anti-cheat: max speed allowed
-const MAX_ACCURACY_M = 30;       // Ignore GPS points with accuracy worse than 30m
+const MAX_ACCURACY_M = 25;       // Ignore GPS points with accuracy worse than 25m
+const WARMUP_ACCURACY_M = 15;    // First 5 points need accuracy < 15m (GPS warming up)
+const WARMUP_POINTS = 5;         // Number of initial points with strict accuracy
 const MIN_POINT_DIST_M = 3;      // Ignore points closer than 3m (noise)
-const MAX_POINT_DIST_M = 150;    // Teleport if jump > 150m in a single update
-const TELEPORT_TIME_THRESHOLD = 10; // Only count as teleport if also >10s gap
+const MAX_POINT_DIST_M = 100;    // Teleport if jump > 100m in a single update
+const TELEPORT_TIME_THRESHOLD = 8; // Only count as teleport if also >8s gap
+const SLEEP_GAP_THRESHOLD = 15;    // If no GPS for 15s+, phone was sleeping → new segment always
+const SINUOSITY_THRESHOLD = 1.3; // Buffer path/straight ratio below this = straight line = teleport
 
 const MAP_STYLE = [
   { elementType: 'geometry', stylers: [{ color: '#1a1a2e' }] },
@@ -376,9 +380,11 @@ function filterGpsPoint(
   prevTimestamp: number,
   accuracy: number,
   speed: number,
+  pointCount: number = 999, // how many good points we already have (for warmup)
 ): { action: 'accept' | 'skip' | 'teleport'; distKm: number; speedKmh: number } {
-  // Filter 1: accuracy too bad (GPS still warming up or indoor)
-  if (accuracy > MAX_ACCURACY_M) {
+  // Filter 1: accuracy — stricter during warmup (first N points)
+  const maxAcc = pointCount < WARMUP_POINTS ? WARMUP_ACCURACY_M : MAX_ACCURACY_M;
+  if (accuracy > maxAcc) {
     return { action: 'skip', distKm: 0, speedKmh: 0 };
   }
 
@@ -395,7 +401,14 @@ function filterGpsPoint(
     return { action: 'skip', distKm: 0, speedKmh: 0 };
   }
 
-  // Filter 3: teleport (big jump after time gap — phone slept)
+  // Filter 3a: sleep gap — no GPS for 15+ seconds means phone was sleeping
+  // This is the KEY fix for Xiaomi/MIUI: even if distance is short (small block),
+  // a time gap always means we lost GPS and must start a new segment
+  if (timeDiff > SLEEP_GAP_THRESHOLD) {
+    return { action: 'teleport', distKm: 0, speedKmh: 0 };
+  }
+
+  // Filter 3b: teleport (big jump in short time — GPS glitch)
   if (distM > MAX_POINT_DIST_M && timeDiff > TELEPORT_TIME_THRESHOLD) {
     return { action: 'teleport', distKm: 0, speedKmh: 0 };
   }
@@ -407,6 +420,51 @@ function filterGpsPoint(
   }
 
   return { action: 'accept', distKm, speedKmh };
+}
+
+/** Convex hull (Andrew's monotone chain) — used for zone polygon when path has gaps */
+function convexHull(points: Coord[]): Coord[] {
+  if (points.length < 3) return points;
+  const pts = [...points].sort((a, b) => a.longitude - b.longitude || a.latitude - b.latitude);
+  const cross = (o: Coord, a: Coord, b: Coord) =>
+    (a.longitude - o.longitude) * (b.latitude - o.latitude) -
+    (a.latitude - o.latitude) * (b.longitude - o.longitude);
+
+  // Lower hull
+  const lower: Coord[] = [];
+  for (const p of pts) {
+    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0)
+      lower.pop();
+    lower.push(p);
+  }
+  // Upper hull
+  const upper: Coord[] = [];
+  for (let i = pts.length - 1; i >= 0; i--) {
+    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], pts[i]) <= 0)
+      upper.pop();
+    upper.push(pts[i]);
+  }
+  // Remove last point of each half because it repeats
+  lower.pop();
+  upper.pop();
+  return [...lower, ...upper];
+}
+
+/** Check if a series of points is basically a straight line (sinuosity check) */
+function isBufferStraightLine(lastGoodPoint: Coord, bufferPoints: Coord[]): boolean {
+  if (bufferPoints.length < 2) return true;
+  const first = lastGoodPoint;
+  const last = bufferPoints[bufferPoints.length - 1];
+  const straightDist = getDistance(first, last);
+  if (straightDist < 30) return false; // too short to judge
+
+  let pathDist = getDistance(first, bufferPoints[0]);
+  for (let i = 1; i < bufferPoints.length; i++) {
+    pathDist += getDistance(bufferPoints[i - 1], bufferPoints[i]);
+  }
+
+  const sinuosity = pathDist / straightDist;
+  return sinuosity < SINUOSITY_THRESHOLD; // ratio close to 1 = straight line
 }
 
 export default function MapScreen({ user, onNavigateToShop }: Props) {
@@ -450,31 +508,75 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       if (!isRunningRef.current) return;
 
       if (nextState === 'active') {
-        // Volver a foreground: integrar puntos acumulados en background
-        if (bgLocationBuffer.length > 0) {
-          let addedDist = 0;
-          for (const point of bgLocationBuffer) {
-            const newCoord = { latitude: point.latitude, longitude: point.longitude };
-            const prev = pathRef.current.length > 0 ? pathRef.current[pathRef.current.length - 1] : null;
-            const result = filterGpsPoint(newCoord, prev, point.timestamp, lastLocationTimestamp.current, point.accuracy, point.speed);
+        // Volver a foreground: check time since last GPS point
+        const timeSinceLastGPS = lastLocationTimestamp.current > 0
+          ? (Date.now() - lastLocationTimestamp.current) / 1000
+          : 0;
 
-            if (result.action === 'skip') continue;
-
-            if (result.action === 'teleport') {
-              if (pathRef.current.length > 1) {
-                setPathSegments(segs => [...segs, [...pathRef.current]]);
-              }
-              pathRef.current = [newCoord];
-              lastLocationTimestamp.current = point.timestamp;
-              continue;
+        // If buffer is empty but there was a long gap, MIUI killed the service
+        // Force new segment from current position so we don't draw a straight line
+        if (bgLocationBuffer.length === 0 && timeSinceLastGPS > SLEEP_GAP_THRESHOLD && pathRef.current.length > 1) {
+          try {
+            const pos = await Location.getLastKnownPositionAsync();
+            if (pos) {
+              setPathSegments(segs => [...segs, [...pathRef.current]]);
+              const newStart = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
+              pathRef.current = [newStart];
+              setCurrentPath([newStart]);
+              lastLocationTimestamp.current = pos.timestamp ?? Date.now();
             }
+          } catch {}
+        }
 
-            // accept
-            lastLocationTimestamp.current = point.timestamp;
-            pathRef.current = [...pathRef.current, newCoord];
-            addedDist += result.distKm;
+        // Integrar puntos acumulados en background
+        if (bgLocationBuffer.length > 0) {
+          const lastGood = pathRef.current.length > 0 ? pathRef.current[pathRef.current.length - 1] : null;
+
+          // First: filter buffer points for basic quality
+          const goodBufferPts = bgLocationBuffer.filter(p => p.accuracy <= MAX_ACCURACY_M);
+          const bufferCoords = goodBufferPts.map(p => ({ latitude: p.latitude, longitude: p.longitude }));
+
+          // Sinuosity check: if buffer is basically a straight line → teleport, don't draw it
+          if (lastGood && bufferCoords.length >= 2 && isBufferStraightLine(lastGood, bufferCoords)) {
+            // Straight line = phone was asleep, GPS gave bad intermediate points
+            // Start new segment from current real position (last buffer point)
+            const lastBuf = goodBufferPts[goodBufferPts.length - 1];
+            if (pathRef.current.length > 1) {
+              setPathSegments(segs => [...segs, [...pathRef.current]]);
+            }
+            const newStart = { latitude: lastBuf.latitude, longitude: lastBuf.longitude };
+            pathRef.current = [newStart];
+            lastLocationTimestamp.current = lastBuf.timestamp;
+            // Count distance as straight line (approximate, better than nothing)
+            const skipDist = getDistanceKm(lastGood, newStart);
+            if (skipDist > 0.005) setDistance(d => d + skipDist);
+          } else {
+            // Buffer has real movement — integrate points normally
+            let addedDist = 0;
+            for (const point of bgLocationBuffer) {
+              const newCoord = { latitude: point.latitude, longitude: point.longitude };
+              const prev = pathRef.current.length > 0 ? pathRef.current[pathRef.current.length - 1] : null;
+              const result = filterGpsPoint(newCoord, prev, point.timestamp, lastLocationTimestamp.current, point.accuracy, point.speed, pathRef.current.length);
+
+              if (result.action === 'skip') continue;
+
+              if (result.action === 'teleport') {
+                if (pathRef.current.length > 1) {
+                  setPathSegments(segs => [...segs, [...pathRef.current]]);
+                }
+                pathRef.current = [newCoord];
+                lastLocationTimestamp.current = point.timestamp;
+                continue;
+              }
+
+              // accept
+              lastLocationTimestamp.current = point.timestamp;
+              pathRef.current = [...pathRef.current, newCoord];
+              addedDist += result.distKm;
+            }
+            if (addedDist > 0) setDistance(d => d + addedDist);
           }
-          if (addedDist > 0) setDistance(d => d + addedDist);
+
           setCurrentPath([...pathRef.current]);
           bgLocationBuffer = [];
 
@@ -538,8 +640,8 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     const region = {
       latitude: lat,
       longitude: lng,
-      latitudeDelta: 0.06,
-      longitudeDelta: 0.06,
+      latitudeDelta: 0.012,
+      longitudeDelta: 0.012,
     };
     setMapRegion(region);
     mapRef.current?.animateToRegion(region, 800);
@@ -695,9 +797,20 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     // Unir todos los segmentos + path actual para tener la ruta completa
     const allPoints = [...pathSegments.flat(), ...path];
 
-    // Simplificar con Douglas-Peucker manteniendo la forma real de la ruta
-    // NO usar snapToRoads — deforma el polígono y crea zonas incorrectas
-    const snapped = simplifyPath(allPoints, 0.00003); // ~3m tolerancia, preserva bien la forma
+    // If we have multiple segments (gaps from sleep), use convex hull
+    // to avoid diagonal lines between disconnected segments.
+    // Single continuous path: use Douglas-Peucker to preserve actual route shape.
+    const hasGaps = pathSegments.length > 0;
+    let snapped: Coord[];
+
+    if (hasGaps) {
+      // Multiple segments: convex hull gives the outer perimeter of all points
+      // without the ugly diagonal lines between gap endpoints
+      snapped = convexHull(allPoints);
+    } else {
+      // Single continuous path: simplify preserving shape
+      snapped = simplifyPath(allPoints, 0.00003); // ~3m tolerancia
+    }
 
     // Asegurar que el polígono está cerrado
     if (snapped.length >= 3) {
@@ -833,7 +946,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       const speed = loc.coords.speed ?? -1;
       const prev = pathRef.current.length > 0 ? pathRef.current[pathRef.current.length - 1] : null;
 
-      const result = filterGpsPoint(newCoord, prev, now, lastLocationTimestamp.current, accuracy, speed);
+      const result = filterGpsPoint(newCoord, prev, now, lastLocationTimestamp.current, accuracy, speed, pathRef.current.length);
 
       if (result.action === 'skip') {
         // Bad point — don't update timestamp so next point measures from last good one
@@ -953,7 +1066,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       const end = allPts[allPts.length - 1];
       const distToStart = getDistance(start, end);
       console.log(`[StopRun] Auto-close check: pts=${allPts.length} distToStart=${distToStart.toFixed(0)}m`);
-      if (distToStart < 300) {
+      if (distToStart < 50) {
         console.log('[StopRun] Auto-cerrando loop');
         pathRef.current.push(start);
         await closeLoop([...pathRef.current]);
@@ -993,16 +1106,6 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       }).catch(() => {});
     }
 
-    if (pathRef.current.length >= 2) {
-      const allRunPts = [...pathSegments.flat(), ...pathRef.current];
-      const simplified = simplifyPath(allRunPts, 0.00003);
-      setConqueredZones(prev => [...prev, {
-        coords: simplified,
-        area: 0,
-        points: kmPoints,
-      }]);
-    }
-
     setCurrentPath([]);
     pathRef.current = [];
 
@@ -1025,7 +1128,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     return `${m}:${s}`;
   };
 
-  const pace = distance > 0.05 ? ((runTime / 60) / distance).toFixed(1) : '--';
+  // pace removed — now showing km/h directly from GPS speed
 
   const rotateInterpolate = rotateAnim.interpolate({
     inputRange: [0, 1],
@@ -1315,24 +1418,14 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
             })}
 
           {/* Zonas conquistadas esta sesión */}
-          {conqueredZones.map((zone, i) => (
-            zone.area > 0 ? (
-              <Polygon
-                key={i}
-                coordinates={zone.coords}
-                fillColor={`${colors.orange}50`}
-                strokeColor={colors.orange}
-                strokeWidth={2}
-              />
-            ) : (
-              <Polyline
-                key={i}
-                coordinates={zone.coords}
-                strokeColor={colors.orange}
-                strokeWidth={5}
-                lineCap="round"
-              />
-            )
+          {conqueredZones.filter(z => z.area > 0).map((zone, i) => (
+            <Polygon
+              key={`cz-${i}`}
+              coordinates={zone.coords}
+              fillColor={`${colors.orange}50`}
+              strokeColor={colors.orange}
+              strokeWidth={2}
+            />
           ))}
 
           {/* Ruta actual — segmentos anteriores (sin teleport lines) */}
@@ -1420,8 +1513,8 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
             </View>
             <View style={styles.runStatDivider} />
             <View style={styles.runStatItem}>
-              <Text style={styles.runStatValue}>{pace}</Text>
-              <Text style={styles.runStatLabel}>min/km</Text>
+              <Text style={styles.runStatValue}>{currentSpeed.toFixed(1)}</Text>
+              <Text style={styles.runStatLabel}>km/h</Text>
             </View>
             <View style={styles.runStatDivider} />
             <View style={styles.runStatItem}>
@@ -1433,18 +1526,20 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       </View>
 
       <View style={styles.bottom}>
-        <View style={styles.territoryRow}>
-          {[
-            { value: `${conqueredZones.filter(z => z.area > 0).length}`, label: 'Zonas' },
-            { value: isRunning ? `${currentSpeed.toFixed(1)}` : `${distance.toFixed(1)} km`, label: isRunning ? 'Km/h' : 'Distancia' },
-            { value: `${totalPoints}`, label: 'Puntos' },
-          ].map((s, i) => (
-            <View key={i} style={styles.territoryStat}>
-              <Text style={styles.territoryValue}>{s.value}</Text>
-              <Text style={styles.territoryLabel}>{s.label}</Text>
-            </View>
-          ))}
-        </View>
+        {!isRunning && (
+          <View style={styles.territoryRow}>
+            {[
+              { value: `${conqueredZones.filter(z => z.area > 0).length}`, label: 'Zonas' },
+              { value: `${distance.toFixed(1)} km`, label: 'Distancia' },
+              { value: `${totalPoints}`, label: 'Puntos' },
+            ].map((s, i) => (
+              <View key={i} style={styles.territoryStat}>
+                <Text style={styles.territoryValue}>{s.value}</Text>
+                <Text style={styles.territoryLabel}>{s.label}</Text>
+              </View>
+            ))}
+          </View>
+        )}
 
         {!isRunning ? (
           <TouchableOpacity style={styles.startBtn} onPress={startRun}>
