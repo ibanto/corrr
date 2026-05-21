@@ -112,6 +112,25 @@ async function initDB() {
   // Track stolen zones in user_stats
   await db.query(`ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS total_steals INT DEFAULT 0`).catch(() => {});
 
+  // ── Taunts (chat-with-emotes between rivals) ───────────────────────────────
+  // Three "modes" of entry:
+  //   - 'robo_notif': system-generated when someone steals from you. No taunt_id.
+  //   - 'taunt':      first message from the victim back to the thief (1-10).
+  //   - 'response':   any subsequent reply (also 1-10, from the response set).
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS taunts (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      from_user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+      to_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      mode TEXT NOT NULL,
+      taunt_id INT,
+      run_id UUID REFERENCES runs(id) ON DELETE SET NULL,
+      read_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+  await db.query(`CREATE INDEX IF NOT EXISTS taunts_to_unread_idx ON taunts(to_user_id, read_at) WHERE read_at IS NULL`).catch(() => {});
+
   // ── Points engine state (v1.7 economy) ─────────────────────────────────────
   // last_run_date + streak_days power the "carrera 3 días seguidos = ×1.5" bonus.
   // best_daily_km powers the "supera tu mejor km/día = ×1.2 en puntos por km" bonus.
@@ -120,8 +139,21 @@ async function initDB() {
   await db.query(`ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS best_daily_km FLOAT DEFAULT 0`).catch(() => {});
 
   // ── Cells (grid-based territory, v2 model) ─────────────────────────────────
-  // 5m × 5m cells. Identified by integer (cell_x, cell_y) computed from lat/lng.
-  // Coexists with the polygon `zones` table during the v1 → v2 transition.
+  // 10m × 10m cells (v1.8.0 — was 5m before). Identified by integer (cell_x,
+  // cell_y) computed from lat/lng. Coexists with the polygon `zones` table
+  // during the v1 → v2 transition.
+  //
+  // One-time migration: drop the 5m-cell data when the cell size changed. The
+  // marker table prevents the drop from re-running on every restart. Safe to
+  // remove this whole block in a follow-up deploy once everyone is on 10m.
+  const { rows: alreadyMigrated } = await db.query(
+    `SELECT 1 FROM information_schema.tables WHERE table_name = 'cells_v1_8_migrated'`
+  ).catch(() => ({ rows: [] }));
+  if (alreadyMigrated.length === 0) {
+    await db.query(`DROP TABLE IF EXISTS cells CASCADE`).catch(() => {});
+    await db.query(`CREATE TABLE IF NOT EXISTS cells_v1_8_migrated (created_at TIMESTAMPTZ DEFAULT NOW())`).catch(() => {});
+    await db.query(`UPDATE user_stats SET total_cells = 0`).catch(() => {});
+  }
   await db.query(`
     CREATE TABLE IF NOT EXISTS cells (
       cell_x INT NOT NULL,
@@ -785,7 +817,11 @@ function decodePolyline(encoded: string): Coord[] {
 // roughly square (~5m × 5m) at Spanish latitudes. Tradeoff vs. proper Mercator:
 // at Canarias (~28°N) cells are ~7% larger east-west, at Pirineos (~43°N) ~3%
 // smaller. Imperceptible for gameplay; keeps math trivial.
-const CELL_SIZE_M = 5;
+// Cell size moved from 5m to 10m in v1.8.0. Smaller cells were too prone to
+// urban GPS drift (5-15m typical accuracy) — every reading would fall in a
+// different cell, producing zigzag claims. 10m gives the GPS room to "settle"
+// inside one cell across multiple readings, so the resulting blob looks clean.
+const CELL_SIZE_M = 10;
 const SPAIN_REF_LAT_RAD = 40 * Math.PI / 180;
 const CELL_LAT_DEG = CELL_SIZE_M / 111000;
 const CELL_LNG_DEG = CELL_SIZE_M / (111000 * Math.cos(SPAIN_REF_LAT_RAD));
@@ -1003,6 +1039,14 @@ app.post('/runs', { preHandler: requireAuth }, async (req: any, reply) => {
         );
         const prevName = prev[0]?.display_name ?? 'Alguien';
         for (const r of robosList) stolenCells.push({ x: r.x, y: r.y, prevOwnerId, prevOwnerName: prevName });
+        // Create the "robo_notif" inbox entry that the victim sees when they
+        // open the app — gateway to the taunt chat. One row per robo (per
+        // thief/victim/run trio). The mobile shows the existing "te han robado"
+        // image popup with a "Devolver" button that opens the TauntSelector.
+        await client.query(
+          `INSERT INTO taunts (from_user_id, to_user_id, mode, run_id) VALUES ($1, $2, 'robo_notif', $3)`,
+          [userId, prevOwnerId, runId]
+        );
         if (prev[0]?.push_token) {
           const { rows: thief } = await client.query(
             `SELECT display_name FROM users WHERE id = $1`, [userId]
@@ -1271,6 +1315,73 @@ app.get('/cells/viewport', { preHandler: requireAuth }, async (req: any, reply) 
     [req.userId, swCell.x, neCell.x, swCell.y, neCell.y]
   );
   return reply.send({ cells: rows });
+});
+
+// ── Taunts (emote chat) ──────────────────────────────────────────────────────
+
+/** Inbox: all unread taunt entries for the current user, oldest first.
+ *  Includes the sender's display_name and the runId so the client can group
+ *  notifs by run if needed. */
+app.get('/taunts/unread', { preHandler: requireAuth }, async (req: any, reply) => {
+  const { rows } = await db.query(
+    `SELECT t.id, t.mode, t.taunt_id, t.run_id, t.created_at,
+            t.from_user_id, u.display_name AS from_user_name
+       FROM taunts t
+       LEFT JOIN users u ON u.id = t.from_user_id
+      WHERE t.to_user_id = $1 AND t.read_at IS NULL
+      ORDER BY t.created_at ASC
+      LIMIT 50`,
+    [req.userId]
+  );
+  return reply.send({ taunts: rows });
+});
+
+/** Send a taunt to another user. Used when victim hits "Devolver" on a robo
+ *  notif (mode='taunt') or when the original thief replies to a taunt (mode='response'). */
+app.post('/taunts', { preHandler: requireAuth }, async (req: any, reply) => {
+  const { toUserId, tauntId, mode, runId } = req.body as any;
+  if (!toUserId || !tauntId || !mode) {
+    return reply.status(400).send({ error: 'toUserId, tauntId y mode requeridos' });
+  }
+  if (mode !== 'taunt' && mode !== 'response') {
+    return reply.status(400).send({ error: 'mode debe ser taunt o response' });
+  }
+  if (toUserId === req.userId) {
+    return reply.status(400).send({ error: 'No puedes enviarte un taunt a ti mismo' });
+  }
+  const { rows } = await db.query(
+    `INSERT INTO taunts (from_user_id, to_user_id, mode, taunt_id, run_id)
+     VALUES ($1, $2, $3, $4, $5)
+     RETURNING id, created_at`,
+    [req.userId, toUserId, mode, tauntId, runId || null]
+  );
+
+  // Push notif to the recipient.
+  const { rows: target } = await db.query(
+    `SELECT push_token FROM users WHERE id = $1`, [toUserId]
+  );
+  if (target[0]?.push_token) {
+    const { rows: sender } = await db.query(
+      `SELECT display_name FROM users WHERE id = $1`, [req.userId]
+    );
+    const senderName = sender[0]?.display_name ?? 'Alguien';
+    const title = mode === 'response' ? '🔥 Te han devuelto la jugada' : '💬 Mensaje recibido';
+    sendPushNotification(target[0].push_token, title, `${senderName} te ha enviado un mensaje.`);
+  }
+  return reply.status(201).send({ id: rows[0].id, createdAt: rows[0].created_at });
+});
+
+/** Mark a taunt as read (single or batch). */
+app.put('/taunts/read', { preHandler: requireAuth }, async (req: any, reply) => {
+  const { ids } = req.body as { ids: string[] };
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return reply.status(400).send({ error: 'ids[] requerido' });
+  }
+  await db.query(
+    `UPDATE taunts SET read_at = NOW() WHERE to_user_id = $1 AND id = ANY($2::uuid[])`,
+    [req.userId, ids]
+  );
+  return reply.send({ ok: true });
 });
 
 // ── Friends ──────────────────────────────────────────────────────────────────
@@ -1643,8 +1754,8 @@ app.post('/strava/webhook', async (req: any, reply) => {
 // ── App version check ────────────────────────────────────────────────────────
 app.get('/app/version', async (_req: any, reply) => {
   reply.send({
-    latestVersion: '1.7.2',
-    latestVersionCode: 25,
+    latestVersion: '1.8.0',
+    latestVersionCode: 27,
     minVersion: '1.0.0',       // below this → force update
     updateUrl: 'https://play.google.com/store/apps/details?id=app.corrr',
   });
