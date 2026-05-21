@@ -112,6 +112,23 @@ async function initDB() {
   // Track stolen zones in user_stats
   await db.query(`ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS total_steals INT DEFAULT 0`).catch(() => {});
 
+  // ── Cells (grid-based territory, v2 model) ─────────────────────────────────
+  // 5m × 5m cells. Identified by integer (cell_x, cell_y) computed from lat/lng.
+  // Coexists with the polygon `zones` table during the v1 → v2 transition.
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS cells (
+      cell_x INT NOT NULL,
+      cell_y INT NOT NULL,
+      owner_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      run_id UUID REFERENCES runs(id) ON DELETE SET NULL,
+      claimed_at TIMESTAMPTZ DEFAULT NOW(),
+      PRIMARY KEY (cell_x, cell_y)
+    )
+  `);
+  await db.query(`CREATE INDEX IF NOT EXISTS cells_owner_idx ON cells(owner_id)`);
+  // Range queries on (cell_x, cell_y) for viewport loads use the PK B-tree.
+  await db.query(`ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS total_cells INT DEFAULT 0`).catch(() => {});
+
   // Achievements unlocked per user
   await db.query(`
     CREATE TABLE IF NOT EXISTS user_achievements (
@@ -755,6 +772,31 @@ function decodePolyline(encoded: string): Coord[] {
   return coords;
 }
 
+// ── Grid (5m × 5m cells) ─────────────────────────────────────────────────────
+// Cell coordinates are integer indices computed by dividing lat/lng by a fixed
+// per-axis degree step. The lng step is scaled by cos(SPAIN_LAT) so cells stay
+// roughly square (~5m × 5m) at Spanish latitudes. Tradeoff vs. proper Mercator:
+// at Canarias (~28°N) cells are ~7% larger east-west, at Pirineos (~43°N) ~3%
+// smaller. Imperceptible for gameplay; keeps math trivial.
+const CELL_SIZE_M = 5;
+const SPAIN_REF_LAT_RAD = 40 * Math.PI / 180;
+const CELL_LAT_DEG = CELL_SIZE_M / 111000;
+const CELL_LNG_DEG = CELL_SIZE_M / (111000 * Math.cos(SPAIN_REF_LAT_RAD));
+
+function coordToCell(lat: number, lng: number): { x: number; y: number } {
+  return {
+    x: Math.floor(lng / CELL_LNG_DEG),
+    y: Math.floor(lat / CELL_LAT_DEG),
+  };
+}
+
+function cellToCoord(x: number, y: number): { lat: number; lng: number } {
+  return {
+    lat: y * CELL_LAT_DEG,
+    lng: x * CELL_LNG_DEG,
+  };
+}
+
 /** Ray-casting point-in-polygon. Devuelve true si (lat,lng) está dentro del polígono. */
 function pointInPolygon(lat: number, lng: number, polygon: Coord[]): boolean {
   let inside = false;
@@ -879,11 +921,12 @@ async function checkAchievements(client: any, userId: string) {
 // ── Runs ──────────────────────────────────────────────────────────────────────
 
 app.post('/runs', { preHandler: requireAuth }, async (req: any, reply) => {
-  const { distanceKm, durationSecs, points, zonesCount, zones } = req.body;
+  const { distanceKm, durationSecs, points, zonesCount, zones, claimedCells } = req.body;
   const userId = req.userId;
   const client = await db.connect();
 
   const stolenZones: { id: string; ownerName: string; points: number }[] = [];
+  const stolenCells: { x: number; y: number; prevOwnerId: string; prevOwnerName: string }[] = [];
 
   try {
     await client.query('BEGIN');
@@ -893,6 +936,76 @@ app.post('/runs', { preHandler: requireAuth }, async (req: any, reply) => {
       [userId, distanceKm, durationSecs, points, zonesCount]
     );
     const runId = rows[0].id;
+
+    // ── Grid (v2) — process claimedCells if present ──────────────────────────
+    // Coexists with the polygon logic below. v1.5.x clients send only `zones`,
+    // v1.6+ clients send `claimedCells`. Server handles whichever arrives.
+    let newCellCount = 0;
+    if (Array.isArray(claimedCells) && claimedCells.length > 0) {
+      // Bounding box of all claims — used to fetch existing ownership in one query.
+      const xs = claimedCells.map((c: any) => c.x);
+      const ys = claimedCells.map((c: any) => c.y);
+      const minX = Math.min(...xs), maxX = Math.max(...xs);
+      const minY = Math.min(...ys), maxY = Math.max(...ys);
+
+      const { rows: existing } = await client.query(
+        `SELECT cell_x, cell_y, owner_id FROM cells
+         WHERE cell_x BETWEEN $1 AND $2 AND cell_y BETWEEN $3 AND $4`,
+        [minX, maxX, minY, maxY]
+      );
+      const existingMap = new Map<string, string>();
+      for (const e of existing) existingMap.set(`${e.cell_x},${e.cell_y}`, e.owner_id);
+
+      // Classify: new claims vs robos vs self-reclaims.
+      const robosByPrevOwner = new Map<string, { x: number; y: number }[]>();
+      for (const c of claimedCells) {
+        const prev = existingMap.get(`${c.x},${c.y}`);
+        if (!prev) {
+          newCellCount++;
+        } else if (prev !== userId) {
+          const list = robosByPrevOwner.get(prev) ?? [];
+          list.push({ x: c.x, y: c.y });
+          robosByPrevOwner.set(prev, list);
+        }
+        // prev === userId → self-reclaim, just refresh timestamp (no count change)
+      }
+
+      // Batch upsert all claimed cells. ON CONFLICT transfers ownership for robos
+      // and refreshes the timestamp for self-reclaims.
+      const xArr = claimedCells.map((c: any) => c.x);
+      const yArr = claimedCells.map((c: any) => c.y);
+      await client.query(
+        `INSERT INTO cells (cell_x, cell_y, owner_id, run_id)
+         SELECT x, y, $3::uuid, $4::uuid
+         FROM unnest($1::int[], $2::int[]) AS t(x, y)
+         ON CONFLICT (cell_x, cell_y) DO UPDATE
+         SET owner_id = EXCLUDED.owner_id, run_id = EXCLUDED.run_id, claimed_at = NOW()`,
+        [xArr, yArr, userId, runId]
+      );
+
+      // Decrement total_cells for each robbed user and notify them.
+      for (const [prevOwnerId, robosList] of robosByPrevOwner.entries()) {
+        await client.query(
+          `UPDATE user_stats SET total_cells = GREATEST(0, total_cells - $2) WHERE user_id = $1`,
+          [prevOwnerId, robosList.length]
+        );
+        const { rows: prev } = await client.query(
+          `SELECT push_token, display_name FROM users WHERE id = $1`, [prevOwnerId]
+        );
+        const prevName = prev[0]?.display_name ?? 'Alguien';
+        for (const r of robosList) stolenCells.push({ x: r.x, y: r.y, prevOwnerId, prevOwnerName: prevName });
+        if (prev[0]?.push_token) {
+          const { rows: thief } = await client.query(
+            `SELECT display_name FROM users WHERE id = $1`, [userId]
+          );
+          sendPushNotification(
+            prev[0].push_token,
+            '😱 ¡Te han robado territorio!',
+            `${thief[0]?.display_name ?? 'Alguien'} te ha quitado ${robosList.length} ${robosList.length === 1 ? 'celda' : 'celdas'}. ¡Sal a recuperarlas!`
+          );
+        }
+      }
+    }
 
     if (Array.isArray(zones) && zones.length > 0) {
       for (const z of zones) {
@@ -963,16 +1076,17 @@ app.post('/runs', { preHandler: requireAuth }, async (req: any, reply) => {
            total_points = total_points + $3,
            total_km     = total_km     + $4,
            total_runs   = total_runs   + 1,
-           total_steals = COALESCE(total_steals, 0) + $5
+           total_steals = COALESCE(total_steals, 0) + $5,
+           total_cells  = COALESCE(total_cells,  0) + $6
        WHERE user_id = $1`,
-      [userId, zonesCount, points, distanceKm, stolenZones.length]
+      [userId, zonesCount, points, distanceKm, stolenZones.length + stolenCells.length, newCellCount]
     );
 
     // Check and unlock achievements
     await checkAchievements(client, userId);
 
     await client.query('COMMIT');
-    return reply.status(201).send({ runId, stolenZones });
+    return reply.status(201).send({ runId, stolenZones, stolenCells, newCellCount });
   } catch (err) {
     await client.query('ROLLBACK');
     return reply.status(500).send({ error: String(err) });
@@ -1035,6 +1149,35 @@ app.get('/zones/nearby', { preHandler: requireAuth }, async (req: any, reply) =>
     [req.userId, parseFloat(lat), parseFloat(lng), parseFloat(radius)]
   );
   return reply.send(rows);
+});
+
+// ── Cells (grid territory, v2) ───────────────────────────────────────────────
+
+/** Return all claimed cells inside a lat/lng viewport. Used by the mobile map. */
+app.get('/cells/viewport', { preHandler: requireAuth }, async (req: any, reply) => {
+  const { north, south, east, west } = req.query as any;
+  const n = parseFloat(north), s = parseFloat(south);
+  const e = parseFloat(east), w = parseFloat(west);
+  if (![n, s, e, w].every(Number.isFinite)) {
+    return reply.status(400).send({ error: 'north, south, east, west requeridos (float)' });
+  }
+
+  const swCell = coordToCell(s, w);
+  const neCell = coordToCell(n, e);
+
+  // The PK on (cell_x, cell_y) supports the range scan. LIMIT prevents catastrophe
+  // when the user zooms way out — clients should detect that and skip the call.
+  const { rows } = await db.query(
+    `SELECT c.cell_x, c.cell_y, c.owner_id, c.claimed_at,
+            u.display_name AS owner_name,
+            (c.owner_id = $1) AS is_mine
+     FROM cells c
+     JOIN users u ON u.id = c.owner_id
+     WHERE c.cell_x BETWEEN $2 AND $3 AND c.cell_y BETWEEN $4 AND $5
+     LIMIT 5000`,
+    [req.userId, swCell.x, neCell.x, swCell.y, neCell.y]
+  );
+  return reply.send({ cells: rows });
 });
 
 // ── Friends ──────────────────────────────────────────────────────────────────
@@ -1407,8 +1550,8 @@ app.post('/strava/webhook', async (req: any, reply) => {
 // ── App version check ────────────────────────────────────────────────────────
 app.get('/app/version', async (_req: any, reply) => {
   reply.send({
-    latestVersion: '1.4.5',
-    latestVersionCode: 16,
+    latestVersion: '1.5.1',
+    latestVersionCode: 18,
     minVersion: '1.0.0',       // below this → force update
     updateUrl: 'https://play.google.com/store/apps/details?id=app.corrr',
   });
