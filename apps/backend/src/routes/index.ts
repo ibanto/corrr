@@ -112,6 +112,13 @@ async function initDB() {
   // Track stolen zones in user_stats
   await db.query(`ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS total_steals INT DEFAULT 0`).catch(() => {});
 
+  // ── Points engine state (v1.7 economy) ─────────────────────────────────────
+  // last_run_date + streak_days power the "carrera 3 días seguidos = ×1.5" bonus.
+  // best_daily_km powers the "supera tu mejor km/día = ×1.2 en puntos por km" bonus.
+  await db.query(`ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS last_run_date DATE`).catch(() => {});
+  await db.query(`ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS streak_days INT DEFAULT 0`).catch(() => {});
+  await db.query(`ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS best_daily_km FLOAT DEFAULT 0`).catch(() => {});
+
   // ── Cells (grid-based territory, v2 model) ─────────────────────────────────
   // 5m × 5m cells. Identified by integer (cell_x, cell_y) computed from lat/lng.
   // Coexists with the polygon `zones` table during the v1 → v2 transition.
@@ -921,7 +928,9 @@ async function checkAchievements(client: any, userId: string) {
 // ── Runs ──────────────────────────────────────────────────────────────────────
 
 app.post('/runs', { preHandler: requireAuth }, async (req: any, reply) => {
-  const { distanceKm, durationSecs, points, zonesCount, zones, claimedCells } = req.body;
+  // `points` (legacy) is the client's estimate. We recompute authoritatively
+  // server-side below using loopBonus + cellPoints + kmPoints * multipliers.
+  const { distanceKm, durationSecs, points: clientPointsEstimate, loopBonus, zonesCount, zones, claimedCells } = req.body;
   const userId = req.userId;
   const client = await db.connect();
 
@@ -933,7 +942,7 @@ app.post('/runs', { preHandler: requireAuth }, async (req: any, reply) => {
 
     const { rows } = await client.query(
       'INSERT INTO runs (user_id, distance_km, duration_secs, points, zones_count) VALUES ($1,$2,$3,$4,$5) RETURNING id',
-      [userId, distanceKm, durationSecs, points, zonesCount]
+      [userId, distanceKm, durationSecs, clientPointsEstimate || 0, zonesCount]
     );
     const runId = rows[0].id;
 
@@ -1070,23 +1079,107 @@ app.post('/runs', { preHandler: requireAuth }, async (req: any, reply) => {
       }
     }
 
+    // ── Points engine (v1.7 economy) ─────────────────────────────────────────
+    // Authoritative computation server-side. Client sends a rough estimate but
+    // we ignore it. Formula:
+    //   km_points   = round(distance * 10) * pb_mult   (10 pts/km, ×1.2 if PB)
+    //   cell_points = new_cells * 1 + stolen_cells * 2
+    //   loop_bonus  = trusted from client (it knows when loops closed)
+    //   subtotal    = km_points + cell_points + loop_bonus
+    //   total       = round(subtotal * streak_mult)    (×1.5 if streak ≥ 3 days)
+    const kmPointsBase = Math.round((distanceKm || 0) * 10);
+    const cellPoints = newCellCount * 1 + stolenCells.length * 2;
+    // Backwards compat: v1.6.x clients didn't send loopBonus separately. We can't
+    // perfectly back-extract it from the legacy `points` (which mixes km + loop +
+    // cell estimate), so for those we just trust the client estimate and skip
+    // recomputation entirely. v1.7+ sends loopBonus explicitly → full recompute.
+    const isLegacyClient = loopBonus === undefined;
+    const safeLoopBonus = Math.max(0, Math.floor(Number(loopBonus) || 0));
+
+    // Streak: look at last_run_date. Same day = no change. Consecutive day = +1.
+    // Anything else = reset to 1.
+    const { rows: statsRows } = await client.query(
+      'SELECT last_run_date, streak_days, best_daily_km FROM user_stats WHERE user_id = $1',
+      [userId]
+    );
+    const prevStats = statsRows[0] || { last_run_date: null, streak_days: 0, best_daily_km: 0 };
+    const today = new Date(); today.setUTCHours(0, 0, 0, 0);
+    let newStreak = 1;
+    if (prevStats.last_run_date) {
+      const last = new Date(prevStats.last_run_date); last.setUTCHours(0, 0, 0, 0);
+      const diffDays = Math.round((today.getTime() - last.getTime()) / 86_400_000);
+      if (diffDays === 0) newStreak = prevStats.streak_days || 1; // same day, keep
+      else if (diffDays === 1) newStreak = (prevStats.streak_days || 0) + 1; // consecutive
+      // else: streak broken, newStreak stays at 1
+    }
+    const streakMultiplier = newStreak >= 3 ? 1.5 : 1;
+    const pbMultiplier = distanceKm > (prevStats.best_daily_km || 0) ? 1.2 : 1;
+    const newBestKm = Math.max(prevStats.best_daily_km || 0, distanceKm || 0);
+
+    const kmPoints = Math.round(kmPointsBase * pbMultiplier);
+    const subtotal = kmPoints + cellPoints + safeLoopBonus;
+    const authoritativePoints = isLegacyClient
+      ? Math.max(0, Math.floor(Number(clientPointsEstimate) || 0))
+      : Math.round(subtotal * streakMultiplier);
+
+    // Persist the recomputed points on the run row (we inserted with the
+    // client's estimate earlier).
+    await client.query(`UPDATE runs SET points = $1 WHERE id = $2`, [authoritativePoints, runId]);
+
+    // Robos: deduct 1 pt per stolen cell from each previous owner (in addition
+    // to the cell ownership transfer + total_cells decrement above). 1 pt feels
+    // like a light enough castigo — territory loss is the real penalty.
+    if (stolenCells.length > 0) {
+      // Re-group by previous owner to batch the deduction.
+      const robbedByOwner = new Map<string, number>();
+      for (const sc of stolenCells) {
+        robbedByOwner.set(sc.prevOwnerId, (robbedByOwner.get(sc.prevOwnerId) || 0) + 1);
+      }
+      for (const [prevOwnerId, count] of robbedByOwner.entries()) {
+        await client.query(
+          `UPDATE user_stats SET total_points = GREATEST(0, total_points - $2) WHERE user_id = $1`,
+          [prevOwnerId, count]
+        );
+      }
+    }
+
     await client.query(
       `UPDATE user_stats
-       SET total_zones  = total_zones  + $2,
-           total_points = total_points + $3,
-           total_km     = total_km     + $4,
-           total_runs   = total_runs   + 1,
-           total_steals = COALESCE(total_steals, 0) + $5,
-           total_cells  = COALESCE(total_cells,  0) + $6
+       SET total_zones    = total_zones  + $2,
+           total_points   = total_points + $3,
+           total_km       = total_km     + $4,
+           total_runs     = total_runs   + 1,
+           total_steals   = COALESCE(total_steals, 0) + $5,
+           total_cells    = COALESCE(total_cells,  0) + $6,
+           last_run_date  = $7::date,
+           streak_days    = $8,
+           best_daily_km  = $9
        WHERE user_id = $1`,
-      [userId, zonesCount, points, distanceKm, stolenZones.length + stolenCells.length, newCellCount]
+      [userId, zonesCount, authoritativePoints, distanceKm,
+       stolenZones.length + stolenCells.length, newCellCount,
+       today.toISOString().slice(0, 10), newStreak, newBestKm]
     );
 
     // Check and unlock achievements
     await checkAchievements(client, userId);
 
     await client.query('COMMIT');
-    return reply.status(201).send({ runId, stolenZones, stolenCells, newCellCount });
+    return reply.status(201).send({
+      runId,
+      stolenZones,
+      stolenCells,
+      newCellCount,
+      points: authoritativePoints,
+      breakdown: {
+        kmPoints,
+        cellPoints,
+        loopBonus: safeLoopBonus,
+        streakMultiplier,
+        pbMultiplier,
+        streakDays: newStreak,
+        beatPB: pbMultiplier > 1,
+      },
+    });
   } catch (err) {
     await client.query('ROLLBACK');
     return reply.status(500).send({ error: String(err) });
@@ -1550,8 +1643,8 @@ app.post('/strava/webhook', async (req: any, reply) => {
 // ── App version check ────────────────────────────────────────────────────────
 app.get('/app/version', async (_req: any, reply) => {
   reply.send({
-    latestVersion: '1.6.3',
-    latestVersionCode: 22,
+    latestVersion: '1.7.0',
+    latestVersionCode: 23,
     minVersion: '1.0.0',       // below this → force update
     updateUrl: 'https://play.google.com/store/apps/details?id=app.corrr',
   });
