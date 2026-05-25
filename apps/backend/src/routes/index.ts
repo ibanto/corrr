@@ -776,6 +776,39 @@ app.get('/admin/challenges', { preHandler: requireAdmin }, async (req: any, repl
   return reply.send(rows);
 });
 
+/** DELETE /admin/wipe-users — vacía TODAS las tablas con datos de usuarios.
+ *  Operación destructiva, solo accesible con la admin key. Mantiene intactas
+ *  las tablas de definiciones (challenges, etc.) que son configuración. */
+app.delete('/admin/wipe-users', { preHandler: requireAdmin }, async (req: any, reply) => {
+  const { confirm } = req.query as any;
+  if (confirm !== 'YES_WIPE_EVERYTHING') {
+    return reply.status(400).send({
+      error: 'Falta confirmación. Añade ?confirm=YES_WIPE_EVERYTHING a la URL.',
+    });
+  }
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    // TRUNCATE con CASCADE recorre las FKs y vacía todo de golpe. RESTART
+    // IDENTITY reinicia secuencias autoincrementales (no usamos pero por si).
+    await client.query(`
+      TRUNCATE TABLE
+        users, user_stats, runs, zones, cells, taunts, friendships
+      RESTART IDENTITY CASCADE
+    `);
+    // El marker de migración v1.8 se mantiene — no queremos que se borre la
+    // tabla cells (que TRUNCATE no borra schema, solo filas) y la migración
+    // ya está aplicada.
+    await client.query('COMMIT');
+    return reply.send({ ok: true, message: 'Wipe completo. Todos los usuarios y datos relacionados eliminados.' });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    return reply.status(500).send({ error: String(err) });
+  } finally {
+    client.release();
+  }
+});
+
 app.get('/admin/zones', { preHandler: requireAdmin }, async (req: any, reply) => {
   const { rows } = await db.query(
     `SELECT z.id, z.area_km2, z.points, z.center_lat, z.center_lng, z.conquered_at,
