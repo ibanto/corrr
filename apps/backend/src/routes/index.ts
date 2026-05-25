@@ -109,6 +109,20 @@ async function initDB() {
   await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN DEFAULT FALSE`).catch(() => {});
   await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS verify_token TEXT`).catch(() => {});
 
+  // ── Profile fields (v1.9 — formulario "Editar perfil" del usuario) ─────────
+  // Datos del corredor que rellena en su perfil. Al completarse todos los
+  // campos requeridos se otorga un bonus único (controlado con profile_bonus_claimed).
+  await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS first_name TEXT`).catch(() => {});
+  await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS surname TEXT`).catch(() => {});
+  await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS war_cry TEXT`).catch(() => {});
+  await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS shoe_brand TEXT`).catch(() => {});
+  await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS shoe_brand_other TEXT`).catch(() => {});
+  await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS birth_year INT`).catch(() => {});
+  await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS gender TEXT`).catch(() => {}); // 'M' | 'F' | 'O'
+  await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS usual_distance TEXT`).catch(() => {}); // '1-3' | '3-5' | '5-10' | '10+'
+  await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS weekly_frequency TEXT`).catch(() => {}); // '1-2' | '3-4' | '5+'
+  await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_bonus_claimed BOOLEAN DEFAULT FALSE`).catch(() => {});
+
   // Track stolen zones in user_stats
   await db.query(`ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS total_steals INT DEFAULT 0`).catch(() => {});
 
@@ -505,14 +519,23 @@ app.delete('/users/me', { preHandler: requireAuth }, async (req: any, reply) => 
 
 app.get('/users/me', { preHandler: requireAuth }, async (req: any, reply) => {
   const { rows } = await db.query(
-    'SELECT id, email, display_name, city, avatar_url FROM users WHERE id = $1', [req.userId]
+    `SELECT id, email, display_name, city, avatar_url,
+            first_name, surname, war_cry, shoe_brand, shoe_brand_other,
+            birth_year, gender, usual_distance, weekly_frequency,
+            profile_bonus_claimed
+       FROM users WHERE id = $1`, [req.userId]
   );
   if (!rows.length) return reply.status(404).send({ error: 'Usuario no encontrado' });
   return reply.send(rows[0]);
 });
 
 app.put('/users/me', { preHandler: requireAuth }, async (req: any, reply) => {
-  const { displayName, city, avatarUrl } = req.body;
+  const {
+    displayName, city, avatarUrl,
+    firstName, surname, warCry,
+    shoeBrand, shoeBrandOther,
+    birthYear, gender, usualDistance, weeklyFrequency,
+  } = req.body;
   const updates: string[] = [];
   const values: any[] = [];
   let idx = 1;
@@ -520,12 +543,38 @@ app.put('/users/me', { preHandler: requireAuth }, async (req: any, reply) => {
   if (displayName !== undefined) { updates.push(`display_name = $${idx++}`); values.push(displayName); }
   if (city !== undefined) { updates.push(`city = $${idx++}`); values.push(city); }
   if (avatarUrl !== undefined) { updates.push(`avatar_url = $${idx++}`); values.push(avatarUrl); }
+  if (firstName !== undefined) { updates.push(`first_name = $${idx++}`); values.push(firstName); }
+  if (surname !== undefined) { updates.push(`surname = $${idx++}`); values.push(surname); }
+  if (warCry !== undefined) { updates.push(`war_cry = $${idx++}`); values.push(warCry); }
+  if (shoeBrand !== undefined) { updates.push(`shoe_brand = $${idx++}`); values.push(shoeBrand); }
+  if (shoeBrandOther !== undefined) { updates.push(`shoe_brand_other = $${idx++}`); values.push(shoeBrandOther); }
+  if (birthYear !== undefined) { updates.push(`birth_year = $${idx++}`); values.push(birthYear); }
+  if (gender !== undefined) { updates.push(`gender = $${idx++}`); values.push(gender); }
+  if (usualDistance !== undefined) { updates.push(`usual_distance = $${idx++}`); values.push(usualDistance); }
+  if (weeklyFrequency !== undefined) { updates.push(`weekly_frequency = $${idx++}`); values.push(weeklyFrequency); }
 
   if (updates.length === 0) return reply.status(400).send({ error: 'Nada que actualizar' });
 
   values.push(req.userId);
   await db.query(`UPDATE users SET ${updates.join(', ')} WHERE id = $${idx}`, values);
-  return reply.send({ ok: true });
+
+  // Bonus único de 50 pts cuando se completa todo el perfil por primera vez.
+  // Requerimos los 8 campos del MVP (los 4 que pidió el usuario + 4 míos).
+  let bonusAwarded = false;
+  const { rows: full } = await db.query(
+    `SELECT first_name, surname, war_cry, shoe_brand, birth_year, gender,
+            usual_distance, weekly_frequency, profile_bonus_claimed
+       FROM users WHERE id = $1`, [req.userId]
+  );
+  const u = full[0];
+  const allFilled = u && u.first_name && u.surname && u.war_cry && u.shoe_brand
+    && u.birth_year && u.gender && u.usual_distance && u.weekly_frequency;
+  if (allFilled && !u.profile_bonus_claimed) {
+    await db.query(`UPDATE users SET profile_bonus_claimed = TRUE WHERE id = $1`, [req.userId]);
+    await db.query(`UPDATE user_stats SET total_points = total_points + 50 WHERE user_id = $1`, [req.userId]);
+    bonusAwarded = true;
+  }
+  return reply.send({ ok: true, bonusAwarded });
 });
 
 // ── Push Token ───────────────────────────────────────────────────────────────
@@ -1306,7 +1355,7 @@ app.get('/cells/viewport', { preHandler: requireAuth }, async (req: any, reply) 
   // when the user zooms way out — clients should detect that and skip the call.
   const { rows } = await db.query(
     `SELECT c.cell_x, c.cell_y, c.owner_id, c.claimed_at,
-            u.display_name AS owner_name,
+            u.display_name AS owner_name, u.war_cry AS owner_war_cry,
             (c.owner_id = $1) AS is_mine
      FROM cells c
      JOIN users u ON u.id = c.owner_id
@@ -1469,6 +1518,198 @@ app.delete('/friends/:userId', { preHandler: requireAuth }, async (req: any, rep
 });
 
 // ── Strava OAuth ──────────────────────────────────────────────────────────────
+
+/** Mobile signup/login con Strava (v1.9). Flujo:
+ *  1) App pide la URL → `/auth/strava/mobile-init`
+ *  2) Browser → Strava → autoriza → Strava redirige a `/auth/strava/mobile-callback`
+ *  3) Backend intercambia code → atleta + tokens → firma temp JWT → 302 al deep link `corrr://strava-auth?temp=JWT`
+ *  4) App captura el deep link → POST `/auth/strava/exchange` con el temp
+ *  5) Backend decide: login (atleta ya vinculado) o signup (devuelve prefill + signup token)
+ *  6) Si signup → app pide email+password → POST `/auth/strava/register` → cuenta creada
+ *
+ *  Los tokens temporales son JWTs cortos (10 min) firmados con nuestro SECRET. */
+const STRAVA_TEMP_JWT_EXP = '10m';
+
+/** GET /auth/strava/mobile-init — público. Devuelve URL para autorizar. */
+app.get('/auth/strava/mobile-init', async (_req, reply) => {
+  const redirect = encodeURIComponent(`${RAILWAY_URL}/auth/strava/mobile-callback`);
+  const scope = 'read,profile:read_all,activity:read_all';
+  const url = `https://www.strava.com/oauth/authorize?client_id=${STRAVA_CLIENT_ID}&response_type=code` +
+              `&redirect_uri=${redirect}&approval_prompt=auto&scope=${scope}`;
+  return reply.send({ url });
+});
+
+/** GET /auth/strava/mobile-callback — Strava redirige aquí tras autorizar.
+ *  Intercambia el code, firma un JWT temporal con los datos del atleta + tokens,
+ *  y redirige al deep link `corrr://strava-auth?temp=JWT`. La app captura el deep
+ *  link, extrae el token y llama a `/auth/strava/exchange`. */
+app.get('/auth/strava/mobile-callback', async (req: any, reply) => {
+  const { code, error } = req.query as any;
+  if (error || !code) {
+    return reply.type('text/html').send(htmlPage('❌ Cancelado',
+      'Has cerrado el flujo de Strava. Vuelve a la app.', '#FF3B30', true));
+  }
+  // Intercambiar code → access_token + athlete
+  const tokenRes = await fetch('https://www.strava.com/oauth/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      client_id: STRAVA_CLIENT_ID,
+      client_secret: STRAVA_CLIENT_SECRET,
+      grant_type: 'authorization_code',
+      code,
+    }),
+  });
+  const tokenData = await tokenRes.json() as any;
+  if (!tokenData.access_token || !tokenData.athlete) {
+    return reply.type('text/html').send(htmlPage('❌ Error',
+      `Strava dijo: ${tokenData.message ?? 'token inválido'}`, '#FF3B30', true));
+  }
+  // Firmar JWT temporal con todo lo que necesita la app después
+  const temp = await new SignJWT({
+    kind: 'strava-temp',
+    athleteId: tokenData.athlete.id,
+    firstName: tokenData.athlete.firstname ?? null,
+    lastName: tokenData.athlete.lastname ?? null,
+    city: tokenData.athlete.city ?? null,
+    sex: tokenData.athlete.sex ?? null,
+    profile: tokenData.athlete.profile ?? null,
+    bio: tokenData.athlete.bio ?? null,
+    accessToken: tokenData.access_token,
+    refreshToken: tokenData.refresh_token,
+    expiresAt: tokenData.expires_at,
+  }).setProtectedHeader({ alg: 'HS256' }).setExpirationTime(STRAVA_TEMP_JWT_EXP).sign(SECRET);
+
+  // 302 al deep link de la app
+  return reply.redirect(`corrr://strava-auth?temp=${encodeURIComponent(temp)}`);
+});
+
+/** POST /auth/strava/exchange — la app llama aquí con el temp JWT del deep link.
+ *  Si el atleta ya está vinculado a una cuenta → login. Si no → devuelve prefill
+ *  + un signup_token que la app usará en /register-strava después de pedir email+password. */
+app.post('/auth/strava/exchange', async (req: any, reply) => {
+  const { temp } = req.body as any;
+  if (!temp) return reply.status(400).send({ error: 'temp requerido' });
+  let payload: any;
+  try {
+    const v = await jwtVerify(temp, SECRET);
+    payload = v.payload;
+    if (payload.kind !== 'strava-temp') throw new Error('kind');
+  } catch {
+    return reply.status(400).send({ error: 'Token temporal inválido o expirado' });
+  }
+
+  // ¿Atleta ya vinculado a un usuario CORRR?
+  const { rows } = await db.query(
+    'SELECT id, email, display_name, city FROM users WHERE strava_athlete_id = $1',
+    [payload.athleteId]
+  );
+  if (rows.length > 0) {
+    const u = rows[0];
+    // Refrescar los tokens de Strava por si han cambiado
+    await db.query(
+      `UPDATE users SET strava_access_token = $1, strava_refresh_token = $2, strava_token_expires_at = $3 WHERE id = $4`,
+      [payload.accessToken, payload.refreshToken, payload.expiresAt, u.id]
+    );
+    const accessToken = await new SignJWT({ sub: u.id })
+      .setProtectedHeader({ alg: 'HS256' }).setExpirationTime('7d').sign(SECRET);
+    return reply.send({
+      kind: 'login',
+      accessToken,
+      user: { id: u.id, username: u.display_name, email: u.email, city: u.city },
+    });
+  }
+
+  // Atleta nuevo → devolver prefill + signup token (mismo payload re-firmado)
+  // El signup token vale 30 min para dar tiempo a rellenar el formulario.
+  const signupToken = await new SignJWT({ ...payload, kind: 'strava-signup' })
+    .setProtectedHeader({ alg: 'HS256' }).setExpirationTime('30m').sign(SECRET);
+  return reply.send({
+    kind: 'signup',
+    signupToken,
+    prefill: {
+      firstName: payload.firstName,
+      lastName: payload.lastName,
+      city: payload.city,
+      gender: payload.sex === 'M' ? 'M' : payload.sex === 'F' ? 'F' : null,
+      avatarUrl: payload.profile,
+      bio: payload.bio,
+    },
+  });
+});
+
+/** POST /auth/strava/register — finaliza el signup con Strava. Crea el usuario
+ *  con todos los datos prefilled + email + password que el usuario añadió. */
+app.post('/auth/strava/register', async (req: any, reply) => {
+  const { signupToken, email, password, displayName, firstName, surname, city, gender } = req.body as any;
+  if (!signupToken || !email || !password || !displayName) {
+    return reply.status(400).send({ error: 'Faltan campos requeridos' });
+  }
+  let payload: any;
+  try {
+    const v = await jwtVerify(signupToken, SECRET);
+    payload = v.payload;
+    if (payload.kind !== 'strava-signup') throw new Error('kind');
+  } catch {
+    return reply.status(400).send({ error: 'Signup token inválido o expirado' });
+  }
+
+  // Comprobar que el email no esté ya en uso
+  const { rows: exists } = await db.query('SELECT id FROM users WHERE email = $1', [email]);
+  if (exists.length > 0) return reply.status(409).send({ error: 'Ese email ya está registrado' });
+
+  const ph = await hash(password);
+  const verifyToken = Math.random().toString(36).slice(2) + Date.now().toString(36);
+  // Crear usuario con todos los datos prefilled de Strava + lo que el usuario
+  // añadió manualmente (email, password, displayName).
+  const { rows } = await db.query(
+    `INSERT INTO users (
+       email, password_hash, display_name, city,
+       first_name, surname, gender, avatar_url,
+       strava_athlete_id, strava_access_token, strava_refresh_token, strava_token_expires_at,
+       email_verified, verify_token
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12, FALSE, $13) RETURNING id`,
+    [
+      email, ph, displayName, city ?? null,
+      firstName ?? payload.firstName, surname ?? payload.lastName,
+      gender ?? (payload.sex === 'M' ? 'M' : payload.sex === 'F' ? 'F' : null),
+      payload.profile,
+      payload.athleteId, payload.accessToken, payload.refreshToken, payload.expiresAt,
+      verifyToken,
+    ]
+  );
+  const userId = rows[0].id;
+  await db.query('INSERT INTO user_stats (user_id) VALUES ($1)', [userId]);
+
+  // Email de verificación (mismo bloque que el /auth/register clásico)
+  const verifyUrl = `${RAILWAY_URL}/auth/verify-email?token=${verifyToken}`;
+  try {
+    await resend.emails.send({
+      from: 'CORRR <hola@corrr.es>',
+      to: email,
+      subject: 'Verifica tu email — CORRR',
+      html: `
+        <div style="font-family:sans-serif;max-width:480px;margin:0 auto;background:#0A0A0A;padding:32px;border-radius:12px;">
+          <div style="text-align:center;margin-bottom:16px;"><img src="https://ibanto.github.io/corrr/logo.png" alt="CORRR" style="width:140px;"></div>
+          <p style="color:#fff;font-size:16px;">Hola ${displayName},</p>
+          <p style="color:#ccc;font-size:14px;">Te acabas de registrar con Strava. Verifica tu email para activar todas las funciones:</p>
+          <div style="text-align:center;margin:24px 0;">
+            <a href="${verifyUrl}" style="background:#FF6600;color:#fff;padding:14px 32px;border-radius:50px;text-decoration:none;font-weight:bold;font-size:16px;">Verificar email</a>
+          </div>
+          <p style="color:#888;font-size:12px;">Si no has creado esta cuenta, ignora este email.</p>
+        </div>
+      `,
+    });
+  } catch (e) { console.error('[Email] verify err:', e); }
+
+  const accessToken = await new SignJWT({ sub: userId })
+    .setProtectedHeader({ alg: 'HS256' }).setExpirationTime('7d').sign(SECRET);
+  return reply.status(201).send({
+    accessToken,
+    user: { id: userId, username: displayName, email, city: city ?? null },
+    pendingVerification: true,
+  });
+});
 
 /** Devuelve la URL de autorización de Strava para el usuario autenticado. */
 app.get('/auth/strava', { preHandler: requireAuth }, async (req: any, reply) => {
@@ -1754,8 +1995,8 @@ app.post('/strava/webhook', async (req: any, reply) => {
 // ── App version check ────────────────────────────────────────────────────────
 app.get('/app/version', async (_req: any, reply) => {
   reply.send({
-    latestVersion: '1.8.2',
-    latestVersionCode: 29,
+    latestVersion: '1.9.0',
+    latestVersionCode: 30,
     minVersion: '1.0.0',       // below this → force update
     updateUrl: 'https://play.google.com/store/apps/details?id=app.corrr',
   });

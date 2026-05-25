@@ -29,6 +29,7 @@
     }
     h1 { font-size: 26px; font-weight: 800; color: #fff; margin-bottom: 8px; }
     h2 { font-size: 18px; font-weight: 700; color: #FF6600; margin: 36px 0 12px; }
+    h3 { font-size: 15px; font-weight: 700; color: #fff; margin: 18px 0 8px; }
     p { margin-bottom: 14px; color: #C0C0C0; }
     ul { margin: 0 0 14px 20px; color: #C0C0C0; }
     ul li { margin-bottom: 6px; }
@@ -44,6 +45,19 @@
       margin-top: 12px;
     }
     .contact-box p { margin: 0; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 8px 0 18px;
+      font-size: 14px;
+    }
+    th, td {
+      text-align: left;
+      padding: 8px 12px;
+      border-bottom: 1px solid #1A1A1A;
+      color: #C0C0C0;
+    }
+    th { color: #fff; font-weight: 700; }
   </style>
 </head>
 <body>
@@ -52,11 +66,11 @@
     <div class="subtitle">Conquista tu ciudad corriendo</div>
 
     <h1>Política de Privacidad</h1>
-    <p class="updated">Última actualización: 13 de mayo de 2026</p>
+    <p class="updated">Última actualización: 25 de mayo de 2026</p>
 
     <p>
       Esta Política de Privacidad describe cómo <strong>CORRR</strong> ("la aplicación", "nosotros") recoge,
-      utiliza y protege la información personal de los usuarios que hacen uso de la aplicación móvil CORRR.
+      utiliza, almacena y protege la información personal de los usuarios que hacen uso de la aplicación móvil CORRR.
     </p>
 
     <h2>1. Responsable del tratamiento</h2>
@@ -68,84 +82,183 @@
 
     <h2>2. Datos que recogemos</h2>
     <p>Recogemos únicamente los datos necesarios para el funcionamiento de la aplicación:</p>
+
+    <h3>2.1 Datos obligatorios (al registrarte)</h3>
     <ul>
-      <li><strong>Datos de registro:</strong> dirección de correo electrónico, nombre de usuario y ciudad.</li>
-      <li><strong>Datos de actividad:</strong> rutas GPS de tus carreras, distancia, duración y ritmo.</li>
-      <li><strong>Datos de uso:</strong> zonas conquistadas, puntos acumulados y estadísticas de carrera.</li>
-      <li><strong>Datos de Strava</strong> (opcional): si conectas tu cuenta de Strava, importamos las rutas GPS de tus últimas 5 carreras para generar zonas en el mapa.</li>
+      <li><strong>Dirección de correo electrónico</strong> — usado para identificarte y enviar verificación.</li>
+      <li><strong>Nombre de usuario público</strong> (display name) — visible para otros corredores en rankings y al tocar tus zonas.</li>
+      <li><strong>Contraseña</strong> — nunca se almacena en claro (ver sección 10).</li>
     </ul>
-    <p>No recogemos datos de pago, ni accedemos a tus contactos, cámara o micrófono.</p>
+
+    <h3>2.2 Datos opcionales de tu perfil de corredor</h3>
+    <p>Estos datos son <strong>opcionales</strong>. Si decides rellenarlos otorgamos un pequeño bonus de puntos:</p>
+    <ul>
+      <li>Nombre y apellido.</li>
+      <li>Grito de guerra (frase corta visible al tocar tus zonas).</li>
+      <li>Marca de zapatillas que usas para correr.</li>
+      <li>Año de nacimiento.</li>
+      <li>Sexo (Hombre / Mujer / Prefiero no decir).</li>
+      <li>Distancia habitual de carrera y frecuencia semanal.</li>
+      <li>Ciudad (autodetectada por GPS o introducida manualmente).</li>
+      <li>Avatar / foto de perfil (si decides añadirla).</li>
+    </ul>
+
+    <h3>2.3 Datos generados al usar la aplicación</h3>
+    <ul>
+      <li><strong>Rutas GPS</strong> de tus carreras (coordenadas latitud/longitud, marcas temporales, velocidad, precisión).</li>
+      <li><strong>Celdas conquistadas</strong> en el mapa (cuadrados de 10×10 m que tu carrera ha cubierto).</li>
+      <li><strong>Estadísticas:</strong> distancia total, número de carreras, zonas conquistadas, robos, puntos, parciales por km.</li>
+      <li><strong>Identificador de dispositivo para notificaciones push</strong> (Expo push token).</li>
+    </ul>
+
+    <h3>2.4 Datos de comunicación con otros usuarios</h3>
+    <p>
+      CORRR incluye una función de "taunts" (mensajes-emote) que se intercambian entre rivales tras un robo de territorio.
+      Estos mensajes son <strong>imágenes predefinidas seleccionadas de un catálogo</strong> — no permitimos texto libre.
+      Almacenamos el identificador del mensaje enviado, el destinatario y el remitente.
+    </p>
+
+    <h3>2.5 Datos de Strava (opcional)</h3>
+    <p>
+      Si conectas tu cuenta de Strava voluntariamente, almacenamos:
+    </p>
+    <ul>
+      <li>Tu Strava athlete ID.</li>
+      <li>Tokens de acceso y refresco para llamar a la API de Strava en tu nombre.</li>
+      <li>Las rutas GPS de tus actividades de Strava (al conectar importamos las últimas, y si activas el webhook se importan las nuevas que registres).</li>
+    </ul>
+    <p>Puedes revocar el acceso a Strava en cualquier momento desde tu perfil de Strava.</p>
+
+    <p><strong>NO recogemos:</strong> datos de pago, lista de contactos, fotos de tu galería (salvo la que tú elijas como avatar), acceso a tu micrófono o cámara fuera del flujo de avatar, datos de salud, datos biométricos.</p>
 
     <h2>3. Finalidad del tratamiento</h2>
     <p>Usamos tus datos exclusivamente para:</p>
     <ul>
-      <li>Gestionar tu cuenta y autenticación en la aplicación.</li>
-      <li>Mostrar y guardar las zonas que conquistas en el mapa.</li>
-      <li>Calcular estadísticas personales y rankings.</li>
+      <li>Gestionar tu cuenta y autenticación.</li>
+      <li>Registrar tus carreras y mostrar tus celdas conquistadas en el mapa.</li>
+      <li>Detectar robos de territorio entre usuarios (cuando una carrera tuya pasa por celdas de otro corredor).</li>
+      <li>Enviarte notificaciones push relevantes (te han robado, has recibido un taunt, hay una nueva versión de la app).</li>
+      <li>Calcular estadísticas personales y rankings (locales y globales).</li>
+      <li>Mostrar tu nombre y grito de guerra a otros usuarios cuando tocan tus zonas.</li>
       <li>Importar carreras desde Strava si lo solicitas expresamente.</li>
     </ul>
 
     <h2>4. Base legal</h2>
     <p>
-      El tratamiento de tus datos se basa en el <strong>consentimiento</strong> que otorgas al registrarte en
-      la aplicación y, en el caso de Strava, al autorizar expresamente la conexión con dicha plataforma.
-      Puedes retirar tu consentimiento en cualquier momento eliminando tu cuenta.
+      El tratamiento se basa en el <strong>consentimiento</strong> que otorgas al registrarte y al aceptar los permisos
+      del sistema operativo (ubicación, notificaciones). En el caso de Strava, al autorizar expresamente la conexión.
+      Puedes retirar tu consentimiento en cualquier momento eliminando tu cuenta o desconectando Strava.
     </p>
 
-    <h2>5. Localización GPS</h2>
+    <h2>5. Localización GPS y seguimiento en segundo plano</h2>
     <p>
-      La aplicación solicita acceso a tu ubicación GPS únicamente <strong>durante una carrera activa</strong>,
-      para trazar la ruta y detectar las zonas conquistadas. No rastreamos tu ubicación en segundo plano
-      cuando no estás corriendo.
+      La aplicación solicita acceso a tu ubicación GPS <strong>únicamente durante una carrera activa</strong>:
     </p>
-
-    <h2>6. Compartición de datos</h2>
-    <p>No vendemos ni cedemos tus datos personales a terceros. Únicamente compartimos información con:</p>
     <ul>
-      <li><strong>Railway</strong> (alojamiento del servidor): los datos se almacenan en servidores seguros en la nube.</li>
-      <li><strong>Supabase</strong> (base de datos): almacenamiento seguro de la información de la aplicación.</li>
-      <li><strong>Strava</strong>: solo si tú activas la integración voluntariamente.</li>
+      <li>Cuando inicias una carrera, comenzamos a registrar tu posición.</li>
+      <li>Si bloqueas la pantalla o cambias a otra aplicación durante la carrera, CORRR mantiene el seguimiento
+        mediante un <strong>servicio en primer plano</strong> con una notificación visible. Esto es necesario para
+        que la ruta se grabe correctamente.</li>
+      <li>Cuando finalizas o pausas la carrera, el seguimiento GPS se detiene completamente.</li>
+      <li>CORRR <strong>no rastrea tu ubicación cuando no hay una carrera activa</strong>.</li>
     </ul>
-    <p>Estos proveedores actúan como encargados del tratamiento y cumplen con el RGPD.</p>
+    <p>Puedes revocar el permiso de ubicación en cualquier momento desde los ajustes de tu dispositivo.</p>
 
-    <h2>7. Conservación de datos</h2>
+    <h2>6. Dónde se almacenan tus datos</h2>
     <p>
-      Conservamos tus datos mientras mantengas una cuenta activa en CORRR. Si eliminas tu cuenta,
-      todos tus datos personales serán borrados de nuestros sistemas en un plazo máximo de 30 días.
+      Tus datos se almacenan en proveedores que cumplen con el Reglamento General de Protección de Datos (RGPD):
+    </p>
+    <table>
+      <tr><th>Proveedor</th><th>Servicio</th><th>Ubicación física</th></tr>
+      <tr><td><strong>Supabase</strong></td><td>Base de datos PostgreSQL y almacenamiento de imágenes (avatares)</td><td>AWS, Irlanda (UE)</td></tr>
+      <tr><td><strong>Railway</strong></td><td>Servidor backend de la API</td><td>Países Bajos (UE)</td></tr>
+      <tr><td><strong>GitHub Pages</strong></td><td>Sitio web público (corrr.es) — sin datos de usuario</td><td>Microsoft, CDN global</td></tr>
+      <tr><td><strong>Expo (Expo Application Services)</strong></td><td>Envío de notificaciones push</td><td>Estados Unidos</td></tr>
+      <tr><td><strong>Strava</strong></td><td>Si conectas Strava, sus datos los gestiona Strava según su política</td><td>Estados Unidos</td></tr>
+    </table>
+    <p>
+      <strong>Transferencia internacional:</strong> Expo (notificaciones push) y Strava son proveedores con sede en EE.UU.
+      Solo se les transfieren los datos mínimos necesarios (un identificador opaco de dispositivo, en el caso de Expo).
+      Estas transferencias están amparadas por las Cláusulas Contractuales Tipo de la Comisión Europea y/o por el
+      EU-US Data Privacy Framework.
     </p>
 
-    <h2>8. Tus derechos (RGPD)</h2>
+    <h2>7. Compartición de datos con otros usuarios</h2>
+    <p>
+      Algunos datos son visibles para otros usuarios de CORRR por la naturaleza del juego:
+    </p>
+    <ul>
+      <li><strong>Tu nombre de usuario público</strong> y <strong>grito de guerra</strong> aparecen al tocar zonas que has conquistado, en rankings y en notificaciones de robo.</li>
+      <li><strong>Tus celdas conquistadas</strong> son visibles en el mapa para otros usuarios cercanos.</li>
+      <li><strong>Tu ciudad</strong> se usa en el ranking local.</li>
+      <li><strong>Tus estadísticas agregadas</strong> (km totales, zonas, puntos) aparecen en rankings.</li>
+    </ul>
+    <p>
+      <strong>Nunca</strong> compartimos con otros usuarios: tu email, nombre real, apellido, año de nacimiento, sexo,
+      marca de zapatillas, distancia/frecuencia habitual, tokens de Strava ni tu contraseña.
+    </p>
+    <p>
+      <strong>No vendemos ni cedemos tus datos a terceros con fines comerciales.</strong>
+    </p>
+
+    <h2>8. Conservación de datos</h2>
+    <p>
+      Conservamos tus datos mientras mantengas una cuenta activa en CORRR. Si eliminas tu cuenta (desde "Perfil → Eliminar cuenta"
+      o escribiéndonos), todos tus datos personales se borran de nuestros sistemas en un plazo máximo de 30 días, incluyendo:
+    </p>
+    <ul>
+      <li>Tu registro de usuario y datos del perfil.</li>
+      <li>Todas tus carreras, celdas, zonas conquistadas y estadísticas.</li>
+      <li>Tus tokens de Strava (también deberías revocar el acceso desde Strava).</li>
+      <li>Tu push token y mensajes intercambiados con otros usuarios.</li>
+    </ul>
+
+    <h2>9. Tus derechos (RGPD)</h2>
     <p>Como usuario residente en la Unión Europea, tienes derecho a:</p>
     <ul>
       <li><strong>Acceso:</strong> solicitar una copia de los datos que tenemos sobre ti.</li>
-      <li><strong>Rectificación:</strong> corregir datos inexactos.</li>
+      <li><strong>Rectificación:</strong> corregir datos inexactos (puedes hacerlo desde "Editar perfil" en la app).</li>
       <li><strong>Supresión:</strong> solicitar la eliminación de tus datos ("derecho al olvido").</li>
-      <li><strong>Portabilidad:</strong> recibir tus datos en un formato estructurado.</li>
+      <li><strong>Portabilidad:</strong> recibir tus datos en un formato estructurado y comúnmente usado.</li>
       <li><strong>Oposición:</strong> oponerte al tratamiento de tus datos.</li>
+      <li><strong>Limitación:</strong> solicitar que limitemos el tratamiento mientras se resuelve una reclamación.</li>
     </ul>
     <p>
       Para ejercer cualquiera de estos derechos, escríbenos a
       <a href="mailto:hola@corrr.es">hola@corrr.es</a>.
-      Responderemos en un plazo máximo de 30 días.
+      Responderemos en un plazo máximo de 30 días. También puedes presentar una reclamación ante la
+      <a href="https://www.aepd.es/" target="_blank">Agencia Española de Protección de Datos (AEPD)</a>.
     </p>
 
-    <h2>9. Seguridad</h2>
-    <p>
-      Las contraseñas se almacenan cifradas con Argon2. Las comunicaciones entre la app y el servidor
-      se realizan mediante HTTPS. Los tokens de sesión tienen una validez de 7 días.
-    </p>
+    <h2>10. Seguridad</h2>
+    <p>Aplicamos las siguientes medidas técnicas para proteger tus datos:</p>
+    <ul>
+      <li><strong>Contraseñas cifradas con Argon2</strong> — nunca se almacenan en texto plano.</li>
+      <li><strong>HTTPS obligatorio</strong> en todas las comunicaciones entre la app y el servidor.</li>
+      <li><strong>Encriptación en reposo</strong> en la base de datos (Supabase encripta los discos por defecto).</li>
+      <li><strong>Row-Level Security (RLS)</strong> activado en todas las tablas — un usuario no puede acceder a datos de otro a nivel de base de datos.</li>
+      <li><strong>Tokens de sesión</strong> con validez limitada y firmados criptográficamente (JWT).</li>
+      <li><strong>Verificación de correo</strong> para evitar registros falsos.</li>
+    </ul>
 
-    <h2>10. Menores de edad</h2>
+    <h2>11. Menores de edad</h2>
     <p>
       CORRR no está dirigida a menores de 16 años. No recogemos conscientemente datos de menores.
-      Si detectamos que un menor se ha registrado, eliminaremos su cuenta.
+      Si detectamos que un menor se ha registrado, eliminaremos su cuenta. Si eres tutor legal de un menor
+      y crees que ha proporcionado datos a CORRR, contáctanos para gestionar la eliminación.
     </p>
 
-    <h2>11. Cambios en esta política</h2>
+    <h2>12. Cookies y rastreo en la web pública</h2>
     <p>
-      Podemos actualizar esta política ocasionalmente. Te notificaremos dentro de la aplicación si
-      los cambios son significativos. La fecha de la última actualización siempre aparecerá al inicio
-      de este documento.
+      El sitio web público <strong>corrr.es</strong> es estático y no usa cookies de rastreo. La aplicación móvil
+      tampoco utiliza herramientas de analítica de terceros (Google Analytics, Facebook Pixel, etc.).
+    </p>
+
+    <h2>13. Cambios en esta política</h2>
+    <p>
+      Podemos actualizar esta política ocasionalmente. Si los cambios afectan a la forma en que tratamos
+      tus datos, te lo notificaremos dentro de la aplicación y por correo. La fecha de la última actualización
+      siempre aparece al inicio de este documento.
     </p>
 
     <hr>
@@ -153,8 +266,8 @@
     <h2>Contacto</h2>
     <div class="contact-box">
       <p>
-        ¿Tienes preguntas sobre privacidad? Escríbenos a<br>
-        <a href="mailto:hola@corrr.es">hola@corrr.es</a>
+        ¿Tienes preguntas sobre privacidad, quieres ejercer tus derechos o solicitar información?<br>
+        Escríbenos a <a href="mailto:hola@corrr.es">hola@corrr.es</a>
       </p>
     </div>
 
