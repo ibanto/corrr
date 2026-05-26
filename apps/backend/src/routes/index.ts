@@ -8,7 +8,11 @@ import { Resend } from 'resend';
 
 dotenv.config();
 
-const app = Fastify({ logger: true });
+// bodyLimit por defecto en Fastify es 1MB → demasiado pequeño para subir
+// avatares como data URI base64 (una foto de móvil pesa ~150-500KB y base64
+// añade ~33% encima). Subimos a 10MB para que quepan fotos sin compresión
+// agresiva.
+const app = Fastify({ logger: true, bodyLimit: 10 * 1024 * 1024 });
 
 const STRAVA_CLIENT_ID     = process.env.STRAVA_CLIENT_ID;
 const STRAVA_CLIENT_SECRET = process.env.STRAVA_CLIENT_SECRET;
@@ -1444,7 +1448,11 @@ app.get('/runs/my', { preHandler: requireAuth }, async (req: any, reply) => {
 app.get('/stats/me', { preHandler: requireAuth }, async (req: any, reply) => {
   const [statsRes, runsRes] = await Promise.all([
     db.query(
-      `SELECT total_zones, total_points, total_km, total_runs, COALESCE(bonus_xp, 0) AS bonus_xp
+      // total_steals lo usamos en mobile para el desbloqueo progresivo de
+      // taunts (cada 10 robos desbloquea el siguiente mensaje y respuesta).
+      `SELECT total_zones, total_points, total_km, total_runs,
+              COALESCE(bonus_xp, 0)     AS bonus_xp,
+              COALESCE(total_steals, 0) AS total_steals
        FROM user_stats WHERE user_id = $1`,
       [req.userId]
     ),
@@ -1453,7 +1461,7 @@ app.get('/stats/me', { preHandler: requireAuth }, async (req: any, reply) => {
       [req.userId]
     ),
   ]);
-  const base = statsRes.rows[0] ?? { total_zones: 0, total_points: 0, total_km: 0, total_runs: 0, bonus_xp: 0 };
+  const base = statsRes.rows[0] ?? { total_zones: 0, total_points: 0, total_km: 0, total_runs: 0, bonus_xp: 0, total_steals: 0 };
   // XP final = puntos/100 (parte entera) + bonus_xp (regalado por completar perfil, etc.)
   const total_xp = Math.floor((base.total_points || 0) / 100) + (base.bonus_xp || 0);
   return reply.send({ stats: { ...base, total_xp }, runs: runsRes.rows });
@@ -1541,7 +1549,18 @@ app.get('/taunts/unread', { preHandler: requireAuth }, async (req: any, reply) =
 });
 
 /** Send a taunt to another user. Used when victim hits "Devolver" on a robo
- *  notif (mode='taunt') or when the original thief replies to a taunt (mode='response'). */
+ *  notif (mode='taunt') or when the original thief replies to a taunt (mode='response').
+ *
+ *  Reglas del hilo (corta el bucle infinito):
+ *   - taunt: la víctima del robo le manda mensaje al ladrón. Permitido solo si
+ *     existe un robo_notif previo del ladrón hacia la víctima (no obligatorio
+ *     a nivel servidor por ahora — el cliente lo enforce — pero la UI no abre
+ *     este path en otro caso).
+ *   - response: el ladrón responde a un taunt previo. Solo se permite si
+ *     existe un taunt previo del 'toUserId' hacia el 'fromUserId' en el mismo
+ *     runId (o sin runId). Si ya hay una response previa para ese hilo,
+ *     rechazamos — un response cierra el hilo, no se puede responder a una
+ *     response. */
 app.post('/taunts', { preHandler: requireAuth }, async (req: any, reply) => {
   const { toUserId, tauntId, mode, runId } = req.body as any;
   if (!toUserId || !tauntId || !mode) {
@@ -1552,6 +1571,27 @@ app.post('/taunts', { preHandler: requireAuth }, async (req: any, reply) => {
   }
   if (toUserId === req.userId) {
     return reply.status(400).send({ error: 'No puedes enviarte un taunt a ti mismo' });
+  }
+  // Cortar el bucle: por cada hilo (mismo runId) solo se permite UNA ida
+  // (taunt) y UNA vuelta (response). El runId es el identificador del robo
+  // original — todos los mensajes del hilo lo arrastran. Así:
+  //   - B no puede enviar 2 taunts para el mismo robo.
+  //   - A no puede enviar 2 responses para el mismo robo.
+  //   - Cuando A roba a B en OTRO run (otro runId), nace un hilo nuevo y
+  //     se vuelve a permitir 1+1.
+  const { rows: prev } = await db.query(
+    `SELECT 1 FROM taunts
+      WHERE from_user_id = $1 AND to_user_id = $2 AND mode = $3
+        AND (run_id = $4 OR ($4::uuid IS NULL AND run_id IS NULL))
+      LIMIT 1`,
+    [req.userId, toUserId, mode, runId || null]
+  );
+  if (prev.length > 0) {
+    return reply.status(409).send({
+      error: mode === 'taunt'
+        ? 'Ya enviaste un mensaje en este hilo.'
+        : 'Ya enviaste tu respuesta en este hilo.',
+    });
   }
   const { rows } = await db.query(
     `INSERT INTO taunts (from_user_id, to_user_id, mode, taunt_id, run_id)
@@ -2224,11 +2264,23 @@ app.post('/strava/webhook', async (req: any, reply) => {
 });
 
 // ── App version check ────────────────────────────────────────────────────────
+//
+// El cliente lo consulta al arrancar; si latestVersion > CURRENT_VERSION del
+// cliente, muestra el alert "¡Nueva versión disponible!" con link a Play.
+//
+// Configurable vía env vars en Railway (LATEST_APP_VERSION / LATEST_APP_VC /
+// MIN_APP_VERSION) para no tener que hacer redeploy del backend en cada
+// release. Si las env vars no están, se usan los fallbacks hardcodeados —
+// que SÍ hay que mantener sincronizados manualmente con cada subida a Play.
+const LATEST_APP_VERSION = process.env.LATEST_APP_VERSION ?? '1.10.3';
+const LATEST_APP_VC = parseInt(process.env.LATEST_APP_VC ?? '34', 10);
+const MIN_APP_VERSION = process.env.MIN_APP_VERSION ?? '1.0.0';
+
 app.get('/app/version', async (_req: any, reply) => {
   reply.send({
-    latestVersion: '1.9.0',
-    latestVersionCode: 30,
-    minVersion: '1.0.0',       // below this → force update
+    latestVersion: LATEST_APP_VERSION,
+    latestVersionCode: LATEST_APP_VC,
+    minVersion: MIN_APP_VERSION,       // below this → force update
     updateUrl: 'https://play.google.com/store/apps/details?id=app.corrr',
   });
 });
