@@ -10,9 +10,11 @@ import {
   RefreshControl,
   Modal,
   Image,
+  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, radius } from '../theme';
+import AllRunsScreen from './AllRunsScreen';
 import { api, RunRecord, UserStats, Achievement } from '../services/api';
 
 const { width } = Dimensions.get('window');
@@ -78,6 +80,7 @@ export default function StatsScreen({ user }: Props) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [showCalendar, setShowCalendar] = useState(false);
+  const [showAllRuns, setShowAllRuns] = useState(false);
   const [calMonth, setCalMonth] = useState(new Date().getMonth());
   const [calYear, setCalYear] = useState(new Date().getFullYear());
   const [achievements, setAchievements] = useState<Achievement[]>([]);
@@ -411,21 +414,34 @@ export default function StatsScreen({ user }: Props) {
                 </Text>
               </View>
             ) : (
-              filteredRuns.map((run) => (
-                <View key={run.id} style={styles.runRow}>
-                  <View style={styles.runIconBox}>
-                    <Ionicons name="walk" size={18} color={colors.orange} />
+              <>
+                {/* Mostramos las 5 más recientes. "Ver más" para abrir la pantalla
+                    con TODAS las carreras de la cuenta (placeholder por ahora). */}
+                {filteredRuns.slice(0, 5).map((run) => (
+                  <View key={run.id} style={styles.runRow}>
+                    <View style={styles.runIconBox}>
+                      <Ionicons name="walk" size={18} color={colors.orange} />
+                    </View>
+                    <View style={styles.runMeta}>
+                      <Text style={styles.runPlace}>{run.zones_count > 0 ? `${run.zones_count} zona${run.zones_count > 1 ? 's' : ''}` : 'Carrera'}</Text>
+                      <Text style={styles.runDate}>{formatDate(run.created_at)}</Text>
+                    </View>
+                    <View style={styles.runNums}>
+                      <Text style={styles.runKm}>{run.distance_km.toFixed(2)} km</Text>
+                      <Text style={styles.runPace}>{formatPace(run.duration_secs, run.distance_km)} /km · {run.points} pts</Text>
+                    </View>
                   </View>
-                  <View style={styles.runMeta}>
-                    <Text style={styles.runPlace}>{run.zones_count > 0 ? `${run.zones_count} zona${run.zones_count > 1 ? 's' : ''}` : 'Carrera'}</Text>
-                    <Text style={styles.runDate}>{formatDate(run.created_at)}</Text>
-                  </View>
-                  <View style={styles.runNums}>
-                    <Text style={styles.runKm}>{run.distance_km.toFixed(2)} km</Text>
-                    <Text style={styles.runPace}>{formatPace(run.duration_secs, run.distance_km)} /km · {run.points} pts</Text>
-                  </View>
-                </View>
-              ))
+                ))}
+                {filteredRuns.length > 5 && (
+                  <TouchableOpacity
+                    style={styles.viewAllBtn}
+                    onPress={() => setShowAllRuns(true)}
+                  >
+                    <Text style={styles.viewAllText}>VER MÁS ({filteredRuns.length - 5} más)</Text>
+                    <Ionicons name="chevron-forward" size={16} color={colors.orange} />
+                  </TouchableOpacity>
+                )}
+              </>
             )}
           </View>
         </>
@@ -552,6 +568,9 @@ export default function StatsScreen({ user }: Props) {
         </View>
       </View>
     </Modal>
+
+    {/* "VER MÁS" abre la pantalla con TODAS las carreras (paginación incremental). */}
+    <AllRunsScreen visible={showAllRuns} onClose={() => setShowAllRuns(false)} />
     </>
   );
 }
@@ -618,6 +637,17 @@ const styles = StyleSheet.create({
   runNums: { alignItems: 'flex-end' },
   runKm: { fontSize: 14, fontWeight: '700', color: colors.textPrimary },
   runPace: { fontSize: 11, color: colors.textSecondary },
+  // Botón "VER MÁS" debajo de las carreras listadas (límite 5).
+  viewAllBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: spacing.xs, paddingVertical: spacing.sm + 2, marginTop: spacing.sm,
+    borderRadius: radius.md,
+    borderWidth: 1, borderColor: colors.border,
+    backgroundColor: colors.bgCard,
+  },
+  viewAllText: {
+    fontSize: 13, fontWeight: '800', color: colors.orange, letterSpacing: 1,
+  },
   // Achievements
   achCount: { fontSize: 13, color: colors.orange, fontWeight: '600' },
   achRow: {

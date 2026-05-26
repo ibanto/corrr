@@ -74,7 +74,107 @@ interface RemoteZone {
   conquered_at?: string;
   owner_id?: string;
   owner_name?: string;
+  owner_war_cry?: string | null;
   is_mine?: boolean;
+}
+
+// ── Grid (v2) ────────────────────────────────────────────────────────────────
+interface Cell { x: number; y: number; }
+
+interface RemoteCell {
+  cell_x: number;
+  cell_y: number;
+  owner_id: string;
+  owner_name?: string;
+  owner_war_cry?: string | null;
+  claimed_at?: string;
+  is_mine: boolean;
+}
+
+interface ProfileData {
+  id: string;
+  email: string;
+  display_name: string;
+  city: string | null;
+  avatar_url: string | null;
+  first_name: string | null;
+  surname: string | null;
+  war_cry: string | null;
+  shoe_brand: string | null;
+  shoe_brand_other: string | null;
+  birth_year: number | null;
+  gender: 'M' | 'F' | 'O' | null;
+  usual_distance: '1-3' | '3-5' | '5-10' | '10+' | null;
+  weekly_frequency: '1-2' | '3-4' | '5+' | null;
+  profile_bonus_claimed: boolean;
+}
+
+interface ProfileUpdate {
+  displayName?: string;
+  city?: string;
+  avatarUrl?: string;
+  firstName?: string;
+  surname?: string;
+  warCry?: string;
+  shoeBrand?: string;
+  shoeBrandOther?: string;
+  birthYear?: number;
+  gender?: 'M' | 'F' | 'O';
+  usualDistance?: '1-3' | '3-5' | '5-10' | '10+';
+  weeklyFrequency?: '1-2' | '3-4' | '5+';
+}
+
+interface StravaExchangeResult {
+  kind: 'login' | 'signup';
+  // login
+  accessToken?: string;
+  user?: { id: string; username: string; email: string; city: string | null };
+  // signup
+  signupToken?: string;
+  prefill?: {
+    firstName: string | null;
+    lastName: string | null;
+    city: string | null;
+    gender: 'M' | 'F' | null;
+    avatarUrl: string | null;
+    bio: string | null;
+  };
+}
+
+interface TauntInbox {
+  id: string;
+  mode: 'robo_notif' | 'taunt' | 'response';
+  taunt_id: number | null;
+  run_id: string | null;
+  created_at: string;
+  from_user_id: string | null;
+  from_user_name: string | null;
+}
+
+interface CellRunPayload extends RunPayload {
+  claimedCells?: Cell[];
+  // Loop closure bonus accumulated client-side during the run. Sent separately
+  // so the backend can recompute the authoritative point total with multipliers.
+  loopBonus?: number;
+}
+
+interface RunSaveResult {
+  runId: string;
+  stolenZones: { id: string; ownerName: string; points: number }[];
+  stolenCells?: { x: number; y: number; prevOwnerId: string; prevOwnerName: string }[];
+  newCellCount?: number;
+  // Authoritative server-computed final point total + breakdown. Use this for
+  // the summary modal instead of the client-side estimate.
+  points?: number;
+  breakdown?: {
+    kmPoints: number;
+    cellPoints: number;
+    loopBonus: number;
+    streakMultiplier: number;
+    pbMultiplier: number;
+    streakDays: number;
+    beatPB: boolean;
+  };
 }
 
 interface RunRecord {
@@ -91,6 +191,10 @@ interface UserStats {
   total_points: number;
   total_km: number;
   total_runs: number;
+  bonus_xp?: number;
+  // Total XP que el usuario ve: floor(total_points / 100) + bonus_xp.
+  // El backend lo computa para evitar que cada cliente lo haga distinto.
+  total_xp?: number;
 }
 
 interface MyStats {
@@ -233,11 +337,24 @@ class ApiService {
     }
   }
 
-  async saveRun(data: RunPayload): Promise<{ runId: string; stolenZones: { id: string; ownerName: string; points: number }[] }> {
-    return this.request<any>('/runs', {
+  async saveRun(data: CellRunPayload): Promise<RunSaveResult> {
+    return this.request<RunSaveResult>('/runs', {
       method: 'POST',
       body: JSON.stringify(data),
     });
+  }
+
+  async getCellsInViewport(north: number, south: number, east: number, west: number): Promise<{ cells: RemoteCell[] }> {
+    const qs = `north=${north}&south=${south}&east=${east}&west=${west}`;
+    return this.request<{ cells: RemoteCell[] }>(`/cells/viewport?${qs}`);
+  }
+
+  /** Listado paginado de todas las carreras del usuario. Usado por la pantalla
+   *  "Ver más" desde Stats. Devuelve total para paginar correctamente. */
+  async getAllRuns(limit = 30, offset = 0): Promise<{ runs: RunRecord[]; total: number; limit: number; offset: number }> {
+    return this.request<{ runs: RunRecord[]; total: number; limit: number; offset: number }>(
+      `/runs/my?limit=${limit}&offset=${offset}`
+    );
   }
 
   async getMyStats(): Promise<MyStats> {
@@ -252,12 +369,12 @@ class ApiService {
     return this.request<RemoteZone[]>(`/zones/nearby?lat=${lat}&lng=${lng}&radius=0.05`);
   }
 
-  async getProfile(): Promise<{ id: string; email: string; display_name: string; city: string; avatar_url: string | null }> {
-    return this.request('/users/me');
+  async getProfile(): Promise<ProfileData> {
+    return this.request<ProfileData>('/users/me');
   }
 
-  async updateProfile(data: { displayName?: string; city?: string; avatarUrl?: string }): Promise<void> {
-    await this.request('/users/me', {
+  async updateProfile(data: ProfileUpdate): Promise<{ ok: true; bonusAwarded?: boolean }> {
+    return this.request<{ ok: true; bonusAwarded?: boolean }>('/users/me', {
       method: 'PUT',
       body: JSON.stringify(data),
     });
@@ -281,6 +398,53 @@ class ApiService {
   async getStravaAuthUrl(): Promise<string> {
     const data = await this.request<{ url: string }>('/auth/strava');
     return data.url;
+  }
+
+  // Strava signup/login mobile flow (v1.9). Pasos:
+  //   1) getStravaSignupUrl → url que se abre en browser
+  //   2) Browser redirige al deep link corrr://strava-auth?temp=JWT
+  //   3) App captura el temp y llama a stravaExchange(temp)
+  //   4) Si kind === 'login' → usar accessToken directamente
+  //   5) Si kind === 'signup' → mostrar form con prefill, llamar stravaRegister al guardar
+  // Strava signup mobile endpoints son públicos (no requieren auth Bearer). El
+  // método `request` añade el token si existe; si el usuario no está logueado
+  // todavía, simplemente no se añade — perfecto para este flujo.
+  async getStravaSignupUrl(): Promise<string> {
+    const data = await this.request<{ url: string }>('/auth/strava/mobile-init');
+    return data.url;
+  }
+  async stravaExchange(temp: string): Promise<StravaExchangeResult> {
+    return this.request<StravaExchangeResult>('/auth/strava/exchange', {
+      method: 'POST',
+      body: JSON.stringify({ temp }),
+    });
+  }
+  async stravaRegister(data: {
+    signupToken: string; email: string; password: string; displayName: string;
+    firstName?: string; surname?: string; city?: string; gender?: 'M' | 'F' | 'O';
+  }): Promise<LoginResponse & { pendingVerification?: boolean }> {
+    return this.request<LoginResponse & { pendingVerification?: boolean }>('/auth/strava/register', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  // Taunts (emote chat after robos)
+  async getUnreadTaunts(): Promise<{ taunts: TauntInbox[] }> {
+    return this.request<{ taunts: TauntInbox[] }>('/taunts/unread');
+  }
+  async sendTaunt(toUserId: string, tauntId: number, mode: 'taunt' | 'response', runId?: string): Promise<{ id: string; createdAt: string }> {
+    return this.request('/taunts', {
+      method: 'POST',
+      body: JSON.stringify({ toUserId, tauntId, mode, runId }),
+    });
+  }
+  async markTauntsRead(ids: string[]): Promise<void> {
+    if (ids.length === 0) return;
+    await this.request('/taunts/read', {
+      method: 'PUT',
+      body: JSON.stringify({ ids }),
+    });
   }
 
   // Friends
@@ -327,7 +491,7 @@ interface Friend {
 }
 
 export const api = new ApiService();
-export type { LoginResponse, RankingEntry, Challenge, Achievement, RunRecord, UserStats, MyStats, RemoteZone, ZonePayload, FriendRequest, Friend };
+export type { LoginResponse, RankingEntry, Challenge, Achievement, RunRecord, UserStats, MyStats, RemoteZone, ZonePayload, FriendRequest, Friend, Cell, RemoteCell, CellRunPayload, RunSaveResult, TauntInbox, ProfileData, ProfileUpdate };
 
 const MOCK_RANKING: RankingEntry[] = [
   { position: 1, username: 'Laura R.', city: 'Barcelona', points: 28480, zones: 87 },

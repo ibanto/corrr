@@ -125,6 +125,10 @@ async function initDB() {
 
   // Track stolen zones in user_stats
   await db.query(`ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS total_steals INT DEFAULT 0`).catch(() => {});
+  // bonus_xp se suma al XP calculado desde puntos (XP = floor(points/100) + bonus_xp).
+  // Permite dar XP "directo" sin tener que sumar 100 pts por cada XP. Usado por
+  // el bonus de completar perfil: +50 pts + 10 bonus_xp.
+  await db.query(`ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS bonus_xp INT DEFAULT 0`).catch(() => {});
 
   // ── Taunts (chat-with-emotes between rivals) ───────────────────────────────
   // Three "modes" of entry:
@@ -571,7 +575,12 @@ app.put('/users/me', { preHandler: requireAuth }, async (req: any, reply) => {
     && u.birth_year && u.gender && u.usual_distance && u.weekly_frequency;
   if (allFilled && !u.profile_bonus_claimed) {
     await db.query(`UPDATE users SET profile_bonus_claimed = TRUE WHERE id = $1`, [req.userId]);
-    await db.query(`UPDATE user_stats SET total_points = total_points + 50 WHERE user_id = $1`, [req.userId]);
+    // Bonus al completar perfil: +50 pts + 10 XP directos (vía bonus_xp).
+    // El XP final que ve el usuario = floor(total_points/100) + bonus_xp.
+    await db.query(
+      `UPDATE user_stats SET total_points = total_points + 50, bonus_xp = COALESCE(bonus_xp, 0) + 10 WHERE user_id = $1`,
+      [req.userId]
+    );
     bonusAwarded = true;
   }
   return reply.send({ ok: true, bonusAwarded });
@@ -809,6 +818,46 @@ app.delete('/admin/wipe-users', { preHandler: requireAdmin }, async (req: any, r
   }
 });
 
+/** GET /admin/strava/subscriptions — lista las suscripciones webhook activas
+ *  con Strava (solo puede haber 1 por app). Útil para diagnosticar. */
+app.get('/admin/strava/subscriptions', { preHandler: requireAdmin }, async (_req, reply) => {
+  const url = `https://www.strava.com/api/v3/push_subscriptions?client_id=${STRAVA_CLIENT_ID}&client_secret=${STRAVA_CLIENT_SECRET}`;
+  const res = await fetch(url);
+  const data = await res.json();
+  return reply.send(data);
+});
+
+/** POST /admin/strava/subscribe — registra el webhook con Strava (uno solo
+ *  por app). Llamar UNA VEZ tras desplegar el backend para activar el flujo
+ *  Strava → CORRR auto-import. */
+app.post('/admin/strava/subscribe', { preHandler: requireAdmin }, async (_req, reply) => {
+  const callbackUrl = `${RAILWAY_URL}/strava/webhook`;
+  const form = new URLSearchParams();
+  form.append('client_id', String(STRAVA_CLIENT_ID));
+  form.append('client_secret', String(STRAVA_CLIENT_SECRET));
+  form.append('callback_url', callbackUrl);
+  form.append('verify_token', STRAVA_VERIFY_TOKEN);
+  const res = await fetch('https://www.strava.com/api/v3/push_subscriptions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: form.toString(),
+  });
+  const data = await res.json();
+  if (!res.ok) return reply.status(res.status).send({ error: 'Strava rechazó la suscripción', strava: data });
+  return reply.send({ ok: true, subscription: data, callback: callbackUrl });
+});
+
+/** DELETE /admin/strava/unsubscribe?id=<subscriptionId> — borra una suscripción.
+ *  Útil si necesitas re-suscribir con otro callback URL. */
+app.delete('/admin/strava/unsubscribe', { preHandler: requireAdmin }, async (req: any, reply) => {
+  const { id } = req.query as any;
+  if (!id) return reply.status(400).send({ error: 'id requerido' });
+  const url = `https://www.strava.com/api/v3/push_subscriptions/${id}?client_id=${STRAVA_CLIENT_ID}&client_secret=${STRAVA_CLIENT_SECRET}`;
+  const res = await fetch(url, { method: 'DELETE' });
+  if (!res.ok) return reply.status(res.status).send({ error: 'Fallo al desuscribir', status: res.status });
+  return reply.send({ ok: true });
+});
+
 app.get('/admin/zones', { preHandler: requireAdmin }, async (req: any, reply) => {
   const { rows } = await db.query(
     `SELECT z.id, z.area_km2, z.points, z.center_lat, z.center_lng, z.conquered_at,
@@ -920,6 +969,64 @@ function cellToCoord(x: number, y: number): { lat: number; lng: number } {
     lat: y * CELL_LAT_DEG,
     lng: x * CELL_LNG_DEG,
   };
+}
+
+/** Línea 4-conexa entre dos coordenadas de celda. Mismo algoritmo que el mobile
+ *  (greedy: cada paso es un único movimiento ortogonal hacia el destino). Sirve
+ *  para "puentear" lecturas GPS consecutivas que estén separadas por más de una
+ *  celda — así el rastro queda continuo. */
+function cellLine(x0: number, y0: number, x1: number, y1: number): { x: number; y: number }[] {
+  const cells: { x: number; y: number }[] = [{ x: x0, y: y0 }];
+  let x = x0, y = y0, guard = 0;
+  while ((x !== x1 || y !== y1) && guard++ < 5000) {
+    const remX = x1 - x, remY = y1 - y;
+    if (Math.abs(remX) >= Math.abs(remY) && remX !== 0) x += Math.sign(remX);
+    else if (remY !== 0) y += Math.sign(remY);
+    else if (remX !== 0) x += Math.sign(remX);
+    cells.push({ x, y });
+  }
+  return cells;
+}
+
+/** Flood fill — para cada celda vacía rodeada por celdas claimed (cualquier
+ *  forma), la añade al set. Garantiza "si se cierra, se cierra". */
+function fillEnclosedCells(cellKeys: Set<string>): Set<string> {
+  if (cellKeys.size < 8) return cellKeys;
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  cellKeys.forEach(k => {
+    const ci = k.indexOf(',');
+    const x = parseInt(k.slice(0, ci), 10);
+    const y = parseInt(k.slice(ci + 1), 10);
+    if (x < minX) minX = x;
+    if (x > maxX) maxX = x;
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
+  });
+  minX--; maxX++; minY--; maxY++;
+  if ((maxX - minX) * (maxY - minY) > 2_000_000) return cellKeys; // safety cap
+  const outside = new Set<string>();
+  const stack: [number, number][] = [[minX, minY]];
+  outside.add(`${minX},${minY}`);
+  const dirs: [number, number][] = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+  while (stack.length > 0) {
+    const [x, y] = stack.pop()!;
+    for (const [dx, dy] of dirs) {
+      const nx = x + dx, ny = y + dy;
+      if (nx < minX || nx > maxX || ny < minY || ny > maxY) continue;
+      const nk = `${nx},${ny}`;
+      if (outside.has(nk) || cellKeys.has(nk)) continue;
+      outside.add(nk);
+      stack.push([nx, ny]);
+    }
+  }
+  const result = new Set(cellKeys);
+  for (let y = minY; y <= maxY; y++) {
+    for (let x = minX; x <= maxX; x++) {
+      const k = `${x},${y}`;
+      if (!outside.has(k) && !cellKeys.has(k)) result.add(k);
+    }
+  }
+  return result;
 }
 
 /** Ray-casting point-in-polygon. Devuelve true si (lat,lng) está dentro del polígono. */
@@ -1314,27 +1421,42 @@ app.post('/runs', { preHandler: requireAuth }, async (req: any, reply) => {
   }
 });
 
+/** Lista paginada de las carreras del usuario. `?limit` y `?offset` opcionales
+ *  (defaults: 30 y 0). Devuelve también `total` para que el cliente pueda
+ *  decidir si pedir más. */
 app.get('/runs/my', { preHandler: requireAuth }, async (req: any, reply) => {
-  const { rows } = await db.query(
-    `SELECT id, distance_km, duration_secs, points, zones_count, created_at
-     FROM runs WHERE user_id = $1 ORDER BY created_at DESC LIMIT 20`,
-    [req.userId]
-  );
-  return reply.send(rows);
+  const q = req.query as any;
+  const limit = Math.min(Math.max(parseInt(q.limit ?? '30', 10) || 30, 1), 100);
+  const offset = Math.max(parseInt(q.offset ?? '0', 10) || 0, 0);
+  const [rowsRes, countRes] = await Promise.all([
+    db.query(
+      `SELECT id, distance_km, duration_secs, points, zones_count, created_at
+       FROM runs WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
+      [req.userId, limit, offset]
+    ),
+    db.query(`SELECT COUNT(*)::int AS total FROM runs WHERE user_id = $1`, [req.userId]),
+  ]);
+  return reply.send({ runs: rowsRes.rows, total: countRes.rows[0]?.total ?? 0, limit, offset });
 });
 
 // ── Stats ─────────────────────────────────────────────────────────────────────
 
 app.get('/stats/me', { preHandler: requireAuth }, async (req: any, reply) => {
   const [statsRes, runsRes] = await Promise.all([
-    db.query('SELECT total_zones, total_points, total_km, total_runs FROM user_stats WHERE user_id = $1', [req.userId]),
     db.query(
-      'SELECT id, distance_km, duration_secs, points, zones_count, created_at FROM runs WHERE user_id = $1 ORDER BY created_at DESC LIMIT 10',
+      `SELECT total_zones, total_points, total_km, total_runs, COALESCE(bonus_xp, 0) AS bonus_xp
+       FROM user_stats WHERE user_id = $1`,
+      [req.userId]
+    ),
+    db.query(
+      'SELECT id, distance_km, duration_secs, points, zones_count, created_at FROM runs WHERE user_id = $1 ORDER BY created_at DESC LIMIT 50',
       [req.userId]
     ),
   ]);
-  const stats = statsRes.rows[0] ?? { total_zones: 0, total_points: 0, total_km: 0, total_runs: 0 };
-  return reply.send({ stats, runs: runsRes.rows });
+  const base = statsRes.rows[0] ?? { total_zones: 0, total_points: 0, total_km: 0, total_runs: 0, bonus_xp: 0 };
+  // XP final = puntos/100 (parte entera) + bonus_xp (regalado por completar perfil, etc.)
+  const total_xp = Math.floor((base.total_points || 0) / 100) + (base.bonus_xp || 0);
+  return reply.send({ stats: { ...base, total_xp }, runs: runsRes.rows });
 });
 
 // ── Zones ─────────────────────────────────────────────────────────────────────
@@ -1884,94 +2006,170 @@ async function refreshStravaToken(userId: string): Promise<string | null> {
 }
 
 /** Importa una actividad de Strava como run + zona. */
+/** Strava v2 (v1.9): importa una actividad de Strava como carrera CORRR con el
+ *  modelo grid. Pasos:
+ *   - Decodifica la polyline → coords
+ *   - Mapea cada coord a su celda (5m → 10m grid) y "puente" con cellLine
+ *   - Si el rastro forma un loop (inicio cerca del final), flood fill rellena
+ *     el interior — mismas reglas que las carreras nativas
+ *   - Detecta robos: celdas de rivales que pisas se transfieren
+ *   - Computa puntos con economía v1.7 (10 pts/km + 1 nueva + 2 robada + bonus loop)
+ *   - Envía push al usuario con el resumen (engagement loop)
+ */
 async function importStravaActivity(userId: string, activityId: number, accessToken: string) {
-  // Obtener detalle de la actividad
+  // Detalle de la actividad
   const actRes = await fetch(`https://www.strava.com/api/v3/activities/${activityId}`, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
   const act = await actRes.json() as any;
-
   if (act.type !== 'Run' || !act.map?.summary_polyline) {
     console.log(`[Strava] Actividad ${activityId} ignorada (tipo: ${act.type}, sin polyline)`);
     return;
   }
-
   const coords = decodePolyline(act.map.summary_polyline);
   if (coords.length < 3) return;
 
-  const centerLat = coords.reduce((s: number, c: Coord) => s + c.latitude, 0) / coords.length;
-  const centerLng = coords.reduce((s: number, c: Coord) => s + c.longitude, 0) / coords.length;
   const distKm = (act.distance ?? 0) / 1000;
   const durSecs = act.moving_time ?? act.elapsed_time ?? 0;
-  const pts = Math.max(10, Math.round(distKm * 15));
+
+  // 1) Coords → celdas con puente continuo (line bridge). Igual que mobile.
+  const cellSet = new Set<string>();
+  let prevCell: { x: number; y: number } | null = null;
+  for (const c of coords) {
+    const cell = coordToCell(c.latitude, c.longitude);
+    if (!prevCell) {
+      cellSet.add(`${cell.x},${cell.y}`);
+    } else {
+      for (const bc of cellLine(prevCell.x, prevCell.y, cell.x, cell.y)) {
+        cellSet.add(`${bc.x},${bc.y}`);
+      }
+    }
+    prevCell = cell;
+  }
+
+  // 2) Si el recorrido es un loop (inicio cerca del final, <50m), flood fill
+  //    los interiores. Bridge implícito + flood fill da el mismo resultado que
+  //    una carrera nativa en CORRR.
+  const start = coords[0], end = coords[coords.length - 1];
+  const dx = (end.latitude - start.latitude) * 111000;
+  const dy = (end.longitude - start.longitude) * 111000 * Math.cos(start.latitude * Math.PI / 180);
+  const isLoop = Math.sqrt(dx * dx + dy * dy) < 50;
+  const finalCells = isLoop ? fillEnclosedCells(cellSet) : cellSet;
+
+  const claimedCells = Array.from(finalCells).map(k => {
+    const [xs, ys] = k.split(',');
+    return { x: parseInt(xs, 10), y: parseInt(ys, 10) };
+  });
 
   const client = await db.connect();
   try {
     await client.query('BEGIN');
 
+    // 3) Insertar run placeholder; puntos se actualizan al final
     const { rows: runRows } = await client.query(
       `INSERT INTO runs (user_id, distance_km, duration_secs, points, zones_count, created_at)
-       VALUES ($1,$2,$3,$4,1,$5) RETURNING id`,
-      [userId, distKm, durSecs, pts, act.start_date ?? new Date().toISOString()]
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
+      [userId, distKm, durSecs, 0, isLoop ? 1 : 0, act.start_date ?? new Date().toISOString()]
     );
     const runId = runRows[0].id;
 
-    // Robo automático: buscar zonas rivales solapadas
-    const minLat = Math.min(...coords.map((c: Coord) => c.latitude));
-    const maxLat = Math.max(...coords.map((c: Coord) => c.latitude));
-    const minLng = Math.min(...coords.map((c: Coord) => c.longitude));
-    const maxLng = Math.max(...coords.map((c: Coord) => c.longitude));
+    // 4) Procesar celdas — detectar new vs robos (mismo patrón que POST /runs)
+    let newCellCount = 0;
+    const stolenCells: { x: number; y: number; prevOwnerId: string }[] = [];
+    if (claimedCells.length > 0) {
+      const xs = claimedCells.map(c => c.x);
+      const ys = claimedCells.map(c => c.y);
+      const minX = Math.min(...xs), maxX = Math.max(...xs);
+      const minY = Math.min(...ys), maxY = Math.max(...ys);
+      const { rows: existing } = await client.query(
+        `SELECT cell_x, cell_y, owner_id FROM cells
+         WHERE cell_x BETWEEN $1 AND $2 AND cell_y BETWEEN $3 AND $4`,
+        [minX, maxX, minY, maxY]
+      );
+      const existingMap = new Map<string, string>();
+      for (const e of existing) existingMap.set(`${e.cell_x},${e.cell_y}`, e.owner_id);
 
-    const { rows: candidates } = await client.query(
-      `SELECT z.id, z.owner_id, z.polygon, z.points, z.center_lat, z.center_lng,
-              u.display_name AS owner_name, u.push_token AS owner_push_token
-       FROM zones z JOIN users u ON u.id = z.owner_id
-       WHERE z.owner_id != $1
-         AND z.center_lat BETWEEN $2::float AND $3::float
-         AND z.center_lng BETWEEN $4::float AND $5::float`,
-      [userId, minLat, maxLat, minLng, maxLng]
-    );
+      const robosByPrev = new Map<string, { x: number; y: number }[]>();
+      for (const c of claimedCells) {
+        const prev = existingMap.get(`${c.x},${c.y}`);
+        if (!prev) newCellCount++;
+        else if (prev !== userId) {
+          const list = robosByPrev.get(prev) ?? [];
+          list.push({ x: c.x, y: c.y });
+          robosByPrev.set(prev, list);
+          stolenCells.push({ x: c.x, y: c.y, prevOwnerId: prev });
+        }
+      }
 
-    let stolen = 0;
-    const thiefName = (await client.query('SELECT display_name FROM users WHERE id = $1', [userId])).rows[0]?.display_name ?? 'Alguien';
+      // Upsert batch
+      await client.query(
+        `INSERT INTO cells (cell_x, cell_y, owner_id, run_id)
+         SELECT x, y, $3::uuid, $4::uuid FROM unnest($1::int[], $2::int[]) AS t(x, y)
+         ON CONFLICT (cell_x, cell_y) DO UPDATE
+         SET owner_id = EXCLUDED.owner_id, run_id = EXCLUDED.run_id, claimed_at = NOW()`,
+        [xs, ys, userId, runId]
+      );
 
-    for (const rival of candidates) {
-      if (pointInPolygon(rival.center_lat ?? 0, rival.center_lng ?? 0, coords)) {
-        await client.query('UPDATE zones SET owner_id = $1, run_id = $2 WHERE id = $3', [userId, runId, rival.id]);
+      // Robos: decrement victim total_cells + push notification
+      const thiefName = (await client.query('SELECT display_name FROM users WHERE id = $1', [userId])).rows[0]?.display_name ?? 'Alguien';
+      for (const [prevOwnerId, robosList] of robosByPrev.entries()) {
         await client.query(
-          `UPDATE user_stats SET total_zones = GREATEST(0, total_zones - 1), total_points = GREATEST(0, total_points - $2) WHERE user_id = $1`,
-          [rival.owner_id, rival.points]
+          `UPDATE user_stats SET total_cells = GREATEST(0, total_cells - $2), total_points = GREATEST(0, total_points - $2) WHERE user_id = $1`,
+          [prevOwnerId, robosList.length]
         );
-        stolen++;
-        if (rival.owner_push_token) {
-          sendPushNotification(rival.owner_push_token, '😱 ¡Te han robado una zona!',
-            `${thiefName} ha conquistado una de tus zonas (${rival.points} pts). ¡Sal a recuperarla!`);
+        const { rows: prev } = await client.query(`SELECT push_token FROM users WHERE id = $1`, [prevOwnerId]);
+        await client.query(
+          `INSERT INTO taunts (from_user_id, to_user_id, mode, run_id) VALUES ($1, $2, 'robo_notif', $3)`,
+          [userId, prevOwnerId, runId]
+        );
+        if (prev[0]?.push_token) {
+          sendPushNotification(
+            prev[0].push_token,
+            '😱 ¡Te han robado territorio!',
+            `${thiefName} (vía Strava) te ha quitado ${robosList.length} ${robosList.length === 1 ? 'celda' : 'celdas'}. ¡Sal a recuperarlas!`
+          );
         }
       }
     }
 
-    // Guardar nueva zona
+    // 5) Puntos con economía v1.7
+    const kmPoints = Math.round(distKm * 10);
+    const cellPoints = newCellCount + stolenCells.length * 2;
+    const loopBonus = isLoop ? (distKm >= 3 ? 50 : 25) : 0;
+    const totalPoints = kmPoints + cellPoints + loopBonus;
+
+    // Actualizar run + user_stats
+    await client.query(`UPDATE runs SET points = $1 WHERE id = $2`, [totalPoints, runId]);
     await client.query(
-      `INSERT INTO zones (owner_id, run_id, polygon, area_km2, points, center_lat, center_lng)
-       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-      [userId, runId, JSON.stringify(coords), distKm * 0.05, pts, centerLat, centerLng]
+      `UPDATE user_stats
+       SET total_zones  = total_zones  + $2,
+           total_points = total_points + $3,
+           total_km     = total_km     + $4,
+           total_runs   = total_runs   + 1,
+           total_steals = COALESCE(total_steals, 0) + $5,
+           total_cells  = COALESCE(total_cells,  0) + $6
+       WHERE user_id = $1`,
+      [userId, isLoop ? 1 : 0, totalPoints, distKm, stolenCells.length, newCellCount]
     );
 
-    await client.query(
-      `UPDATE user_stats SET total_zones = total_zones + 1, total_points = total_points + $2, total_km = total_km + $3, total_runs = total_runs + 1 WHERE user_id = $1`,
-      [userId, pts, distKm]
-    );
-
+    await checkAchievements(client, userId);
     await client.query('COMMIT');
-    console.log(`[Strava] Importada actividad ${activityId} para usuario ${userId}: ${distKm.toFixed(1)} km, ${pts} pts, ${stolen} zonas robadas`);
 
-    // Enviar push notification
-    const { rows: userRows } = await db.query('SELECT push_token FROM users WHERE id = $1', [userId]);
-    if (userRows[0]?.push_token) {
-      const msg = stolen > 0
-        ? `Tu carrera de ${distKm.toFixed(1)} km se ha sincronizado. +${pts} pts y ${stolen} zona${stolen > 1 ? 's' : ''} robada${stolen > 1 ? 's' : ''}!`
-        : `Tu carrera de ${distKm.toFixed(1)} km se ha sincronizado. +${pts} pts`;
-      await sendPushNotification(userRows[0].push_token, '🏃 ¡Carrera importada!', msg);
+    console.log(`[Strava v2] ${activityId} → ${userId}: ${distKm.toFixed(1)}km, +${totalPoints}pts (${newCellCount} celdas nuevas, ${stolenCells.length} robadas, loop=${isLoop})`);
+
+    // 6) Push al importador (el ANZUELO de engagement)
+    const { rows: ur } = await db.query('SELECT push_token FROM users WHERE id = $1', [userId]);
+    if (ur[0]?.push_token) {
+      const parts: string[] = [];
+      if (newCellCount > 0) parts.push(`+${newCellCount} celdas`);
+      if (stolenCells.length > 0) parts.push(`${stolenCells.length} robadas 🔥`);
+      if (isLoop) parts.push('loop cerrado');
+      const summary = parts.length > 0 ? parts.join(' · ') : `${distKm.toFixed(1)} km`;
+      sendPushNotification(
+        ur[0].push_token,
+        '🏃 Carrera de Strava importada',
+        `+${totalPoints} pts · ${summary}. ¡Abre CORRR para ver tu territorio!`
+      );
     }
   } catch (err) {
     await client.query('ROLLBACK');

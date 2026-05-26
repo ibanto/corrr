@@ -19,7 +19,8 @@ import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
 import { colors, spacing, radius } from '../theme';
-import { api, MyStats, RunRecord, Achievement } from '../services/api';
+import { api, MyStats, RunRecord, Achievement, ProfileData } from '../services/api';
+import EditProfileScreen from './EditProfileScreen';
 
 interface Props {
   user: { username: string; id: string; city?: string } | null;
@@ -69,6 +70,30 @@ export default function PerfilScreen({ user, onLogout }: Props) {
   const [achievements, setAchievements] = useState<Achievement[]>([]);
   const [pointsModalVisible, setPointsModalVisible] = useState(false);
   const [achievementModalVisible, setAchievementModalVisible] = useState(false);
+  // Perfil ampliado (form de "Editar perfil" v1.9): cargamos el snapshot completo
+  // del backend y se lo pasamos al modal. Tras guardar, refrescamos para que
+  // el banner del bonus desaparezca si se ha reclamado.
+  const [profileData, setProfileData] = useState<ProfileData | null>(null);
+  const [editProfileOpen, setEditProfileOpen] = useState(false);
+
+  const loadProfileData = useCallback(async () => {
+    try {
+      const data = await api.getProfile();
+      setProfileData(data);
+    } catch {}
+  }, []);
+  useEffect(() => { loadProfileData(); }, [loadProfileData]);
+
+  const profileCompletion = (() => {
+    if (!profileData) return 0;
+    const fields = [
+      profileData.first_name, profileData.surname, profileData.war_cry,
+      profileData.shoe_brand, profileData.birth_year, profileData.gender,
+      profileData.usual_distance, profileData.weekly_frequency,
+    ];
+    const filled = fields.filter(f => f != null && f !== '').length;
+    return Math.round((filled / fields.length) * 100);
+  })();
 
   const detectCity = useCallback(async () => {
     try {
@@ -273,100 +298,80 @@ export default function PerfilScreen({ user, onLogout }: Props) {
         </TouchableOpacity>
       </View>
 
-      <View style={styles.statsRow}>
+      {/* Tarjeta "Editar perfil" — banner que invita a completar el perfil.
+          Va ANTES de las stats por petición del usuario. Si está al 100% se
+          muestra como CTA discreto; si falta algo, se enfatiza el bonus. */}
+      <TouchableOpacity
+        style={[
+          styles.editProfileCard,
+          profileCompletion < 100 && profileData && !profileData.profile_bonus_claimed && styles.editProfileCardHighlight,
+        ]}
+        onPress={() => setEditProfileOpen(true)}
+      >
+        <View style={styles.editProfileLeft}>
+          <View style={[styles.editProfileIcon, profileCompletion < 100 && profileData && !profileData.profile_bonus_claimed && { backgroundColor: colors.orange }]}>
+            <Ionicons
+              name={profileCompletion === 100 ? 'person' : 'person-add'}
+              size={20}
+              color={profileCompletion < 100 && profileData && !profileData.profile_bonus_claimed ? '#000' : colors.orange}
+            />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.editProfileTitle}>
+              {profileCompletion === 100 ? 'Editar perfil' : 'Completa tu perfil'}
+            </Text>
+            <Text style={styles.editProfileSub}>
+              {profileData && !profileData.profile_bonus_claimed
+                ? `${profileCompletion}% completado · +50 pts al completarlo`
+                : profileCompletion === 100
+                  ? 'Tu información, grito de guerra, zapatillas y más'
+                  : `${profileCompletion}% completado`}
+            </Text>
+          </View>
+        </View>
+        <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
+      </TouchableOpacity>
+
+      {/* Stats principales — protagonistas del Perfil ahora que Logros y
+          Actividad reciente se han movido a Stats. 2 columnas × 2 filas con
+          tarjetas grandes para que se vean de un vistazo. */}
+      <View style={styles.bigStatsGrid}>
         {[
           { value: String(s?.total_zones ?? 0), label: 'Zonas', icon: 'flag' as const },
           { value: formatKm(s?.total_km ?? 0), label: 'km totales', icon: 'navigate' as const },
           { value: String(s?.total_runs ?? 0), label: 'Carreras', icon: 'walk' as const },
           { value: String(s?.total_points ?? 0), label: 'Puntos', icon: 'flame' as const },
         ].map((item, i) => (
-          <View key={i} style={styles.statItem}>
-            <Ionicons name={item.icon} size={16} color={colors.orange} />
-            <Text style={styles.statValue}>{item.value}</Text>
-            <Text style={styles.statLabel}>{item.label}</Text>
+          <View key={i} style={styles.bigStatCard}>
+            <Ionicons name={item.icon} size={22} color={colors.orange} />
+            <Text style={styles.bigStatValue}>{item.value}</Text>
+            <Text style={styles.bigStatLabel}>{item.label}</Text>
           </View>
         ))}
       </View>
 
-      <View style={styles.section}>
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Logros</Text>
-          <Text style={styles.sectionLink}>{achievements.filter(a => a.unlocked).length}/{achievements.length}</Text>
-        </View>
-        <View style={styles.achievementsRow}>
-          {(achievements.length > 0
-            ? // Show first 4 NOT unlocked, sorted by closest to completion
-              [...achievements]
-                .filter(a => !a.unlocked)
-                .sort((a, b) => (b.progress / b.target) - (a.progress / a.target))
-                .slice(0, 4)
-                .map(a => ({
-                  category: a.category,
-                  label: a.title,
-                  sub: `${Math.round(a.progress)}/${a.target}`,
-                  unlocked: false,
-                  pct: Math.min(100, (a.progress / a.target) * 100),
-                }))
-            : // Fallback while loading
-              [
-                { category: 'distancia' as const, label: 'Primeros pasos', sub: '0/10', unlocked: false, pct: 0 },
-                { category: 'carreras' as const, label: 'Calentamiento', sub: '0/5', unlocked: false, pct: 0 },
-                { category: 'zonas' as const, label: 'Conquistador novato', sub: '0/5', unlocked: false, pct: 0 },
-                { category: 'robos' as const, label: 'Primer robo', sub: '0/1', unlocked: false, pct: 0 },
-              ]
-          ).map((a, i) => (
-            <View key={i} style={styles.achievement}>
-              <View style={styles.achievementIcon}>
-                <Image source={logroImages[a.category] ?? logroImages.distancia} style={{ width: 52, height: 52 }} resizeMode="contain" />
-              </View>
-              <Text style={styles.achievementLabel} numberOfLines={2}>{a.label}</Text>
-              <Text style={styles.achievementSub}>{a.sub}</Text>
-              <View style={styles.achProgress}>
-                <View style={[styles.achProgressFill, { width: `${a.pct}%` }]} />
-              </View>
-            </View>
-          ))}
-        </View>
-      </View>
+      {/* Logros y Actividad reciente eliminados del Perfil — ahora viven en
+          la pestaña Stats. El Perfil se centra en identidad + edición + stats
+          principales bien grandes + integraciones (Strava, premium). */}
 
-      <View style={styles.section}>
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Actividad reciente</Text>
-        </View>
-        {runs.length === 0 ? (
-          <Text style={styles.emptyText}>Aún no tienes carreras. ¡A correr!</Text>
-        ) : runs.map((run, i) => (
-          <View key={run.id ?? i} style={styles.runRow}>
-            <View style={styles.runIcon}>
-              <Ionicons name="walk" size={18} color={colors.orange} />
+      {/* Strava Connect — usa el botón oficial de Strava (brand guidelines obligan
+          a usar este botón exacto en flujos OAuth, no se puede recrear). */}
+      <View style={styles.stravaSection}>
+        <Text style={styles.stravaSectionSub}>Conquista zonas con tus últimas carreras de Strava</Text>
+        <TouchableOpacity onPress={handleConnectStrava} disabled={stravaLoading} activeOpacity={0.85}>
+          {stravaLoading ? (
+            <View style={styles.stravaButtonLoading}>
+              <ActivityIndicator size="small" color="#fff" />
             </View>
-            <View style={styles.runInfo}>
-              <Text style={styles.runPlace}>{run.distance_km.toFixed(2)} km · {run.zones_count} zona{run.zones_count !== 1 ? 's' : ''}</Text>
-              <Text style={styles.runDate}>{formatDate(run.created_at)}</Text>
-            </View>
-            <View style={styles.runStats}>
-              <Text style={styles.runKm}>{run.points} pts</Text>
-              <Text style={styles.runPace}>{formatPace(run.distance_km, run.duration_secs)} /km</Text>
-            </View>
-          </View>
-        ))}
+          ) : (
+            <Image
+              source={require('../../assets/btn_strava_connect_with_orange.png')}
+              style={styles.stravaButton}
+              resizeMode="contain"
+            />
+          )}
+        </TouchableOpacity>
       </View>
-
-      {/* Strava Connect */}
-      <TouchableOpacity style={styles.stravaCard} onPress={handleConnectStrava} disabled={stravaLoading}>
-        <View style={styles.stravaLeft}>
-          <View style={styles.stravaIcon}>
-            <Text style={styles.stravaIconText}>S</Text>
-          </View>
-          <View>
-            <Text style={styles.stravaTitle}>Importar desde Strava</Text>
-            <Text style={styles.stravaSub}>Conquista zonas con tus últimas 5 carreras</Text>
-          </View>
-        </View>
-        {stravaLoading
-          ? <ActivityIndicator size="small" color="#FC4C02" />
-          : <Ionicons name="chevron-forward" size={20} color="#FC4C02" />}
-      </TouchableOpacity>
 
       <View style={styles.premiumCard}>
         <View style={styles.premiumTop}>
@@ -462,6 +467,23 @@ export default function PerfilScreen({ user, onLogout }: Props) {
       </KeyboardAvoidingView>
     </Modal>
 
+    {/* EditProfileScreen — form completo del perfil del corredor (v1.9). Se
+        abre desde la tarjeta "Editar perfil" arriba. Al guardar refrescamos
+        profileData para que el banner del bonus desaparezca al reclamarlo. */}
+    <EditProfileScreen
+      visible={editProfileOpen}
+      initial={profileData}
+      onClose={() => setEditProfileOpen(false)}
+      onSaved={async (bonusAwarded) => {
+        setEditProfileOpen(false);
+        await loadProfileData();
+        if (bonusAwarded) {
+          Alert.alert('🎁 ¡Perfil completo!', 'Has ganado +50 pts por rellenar tu perfil. ¡Sigue corriendo!');
+          loadStats();
+        }
+      }}
+    />
+
     {/* Modal: Cómo funcionan los puntos */}
     <Modal visible={pointsModalVisible} animationType="slide" transparent={false}>
       <View style={styles.infoModalContainer}>
@@ -478,42 +500,84 @@ export default function PerfilScreen({ user, onLogout }: Props) {
               <View style={styles.infoIcon}><Ionicons name="navigate" size={18} color={colors.orange} /></View>
               <View style={styles.infoBody}>
                 <Text style={styles.infoLabel}>Por kilómetro</Text>
-                <Text style={styles.infoDesc}>Ganas puntos por cada km que corras</Text>
+                <Text style={styles.infoDesc}>Ganas puntos por cada km recorrido</Text>
               </View>
-              <Text style={styles.infoValue}>50 pts/km</Text>
+              <Text style={styles.infoValue}>10 pts/km</Text>
             </View>
             <View style={styles.infoDivider} />
             <View style={styles.infoRow}>
-              <View style={styles.infoIcon}><Ionicons name="flag" size={18} color={colors.orange} /></View>
+              <View style={styles.infoIcon}><Ionicons name="grid" size={18} color={colors.orange} /></View>
               <View style={styles.infoBody}>
-                <Text style={styles.infoLabel}>Cerrar zona grande</Text>
-                <Text style={styles.infoDesc}>Cierra un loop de 3 km o más</Text>
+                <Text style={styles.infoLabel}>Celda nueva reclamada</Text>
+                <Text style={styles.infoDesc}>Por cada cuadrado de 5×5m que pisas por primera vez</Text>
               </View>
-              <Text style={styles.infoValue}>100 pts</Text>
-            </View>
-            <View style={styles.infoDivider} />
-            <View style={styles.infoRow}>
-              <View style={styles.infoIcon}><Ionicons name="flag-outline" size={18} color={colors.textSecondary} /></View>
-              <View style={styles.infoBody}>
-                <Text style={styles.infoLabel}>Cerrar zona pequeña</Text>
-                <Text style={styles.infoDesc}>Cierra un loop de menos de 3 km</Text>
-              </View>
-              <Text style={styles.infoValue}>50 pts</Text>
+              <Text style={styles.infoValue}>+1 pt</Text>
             </View>
             <View style={styles.infoDivider} />
             <View style={styles.infoRow}>
               <View style={styles.infoIcon}><Ionicons name="hand-left" size={18} color="#FF3B30" /></View>
               <View style={styles.infoBody}>
-                <Text style={styles.infoLabel}>Robar zona rival</Text>
-                <Text style={styles.infoDesc}>Conquista territorio de otro corredor</Text>
+                <Text style={styles.infoLabel}>Celda robada a rival</Text>
+                <Text style={styles.infoDesc}>Por cada celda de otro corredor que pisas</Text>
+              </View>
+              <Text style={styles.infoValue}>+2 pts</Text>
+            </View>
+            <View style={styles.infoDivider} />
+            <View style={styles.infoRow}>
+              <View style={styles.infoIcon}><Ionicons name="shield-half-outline" size={18} color="#FF3B30" /></View>
+              <View style={styles.infoBody}>
+                <Text style={styles.infoLabel}>Si te roban celdas</Text>
+                <Text style={styles.infoDesc}>Pierdes puntos por cada celda que te quiten</Text>
+              </View>
+              <Text style={styles.infoValue}>−1 pt/celda</Text>
+            </View>
+            <View style={styles.infoDivider} />
+            <View style={styles.infoRow}>
+              <View style={styles.infoIcon}><Ionicons name="flag" size={18} color={colors.orange} /></View>
+              <View style={styles.infoBody}>
+                <Text style={styles.infoLabel}>Cerrar loop ≥ 3 km</Text>
+                <Text style={styles.infoDesc}>Bonus por cerrar una zona grande</Text>
               </View>
               <Text style={styles.infoValue}>+50 pts</Text>
             </View>
             <View style={styles.infoDivider} />
             <View style={styles.infoRow}>
+              <View style={styles.infoIcon}><Ionicons name="flag-outline" size={18} color={colors.textSecondary} /></View>
+              <View style={styles.infoBody}>
+                <Text style={styles.infoLabel}>Cerrar loop {'<'} 3 km</Text>
+                <Text style={styles.infoDesc}>Bonus por cerrar una zona pequeña</Text>
+              </View>
+              <Text style={styles.infoValue}>+25 pts</Text>
+            </View>
+          </View>
+
+          <Text style={styles.achInfoSubtitle}>Multiplicadores</Text>
+          <View style={styles.infoCard}>
+            <View style={styles.infoRow}>
+              <View style={styles.infoIcon}><Ionicons name="flame" size={18} color="#FF9500" /></View>
+              <View style={styles.infoBody}>
+                <Text style={styles.infoLabel}>Racha de 3 días</Text>
+                <Text style={styles.infoDesc}>Corre 3 días seguidos para activar el bonus en la siguiente carrera</Text>
+              </View>
+              <Text style={styles.infoValue}>×1.5</Text>
+            </View>
+            <View style={styles.infoDivider} />
+            <View style={styles.infoRow}>
+              <View style={styles.infoIcon}><Ionicons name="trophy" size={18} color="#FFD700" /></View>
+              <View style={styles.infoBody}>
+                <Text style={styles.infoLabel}>Mejor km/día</Text>
+                <Text style={styles.infoDesc}>Supera tu marca personal de km en un día</Text>
+              </View>
+              <Text style={styles.infoValue}>×1.2 sobre km</Text>
+            </View>
+          </View>
+
+          <Text style={styles.achInfoSubtitle}>Experiencia</Text>
+          <View style={styles.infoCard}>
+            <View style={styles.infoRow}>
               <View style={styles.infoIcon}><Ionicons name="flash" size={18} color="#FFD700" /></View>
               <View style={styles.infoBody}>
-                <Text style={styles.infoLabel}>Experiencia (XP)</Text>
+                <Text style={styles.infoLabel}>XP por puntos</Text>
                 <Text style={styles.infoDesc}>Sube de nivel acumulando puntos</Text>
               </View>
               <Text style={styles.infoValue}>1 XP / 100 pts</Text>
@@ -671,10 +735,60 @@ const styles = StyleSheet.create({
   location: { fontSize: 12, color: colors.textSecondary },
   xpRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 },
   xpText: { fontSize: 13, fontWeight: '700', color: '#FFD700' },
+  editProfileCard: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    marginHorizontal: spacing.md, marginBottom: spacing.md,
+    backgroundColor: colors.bgCard, borderRadius: radius.lg,
+    borderWidth: 1, borderColor: colors.border,
+    paddingVertical: spacing.md, paddingHorizontal: spacing.md,
+  },
+  editProfileCardHighlight: {
+    borderColor: colors.orange,
+    backgroundColor: `${colors.orange}10`,
+  },
+  editProfileLeft: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, flex: 1 },
+  editProfileIcon: {
+    width: 40, height: 40, borderRadius: 20,
+    backgroundColor: colors.bg, alignItems: 'center', justifyContent: 'center',
+    borderWidth: 1, borderColor: colors.border,
+  },
+  editProfileTitle: { fontSize: 15, fontWeight: '800', color: colors.textPrimary },
+  editProfileSub: { fontSize: 12, color: colors.textSecondary, marginTop: 2 },
+  viewAllBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: spacing.xs,
+    paddingVertical: spacing.sm + 2,
+    marginTop: spacing.sm,
+    borderRadius: radius.md,
+    borderWidth: 1, borderColor: colors.border,
+    backgroundColor: colors.bgCard,
+  },
+  viewAllText: { fontSize: 14, fontWeight: '700', color: colors.orange },
   statsRow: {
     flexDirection: 'row', marginHorizontal: spacing.md, backgroundColor: colors.bgCard,
     borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border,
     paddingVertical: spacing.md, marginBottom: spacing.lg,
+  },
+  // Grid 2×2 grande para las stats del Perfil (Zonas / km / Carreras / Puntos).
+  bigStatsGrid: {
+    flexDirection: 'row', flexWrap: 'wrap',
+    marginHorizontal: spacing.md, marginBottom: spacing.lg,
+    gap: spacing.sm,
+  },
+  bigStatCard: {
+    width: '47%', flexGrow: 1,
+    backgroundColor: colors.bgCard,
+    borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border,
+    paddingVertical: spacing.lg, paddingHorizontal: spacing.md,
+    alignItems: 'center', gap: 6,
+  },
+  bigStatValue: {
+    fontSize: 32, fontWeight: '900', color: colors.textPrimary,
+    letterSpacing: -1,
+  },
+  bigStatLabel: {
+    fontSize: 12, fontWeight: '700', color: colors.textSecondary,
+    letterSpacing: 1, textTransform: 'uppercase',
   },
   statItem: { flex: 1, alignItems: 'center' },
   statValue: { fontSize: 18, fontWeight: '800', color: colors.textPrimary },
@@ -741,27 +855,32 @@ const styles = StyleSheet.create({
   runStats: { alignItems: 'flex-end' },
   runKm: { fontSize: 14, fontWeight: '700', color: colors.textPrimary },
   runPace: { fontSize: 12, color: colors.textSecondary },
-  stravaCard: {
+  stravaSection: {
     marginHorizontal: spacing.md,
     marginBottom: spacing.lg,
-    backgroundColor: '#1A0A00',
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    borderColor: '#FC4C0260',
-    paddingVertical: 14,
-    paddingHorizontal: spacing.md,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+    gap: spacing.sm,
+    alignItems: 'flex-start',
   },
-  stravaLeft: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, flex: 1 },
-  stravaIcon: {
-    width: 40, height: 40, borderRadius: 20,
+  stravaSectionSub: {
+    fontSize: 13,
+    color: colors.textSecondary,
+  },
+  // Botón oficial de Strava. Mantenemos la aspect ratio (5.95:1 según el PNG
+  // oficial) para no distorsionar la marca. Alto fijo, ancho lo calcula RN.
+  stravaButton: {
+    height: 48,
+    width: 48 * 5.95,
+    maxWidth: '100%',
+  },
+  stravaButtonLoading: {
+    height: 48,
+    width: 48 * 5.95,
+    maxWidth: '100%',
     backgroundColor: '#FC4C02',
-    alignItems: 'center', justifyContent: 'center',
+    borderRadius: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  stravaIconText: { color: '#fff', fontWeight: '900', fontSize: 20 },
-  stravaTitle: { fontSize: 15, fontWeight: '800', color: colors.textPrimary },
   stravaSub: { fontSize: 12, color: colors.textSecondary, marginTop: 2 },
   premiumCard: {
     marginHorizontal: spacing.md, backgroundColor: '#120A00', borderRadius: radius.lg,
