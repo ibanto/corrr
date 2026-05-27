@@ -282,6 +282,15 @@ const MIN_POINT_DIST_M = 3;      // Ignore points closer than 3m (noise)
 const MAX_POINT_DIST_M = 100;    // Teleport if jump > 100m in a single update
 const TELEPORT_TIME_THRESHOLD = 8; // Only count as teleport if also >8s gap
 const SINUOSITY_THRESHOLD = 1.3; // Buffer path/straight ratio below this = straight line = teleport
+// Si entre dos lecturas GPS consecutivas el line bridge tendría que cruzar más
+// de MAX_BRIDGE_CELLS celdas (≈150m a 10m/celda), asumimos que una de las dos
+// lecturas es un outlier de drift (multipath en zona urbana densa) — NO se
+// claimean las celdas del puente. De lo contrario, el flood fill final
+// envuelve ese segmento recto con el trail real y rellena un polígono
+// fantasma. Ver context.md §4 "Network of Fake Cells".
+// Límite generoso: a 30 km/h (MAX_SPEED) en una ventana de buffer de 15s se
+// recorren ≈125m → 13 celdas. 15 deja margen sin permitir el patrón roto.
+const MAX_BRIDGE_CELLS = 15;
 
 // ── Anti-drift (sentado en una silla) ─────────────────────────────────────
 // Rolling window: si las últimas STATIONARY_WINDOW lecturas caben dentro de
@@ -926,11 +935,17 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
               const cell = coordToCell(newCoord.latitude, newCoord.longitude);
               const prevCell = lastClaimedCellRef.current;
               const bridge = prevCell ? cellLine(prevCell.x, prevCell.y, cell.x, cell.y) : [cell];
-              for (const bc of bridge) {
-                const k = cellKey(bc.x, bc.y);
-                if (!claimedCellsRef.current.has(k)) { claimedCellsRef.current.add(k); addedCellInBuffer = true; }
+              if (bridge.length > MAX_BRIDGE_CELLS) {
+                // Outlier — no claim, rompemos cadena para que la siguiente
+                // lectura empiece limpia y no tienda otro puente largo.
+                lastClaimedCellRef.current = null;
+              } else {
+                for (const bc of bridge) {
+                  const k = cellKey(bc.x, bc.y);
+                  if (!claimedCellsRef.current.has(k)) { claimedCellsRef.current.add(k); addedCellInBuffer = true; }
+                }
+                lastClaimedCellRef.current = cell;
               }
-              lastClaimedCellRef.current = cell;
             }
             if (addedDist > 0) setDistance(d => d + addedDist);
             if (addedCellInBuffer) setClaimedCellsTick(t => t + 1);
@@ -1548,15 +1563,21 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       let addedCell = false;
       const prevCell = lastClaimedCellRef.current;
       const bridge = prevCell ? cellLine(prevCell.x, prevCell.y, cell.x, cell.y) : [cell];
-      for (const bc of bridge) {
-        const k = cellKey(bc.x, bc.y);
-        if (!claimedCellsRef.current.has(k)) {
-          claimedCellsRef.current.add(k);
-          addedCell = true;
+      if (bridge.length > MAX_BRIDGE_CELLS) {
+        // Outlier — no claim, rompemos cadena para que la siguiente lectura
+        // empiece limpia y no tienda otro puente largo.
+        lastClaimedCellRef.current = null;
+      } else {
+        for (const bc of bridge) {
+          const k = cellKey(bc.x, bc.y);
+          if (!claimedCellsRef.current.has(k)) {
+            claimedCellsRef.current.add(k);
+            addedCell = true;
+          }
         }
+        lastClaimedCellRef.current = cell;
+        if (addedCell) setClaimedCellsTick(t => t + 1);
       }
-      lastClaimedCellRef.current = cell;
-      if (addedCell) setClaimedCellsTick(t => t + 1);
 
       if (result.distKm > 0) {
         setDistance(d => d + result.distKm);

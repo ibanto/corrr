@@ -62,6 +62,10 @@ export default function PerfilScreen({ user, onLogout }: Props) {
   const [stats, setStats] = useState<MyStats | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+  // True mientras la foto está subiéndose al backend. Bloqueamos la
+  // navegación con un overlay para que el usuario no cambie de tab y pierda
+  // el state local (PerfilScreen se desmonta al cambiar de tab).
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [profileCity, setProfileCity] = useState(user?.city ?? '');
   const [profileName, setProfileName] = useState(displayName);
   const [editModal, setEditModal] = useState(false);
@@ -147,31 +151,38 @@ export default function PerfilScreen({ user, onLogout }: Props) {
   const handleAvatarResult = async (result: ImagePicker.ImagePickerResult) => {
     if (result.canceled) return;
     const asset = result.assets?.[0];
-    if (!asset) {
-      Alert.alert('Error', 'No se pudo procesar la imagen.');
+    if (!asset?.base64) {
+      Alert.alert('Error', 'No se pudo procesar la imagen. Vuelve a intentarlo.');
       return;
     }
-    // Mostramos PRIMERO la URI local (file:// en Android) — es instantáneo
-    // y sirve aunque la subida al backend falle. El base64 lo usamos solo
-    // para la llamada de updateProfile.
-    if (asset.uri) setAvatarUrl(asset.uri);
-    if (!asset.base64) {
-      Alert.alert('Error', 'La imagen no tiene datos. Vuelve a intentarlo.');
-      return;
-    }
+    // Construir directamente el dataUri base64 (no usamos asset.uri file://
+    // porque ese URI puede invalidarse si el usuario navega o cierra la app
+    // antes de que termine la subida → la foto desaparecería).
     const dataUri = `data:image/jpeg;base64,${asset.base64}`;
+
+    // Mostrar la foto inmediatamente como feedback visual ANTES de subir.
+    setAvatarUrl(dataUri);
+
+    // Bloquear navegación con overlay de "Subiendo foto..." hasta que el
+    // backend confirme. Antes el usuario podía cambiar de tab a mitad de la
+    // subida → PerfilScreen se desmontaba → al volver la foto NO aparecía
+    // (componente remontado con avatarUrl=null y backend con avatar_url=null
+    // porque la subida quedó a medias).
+    setUploadingAvatar(true);
     try {
       await api.updateProfile({ avatarUrl: dataUri });
-      // Una vez confirmado backend, sobreescribimos con la dataUri persistida
-      // (la URI file:// se invalida al reabrir la app; el data URI persiste).
-      setAvatarUrl(dataUri);
+      // Éxito: la foto ya está persistida en backend. avatarUrl ya es el
+      // dataUri (lo seteamos arriba) — no hace falta volver a setearlo.
     } catch (e: any) {
-      // Antes esto era catch {} silencioso → el usuario nunca sabía por qué
-      // no se guardaba la foto. Ahora mostramos el error real.
+      // Si falla, la foto sigue visible localmente pero avisamos para que
+      // el usuario sepa que NO está guardada en el servidor (al cerrar y
+      // reabrir la app no estará).
       Alert.alert(
         'No se pudo guardar la foto',
-        e?.message ?? 'Inténtalo de nuevo con más conexión.',
+        `${e?.message ?? 'Error desconocido'}. La foto se ve aquí pero no se ha guardado. Inténtalo de nuevo con más conexión.`,
       );
+    } finally {
+      setUploadingAvatar(false);
     }
   };
 
@@ -186,11 +197,13 @@ export default function PerfilScreen({ user, onLogout }: Props) {
             return;
           }
           const result = await ImagePicker.launchCameraAsync({
-            allowsEditing: true,
-            aspect: [1, 1],
-            // quality bajado a 0.4 → ~30% menos peso del base64.
-            // Para un avatar de 200×200 px visible es más que de sobra.
-            quality: 0.4,
+            // No usamos allowsEditing porque en Android cada OEM (MIUI,
+            // Samsung, OPPO) abre su propio editor de recorte con UX
+            // inconsistente — en MIUI el botón de confirmar ("CORTAR")
+            // parece un título de sección y el usuario se queda atrapado.
+            // El avatar se renderiza como círculo con resizeMode:'cover',
+            // así que el ratio de la foto da igual visualmente.
+            quality: 0.3,
             base64: true,
           });
           handleAvatarResult(result);
@@ -201,9 +214,8 @@ export default function PerfilScreen({ user, onLogout }: Props) {
         onPress: async () => {
           const result = await ImagePicker.launchImageLibraryAsync({
             mediaTypes: ['images'],
-            allowsEditing: true,
-            aspect: [1, 1],
-            quality: 0.4,
+            // Sin allowsEditing por el mismo motivo que en launchCameraAsync.
+            quality: 0.3,
             base64: true,
           });
           handleAvatarResult(result);
@@ -321,9 +333,9 @@ export default function PerfilScreen({ user, onLogout }: Props) {
             <Text style={styles.xpText}>{Math.floor((s?.total_points ?? 0) / 100)} XP</Text>
           </View>
         </View>
-        <TouchableOpacity onPress={() => { setEditName(profileName); setEditCity(profileCity); setEditModal(true); }}>
-          <Ionicons name="create-outline" size={22} color={colors.textSecondary} />
-        </TouchableOpacity>
+        {/* El antiguo botón "create-outline" para editar name+city quedó
+            redundante con la nueva tarjeta "Editar perfil" debajo (que abre
+            EditProfileScreen con todos los campos). Eliminado. */}
       </View>
 
       {/* Tarjeta "Editar perfil" — banner que invita a completar el perfil.
@@ -728,6 +740,20 @@ export default function PerfilScreen({ user, onLogout }: Props) {
       </View>
     </Modal>
 
+    {/* Overlay de subida de foto. Modal a nivel app que bloquea TODA la
+        interacción (incluida la tab bar) hasta que la subida termina.
+        Necesario porque PerfilScreen se desmonta al cambiar de tab y antes
+        el usuario podía irse a mitad de subida y perder la foto. */}
+    <Modal visible={uploadingAvatar} transparent animationType="fade" statusBarTranslucent>
+      <View style={styles.uploadOverlay}>
+        <View style={styles.uploadCard}>
+          <ActivityIndicator size="large" color={colors.orange} />
+          <Text style={styles.uploadText}>Subiendo foto...</Text>
+          <Text style={styles.uploadSubtext}>No cierres la app</Text>
+        </View>
+      </View>
+    </Modal>
+
     </>
   );
 }
@@ -735,6 +761,35 @@ export default function PerfilScreen({ user, onLogout }: Props) {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
   content: { paddingBottom: 100 },
+  // Overlay para subida de foto. Card centrada con backdrop semitransparente.
+  uploadOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  uploadCard: {
+    backgroundColor: colors.bgCard,
+    borderRadius: radius.lg,
+    paddingVertical: spacing.xl,
+    paddingHorizontal: spacing.xl * 1.5,
+    alignItems: 'center',
+    gap: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    minWidth: 220,
+  },
+  uploadText: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: colors.textPrimary,
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+  },
+  uploadSubtext: {
+    fontSize: 12,
+    color: colors.textSecondary,
+  },
   header: {
     flexDirection: 'row', alignItems: 'flex-start',
     paddingHorizontal: spacing.md, paddingTop: spacing.sm, paddingBottom: spacing.md, gap: spacing.md,

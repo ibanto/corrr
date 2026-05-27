@@ -1984,9 +1984,16 @@ app.post('/auth/strava/register', async (req: any, reply) => {
     return reply.status(400).send({ error: 'Signup token inválido o expirado' });
   }
 
-  // Comprobar que el email no esté ya en uso
+  // Comprobar que el email no esté ya en uso. Si colisiona, el usuario
+  // probablemente tiene cuenta CORRR clásica con ese email — exponemos
+  // `canLink:true` para que el cliente ofrezca el flujo de vinculación
+  // (POST /auth/strava/link) en vez de fallar en seco.
   const { rows: exists } = await db.query('SELECT id FROM users WHERE email = $1', [email]);
-  if (exists.length > 0) return reply.status(409).send({ error: 'Ese email ya está registrado' });
+  if (exists.length > 0) return reply.status(409).send({
+    error: 'Ese email ya está registrado',
+    code: 'EMAIL_EXISTS',
+    canLink: true,
+  });
 
   const ph = await hash(password);
   const verifyToken = secureToken();
@@ -2038,6 +2045,82 @@ app.post('/auth/strava/register', async (req: any, reply) => {
     accessToken,
     user: { id: userId, username: displayName, email, city: city ?? null },
     pendingVerification: true,
+  });
+});
+
+/** POST /auth/strava/link — vincula la cuenta Strava del signupToken a una
+ *  cuenta CORRR existente. Se usa cuando el usuario hace OAuth con Strava
+ *  pero su email ya está registrado clásicamente y elige vincular en vez de
+ *  crear una cuenta nueva. Exige password actual para evitar que cualquiera
+ *  con una cuenta Strava se apropie de cuentas ajenas (Strava no expone email
+ *  vía OAuth → no podemos verificar identidad sin password). */
+app.post('/auth/strava/link', {
+  // Mismo límite que /auth/login — es un endpoint de password.
+  config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
+}, async (req: any, reply) => {
+  const { signupToken, email, password } = req.body as any;
+  if (!signupToken || !email || !password) {
+    return reply.status(400).send({ error: 'Faltan campos requeridos' });
+  }
+  let payload: any;
+  try {
+    const v = await jwtVerify(signupToken, SECRET);
+    payload = v.payload;
+    if (payload.kind !== 'strava-signup') throw new Error('kind');
+  } catch {
+    return reply.status(400).send({ error: 'Token inválido o expirado' });
+  }
+
+  const { rows } = await db.query(
+    'SELECT id, password_hash, display_name, city, email_verified, strava_athlete_id FROM users WHERE email = $1',
+    [email]
+  );
+  if (rows.length === 0) {
+    return reply.status(404).send({ error: 'No existe cuenta con ese email' });
+  }
+  const u = rows[0];
+
+  const valid = await verify(u.password_hash, password);
+  if (!valid) return reply.status(401).send({ error: 'Contraseña incorrecta' });
+
+  // Si la cuenta ya está vinculada a OTRO athleteId, no sobrescribir
+  // silenciosamente — el cambio debe ser explícito (desvincular primero
+  // desde Perfil) para evitar que el usuario pierda el vínculo previo sin
+  // querer.
+  if (u.strava_athlete_id && String(u.strava_athlete_id) !== String(payload.athleteId)) {
+    return reply.status(409).send({
+      error: 'Esta cuenta ya está vinculada a otra cuenta Strava. Desvincúlala primero desde Perfil.',
+    });
+  }
+
+  // Si el athleteId ya está vinculado a OTRA cuenta CORRR, rechazar — un
+  // atleta Strava no puede estar en dos cuentas a la vez.
+  const { rows: athleteCheck } = await db.query(
+    'SELECT id FROM users WHERE strava_athlete_id = $1 AND id <> $2',
+    [payload.athleteId, u.id]
+  );
+  if (athleteCheck.length > 0) {
+    return reply.status(409).send({
+      error: 'Esta cuenta Strava ya está vinculada a otra cuenta CORRR.',
+    });
+  }
+
+  await db.query(
+    `UPDATE users SET strava_athlete_id = $1, strava_access_token = $2,
+       strava_refresh_token = $3, strava_token_expires_at = $4 WHERE id = $5`,
+    [payload.athleteId, payload.accessToken, payload.refreshToken, payload.expiresAt, u.id]
+  );
+
+  // Respetar verificación de email — mismo gating que /auth/login.
+  if (!u.email_verified) {
+    return reply.status(403).send({ error: 'Email no verificado', pendingVerification: true });
+  }
+
+  const accessToken = await new SignJWT({ sub: u.id })
+    .setProtectedHeader({ alg: 'HS256' }).setExpirationTime('7d').sign(SECRET);
+  return reply.send({
+    accessToken,
+    user: { id: u.id, username: u.display_name, email, city: u.city },
   });
 });
 
@@ -2430,8 +2513,8 @@ app.post('/strava/webhook', async (req: any, reply) => {
 // MIN_APP_VERSION) para no tener que hacer redeploy del backend en cada
 // release. Si las env vars no están, se usan los fallbacks hardcodeados —
 // que SÍ hay que mantener sincronizados manualmente con cada subida a Play.
-const LATEST_APP_VERSION = process.env.LATEST_APP_VERSION ?? '1.10.4';
-const LATEST_APP_VC = parseInt(process.env.LATEST_APP_VC ?? '35', 10);
+const LATEST_APP_VERSION = process.env.LATEST_APP_VERSION ?? '1.10.5';
+const LATEST_APP_VC = parseInt(process.env.LATEST_APP_VC ?? '36', 10);
 const MIN_APP_VERSION = process.env.MIN_APP_VERSION ?? '1.0.0';
 
 app.get('/app/version', async (_req: any, reply) => {

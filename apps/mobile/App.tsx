@@ -47,7 +47,7 @@ const TABS: { key: Tab; label: string }[] = [
 ];
 
 const SESSION_KEY = '@corrr_session';
-const CURRENT_VERSION = '1.10.4';
+const CURRENT_VERSION = '1.10.5';
 interface User { id: string; username: string; email: string; city?: string; }
 interface Session { token: string; user: User; }
 

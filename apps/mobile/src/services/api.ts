@@ -432,6 +432,16 @@ class ApiService {
       body: JSON.stringify(data),
     });
   }
+  // Vincula Strava a una cuenta CORRR existente. Se llama cuando
+  // stravaRegister responde 409 con canLink:true (el email ya tenía cuenta).
+  async stravaLink(data: {
+    signupToken: string; email: string; password: string;
+  }): Promise<LoginResponse & { pendingVerification?: boolean }> {
+    return this.request<LoginResponse & { pendingVerification?: boolean }>('/auth/strava/link', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
 
   // Taunts (emote chat after robos)
   async getUnreadTaunts(): Promise<{ taunts: TauntInbox[] }> {

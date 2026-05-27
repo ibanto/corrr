@@ -60,7 +60,7 @@ interface Props {
   onStravaSignupConsumed?: () => void;
 }
 
-type Mode = 'intro' | 'splash' | 'login' | 'register' | 'forgot' | 'verify' | 'strava-signup';
+type Mode = 'intro' | 'splash' | 'login' | 'register' | 'forgot' | 'verify' | 'strava-signup' | 'strava-link';
 
 export default function OnboardingScreen({ onAuthenticated, pendingStravaSignup, onStravaSignupConsumed }: Props) {
   const [mode, setMode] = useState<Mode>('intro');
@@ -250,7 +250,46 @@ export default function OnboardingScreen({ onAuthenticated, pendingStravaSignup,
         onAuthenticated(res.accessToken, res.user);
       }
     } catch (err: any) {
+      // Colisión de email → la cuenta ya existe. Ofrecer vincular con
+      // password en vez de fallar en seco. Backend marca este caso con
+      // canLink:true en el body.
+      if (err?.status === 409 && err?.body?.canLink) {
+        setPassword('');
+        setMode('strava-link');
+        return;
+      }
       Alert.alert('Error', err?.message ?? 'No se pudo completar el registro');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  /** Vincula la cuenta Strava actual (pendingStravaSignup) a una cuenta
+   *  CORRR existente con el mismo email. Se llega aquí cuando el usuario
+   *  intentó stravaRegister y el backend respondió canLink:true. */
+  const handleStravaLink = async () => {
+    if (!pendingStravaSignup) return;
+    if (!email || !password) {
+      Alert.alert('Faltan datos', 'Introduce tu email y contraseña actuales.');
+      return;
+    }
+    setLoading(true);
+    try {
+      const res = await api.stravaLink({
+        signupToken: pendingStravaSignup.signupToken,
+        email, password,
+      });
+      onStravaSignupConsumed?.();
+      if (res.pendingVerification) {
+        setResendDone(false);
+        setMode('verify');
+      } else if (res.accessToken && res.user) {
+        api.setToken(res.accessToken);
+        api.setUserId(res.user.id);
+        onAuthenticated(res.accessToken, res.user);
+      }
+    } catch (err: any) {
+      Alert.alert('Error', err?.message ?? 'No se pudo vincular Strava');
     } finally {
       setLoading(false);
     }
@@ -391,19 +430,22 @@ export default function OnboardingScreen({ onAuthenticated, pendingStravaSignup,
             {mode === 'forgot' ? 'Recuperar contraseña'
               : mode === 'login' ? 'Iniciar sesión'
               : mode === 'strava-signup' ? 'Completa tu registro'
+              : mode === 'strava-link' ? 'Vincular con Strava'
               : 'Crear cuenta'}
           </Text>
           <Text style={styles.authSubtitle}>
             {mode === 'forgot' ? 'Te enviaremos un enlace para restablecer tu contraseña'
               : mode === 'login' ? 'Bienvenido de vuelta, corredor'
               : mode === 'strava-signup' ? 'Solo añade email y contraseña — el resto lo trajimos de Strava'
+              : mode === 'strava-link' ? 'Ya tienes cuenta CORRR con este email. Introduce tu contraseña para conectar Strava.'
               : 'Únete a miles de corredores en España'}
           </Text>
         </View>
 
-        {/* Banner Strava — solo visible en modo strava-signup, muestra qué datos
-            llegaron prefilled del OAuth para que el usuario se sienta confirmado. */}
-        {mode === 'strava-signup' && pendingStravaSignup && (
+        {/* Banner Strava — visible tanto en signup nuevo como en link a cuenta
+            existente. Confirma al usuario que el OAuth con Strava ha ido bien
+            antes de pedirle credenciales CORRR. */}
+        {(mode === 'strava-signup' || mode === 'strava-link') && pendingStravaSignup && (
           <View style={styles.stravaPrefillBanner}>
             {pendingStravaSignup.prefill.avatarUrl && (
               <Image source={{ uri: pendingStravaSignup.prefill.avatarUrl }} style={styles.stravaPrefillAvatar} />
@@ -463,13 +505,14 @@ export default function OnboardingScreen({ onAuthenticated, pendingStravaSignup,
           <View style={styles.inputGroup}>
             <Text style={styles.inputLabel}>Email</Text>
             <TextInput
-              style={styles.input}
+              style={[styles.input, mode === 'strava-link' && { opacity: 0.6 }]}
               placeholder="tu@email.com"
               placeholderTextColor={colors.textMuted}
               value={email}
               onChangeText={setEmail}
               keyboardType="email-address"
               autoCapitalize="none"
+              editable={mode !== 'strava-link'}
             />
           </View>
           {mode !== 'forgot' && (
@@ -500,6 +543,12 @@ export default function OnboardingScreen({ onAuthenticated, pendingStravaSignup,
             <TouchableOpacity style={[styles.btnPrimary, { marginTop: spacing.lg }]} onPress={handleStravaRegister} disabled={loading}>
               {loading ? <ActivityIndicator color="#fff" /> : (
                 <Text style={styles.btnPrimaryText}>Crear cuenta con Strava →</Text>
+              )}
+            </TouchableOpacity>
+          ) : mode === 'strava-link' ? (
+            <TouchableOpacity style={[styles.btnPrimary, { marginTop: spacing.lg }]} onPress={handleStravaLink} disabled={loading}>
+              {loading ? <ActivityIndicator color="#fff" /> : (
+                <Text style={styles.btnPrimaryText}>Vincular Strava →</Text>
               )}
             </TouchableOpacity>
           ) : (
@@ -533,12 +582,20 @@ export default function OnboardingScreen({ onAuthenticated, pendingStravaSignup,
             </View>
           )}
 
-          {mode !== 'strava-signup' && (
+          {mode !== 'strava-signup' && mode !== 'strava-link' && (
             <TouchableOpacity onPress={() => setMode(mode === 'forgot' ? 'login' : mode === 'login' ? 'register' : 'login')} style={styles.switchMode}>
               <Text style={styles.switchModeText}>
                 {mode === 'forgot' ? 'Volver a iniciar sesión'
                   : mode === 'login' ? '¿No tienes cuenta? Regístrate' : '¿Ya tienes cuenta? Inicia sesión'}
               </Text>
+            </TouchableOpacity>
+          )}
+
+          {/* En strava-link: dar salida al usuario que decide no vincular y
+              prefiere crear cuenta con otro email. Vuelve al form de signup. */}
+          {mode === 'strava-link' && (
+            <TouchableOpacity onPress={() => { setPassword(''); setMode('strava-signup'); }} style={styles.switchMode}>
+              <Text style={styles.switchModeText}>Usar otro email</Text>
             </TouchableOpacity>
           )}
         </View>
