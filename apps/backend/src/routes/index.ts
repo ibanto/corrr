@@ -803,18 +803,25 @@ app.get('/achievements', { preHandler: requireAuth }, async (req: any, reply) =>
 
 // ── Admin: Challenges CRUD ──────────────────────────────────────────────────
 
-// ADMIN_KEY: antes había fallback `'corrr-admin-2024'` hardcodeado en el
-// código — cualquiera con acceso al repo podía llamar /admin/* si no había
-// env var. Ahora exigimos que esté definida (fail si missing), pero si es
-// corta solo avisamos (no romper deploys con valores existentes cortos).
-if (!process.env.ADMIN_KEY) {
-  console.error('[FATAL] ADMIN_KEY missing. Set it in Railway env vars.');
-  process.exit(1);
+// ADMIN_KEY: antes había fallback `'corrr-admin-2024'` hardcodeado — cualquiera
+// con acceso al repo podía llamar /admin/* si la env var no estaba puesta.
+// Ahora:
+//   - Si la env var está → se usa esa.
+//   - Si no está → generamos un random de 64 chars EN MEMORIA al arrancar.
+//     Los admin endpoints quedan inaccesibles hasta que el operador ponga
+//     ADMIN_KEY en Railway, pero el server arranca normalmente (evitamos
+//     romper la API de los usuarios por una env var de admin mal puesta).
+let ADMIN_KEY: string;
+if (process.env.ADMIN_KEY) {
+  ADMIN_KEY = process.env.ADMIN_KEY;
+  if (ADMIN_KEY.length < 16) {
+    console.warn('[WARN] ADMIN_KEY shorter than 16 chars. Considera rotar a 16+ chars.');
+  }
+} else {
+  ADMIN_KEY = randomBytes(32).toString('hex');
+  console.warn('[WARN] ADMIN_KEY missing — generado uno aleatorio en memoria.');
+  console.warn('[WARN] /admin/* endpoints inaccesibles hasta que se defina la env var.');
 }
-if (process.env.ADMIN_KEY.length < 16) {
-  console.warn('[WARN] ADMIN_KEY is shorter than 16 chars. Consider rotating to a 16+ char random value.');
-}
-const ADMIN_KEY = process.env.ADMIN_KEY;
 
 const requireAdmin = async (req: any, reply: any) => {
   const key = req.headers['x-admin-key'] || (req.query as any)?.key;
