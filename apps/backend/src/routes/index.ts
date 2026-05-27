@@ -25,7 +25,13 @@ dotenv.config();
 // avatares como data URI base64 (una foto de móvil pesa ~150-500KB y base64
 // añade ~33% encima). Subimos a 10MB para que quepan fotos sin compresión
 // agresiva.
-const app = Fastify({ logger: true, bodyLimit: 10 * 1024 * 1024 });
+//
+// trustProxy es CLAVE detrás de Railway: sin esto, req.ip devuelve la IP del
+// proxy de Railway (la misma para TODOS los clientes) → el rate-limit global
+// de 200/min se quemaba entre varios usuarios y caían en cascada. Con
+// trustProxy: true, Fastify lee X-Forwarded-For y obtiene la IP real del
+// móvil del usuario. Cada usuario tiene su propia cuota.
+const app = Fastify({ logger: true, bodyLimit: 10 * 1024 * 1024, trustProxy: true });
 
 const STRAVA_CLIENT_ID     = process.env.STRAVA_CLIENT_ID;
 const STRAVA_CLIENT_SECRET = process.env.STRAVA_CLIENT_SECRET;
@@ -59,7 +65,11 @@ app.register(cors, { origin: '*' });
 // propio config en el `preHandler`.
 app.register(rateLimit, {
   global: true,
-  max: 200,
+  // 500/min por IP global — un cliente al arrancar la app hace ~10 requests
+  // (zonas, celdas, perfil, stats, taunts, achievements, friends, etc) +
+  // saveRun + recargas tras carrera. 500/min deja margen amplio sin perder
+  // protección contra scripts abusivos.
+  max: 500,
   timeWindow: '1 minute',
   errorResponseBuilder: (_req, ctx) => ({
     error: 'Demasiadas peticiones, prueba en unos segundos',
