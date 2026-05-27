@@ -3,10 +3,15 @@ import * as Device from 'expo-device';
 import { Platform } from 'react-native';
 import { api } from './api';
 
-// Configurar cómo se muestran las notificaciones cuando la app está abierta
+// Configurar cómo se muestran las notificaciones cuando la app está abierta.
+// expo-notifications SDK 52+ deprecó `shouldShowAlert` en favor de
+// `shouldShowBanner` + `shouldShowList` — sin esto, las push notifs llegan al
+// dispositivo pero no se ven cuando el usuario tiene CORRR en foreground.
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
-    shouldShowAlert: true,
+    shouldShowAlert: true,    // legacy, ignorado en SDK 52+
+    shouldShowBanner: true,
+    shouldShowList: true,
     shouldPlaySound: true,
     shouldSetBadge: false,
   }),

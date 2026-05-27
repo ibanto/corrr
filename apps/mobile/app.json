@@ -2,6 +2,7 @@
   "expo": {
     "name": "CORRR",
     "slug": "mobile",
+    "scheme": "corrr",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -52,7 +53,9 @@
         "expo-location",
         {
           "locationAlwaysAndWhenInUsePermission": "CORRR necesita tu ubicación para rastrear tu carrera y conquistar territorios.",
-          "locationWhenInUsePermission": "CORRR necesita tu ubicación para rastrear tu carrera y conquistar territorios."
+          "locationWhenInUsePermission": "CORRR necesita tu ubicación para rastrear tu carrera y conquistar territorios.",
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
         }
       ],
       [

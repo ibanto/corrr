@@ -24,6 +24,7 @@ import { colors, spacing, radius } from '../theme';
 import { api, RemoteZone, RemoteCell, TauntInbox } from '../services/api';
 import ZonePopup, { PopupType } from '../components/ZonePopup';
 import TauntSelector, { getTauntFullImage } from '../components/TauntSelector';
+import LoadingScreen from '../components/LoadingScreen';
 
 /** Helper that picks the right taunt image for inbox display. The mode 'taunt'
  *  in our taunts table corresponds to the message set (1-10), 'response' to the
@@ -274,13 +275,48 @@ function unionCellsToPolygons(cells: { x: number; y: number }[]): UnionedPolygon
 
 // ── GPS Filtering (Strava-grade) ──────────────────────────────────────────
 const MAX_SPEED_KMH = 30;        // Anti-cheat: max speed allowed
-const MAX_ACCURACY_M = 25;       // Ignore GPS points with accuracy worse than 25m
-const WARMUP_ACCURACY_M = 15;    // First 5 points need accuracy < 15m (GPS warming up)
+const MAX_ACCURACY_M = 18;       // Ignore GPS points with accuracy worse than 18m
+const WARMUP_ACCURACY_M = 12;    // First 5 points need accuracy < 12m (GPS warming up)
 const WARMUP_POINTS = 5;         // Number of initial points with strict accuracy
 const MIN_POINT_DIST_M = 3;      // Ignore points closer than 3m (noise)
 const MAX_POINT_DIST_M = 100;    // Teleport if jump > 100m in a single update
 const TELEPORT_TIME_THRESHOLD = 8; // Only count as teleport if also >8s gap
 const SINUOSITY_THRESHOLD = 1.3; // Buffer path/straight ratio below this = straight line = teleport
+
+// ── Anti-drift (sentado en una silla) ─────────────────────────────────────
+// Rolling window: si las últimas STATIONARY_WINDOW lecturas caben dentro de
+// un círculo de STATIONARY_RADIUS_M, asumimos que el usuario está quieto y
+// el GPS está bailando. No claimemos celdas ni acumulamos distancia.
+// Caminante a 4 km/h en 18s recorre ~20m → fuera del círculo → OK.
+// Sentado con drift de 5-10m → dentro del círculo → bloqueado.
+// 6 puntos (≈18s) en lugar de 8 → detector arranca antes y el usuario no
+// tiene tiempo de ver 15 km/h por un spike de drift.
+const STATIONARY_WINDOW = 6;
+const STATIONARY_RADIUS_M = 15;
+
+/** ¿Las últimas N coordenadas caen todas dentro de un círculo de radius m?
+ *  Si sí, el usuario está parado y el GPS está bailando — no movimiento real.
+ *  Calcula bounding box (suficiente como aproximación al círculo envolvente
+ *  para nuestros radios pequeños). Necesita al menos STATIONARY_WINDOW puntos
+ *  para activarse — durante el "warmup" del run no bloquea. */
+function isStationary(coords: Coord[]): boolean {
+  if (coords.length < STATIONARY_WINDOW) return false;
+  const recent = coords.slice(-STATIONARY_WINDOW);
+  let minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity;
+  for (const p of recent) {
+    if (p.latitude < minLat) minLat = p.latitude;
+    if (p.latitude > maxLat) maxLat = p.latitude;
+    if (p.longitude < minLng) minLng = p.longitude;
+    if (p.longitude > maxLng) maxLng = p.longitude;
+  }
+  // Convertir delta lat/lng a metros (aproximación local plana).
+  const latM = (maxLat - minLat) * 111000;
+  const midLat = (minLat + maxLat) / 2;
+  const lngM = (maxLng - minLng) * 111000 * Math.cos(midLat * Math.PI / 180);
+  // Diagonal del bounding box ≈ diámetro del círculo envolvente.
+  const diag = Math.sqrt(latM * latM + lngM * lngM);
+  return diag < STATIONARY_RADIUS_M * 2;
+}
 
 const MAP_STYLE = [
   { elementType: 'geometry', stylers: [{ color: '#1a1a2e' }] },
@@ -295,28 +331,24 @@ const MAP_STYLE = [
   { featureType: 'landscape', elementType: 'geometry', stylers: [{ color: '#16213e' }] },
 ];
 
-// 10 colores para rivales — distintos entre sí y del naranja (tuyo)
-const RIVAL_COLORS = [
-  '#3B82F6', // azul
-  '#8B5CF6', // violeta
-  '#EC4899', // rosa
-  '#14B8A6', // turquesa
-  '#EF4444', // rojo
-  '#22C55E', // verde
-  '#F59E0B', // ámbar
-  '#06B6D4', // cyan
-  '#A855F7', // púrpura
-  '#64748B', // gris azulado
-];
-
-function getRivalColor(ownerName: string): string {
-  // Hash simple del nombre para asignar color consistente
+/** Color del rival generado vía HSL para garantizar diversidad. El espacio
+ *  HSL nos da infinitos tonos distintos en vez de chocar con un palette
+ *  de 10 colores fijos. Pasamos `owner_id` (UUID) como seed cuando esté
+ *  disponible — más único que el display_name y estable entre sesiones.
+ *
+ *  - Saturación 70%, luminosidad 55% → siempre se ve bien sobre el mapa oscuro
+ *  - Saltamos el rango 0-50° (rojo-naranja) para no chocar con TU naranja (#FF6600 ≈ 24°)
+ *  - Resultado: dos rivales distintos casi nunca tienen el mismo color. */
+function getRivalColor(seed: string): string {
+  if (!seed) return 'hsl(220, 70%, 55%)'; // azul fallback
   let hash = 0;
-  for (let i = 0; i < (ownerName || '').length; i++) {
-    hash = ((hash << 5) - hash) + ownerName.charCodeAt(i);
+  for (let i = 0; i < seed.length; i++) {
+    hash = ((hash << 5) - hash) + seed.charCodeAt(i);
     hash |= 0;
   }
-  return RIVAL_COLORS[Math.abs(hash) % RIVAL_COLORS.length];
+  // Hue en [50, 360) — salta el rojo-naranja del usuario propio.
+  const hue = 50 + (Math.abs(hash) % 310);
+  return `hsl(${hue}, 70%, 55%)`;
 }
 
 interface Coord { latitude: number; longitude: number; }
@@ -640,6 +672,18 @@ function filterGpsPoint(
   speed: number,
   pointCount: number = 999, // how many good points we already have (for warmup)
 ): { action: 'accept' | 'skip' | 'teleport'; distKm: number; speedKmh: number } {
+  // Filter 0: sanity — coords inválidas (NaN/Infinity) o fuera del planeta.
+  // Sin esto, un punto GPS corrupto se propaga a coordToCell → cells con
+  // keys "NaN,NaN" y polígonos rotos. Pasa muy de tarde en tarde con
+  // ciertos chips GPS al perder fix.
+  if (
+    !Number.isFinite(newCoord.latitude) ||
+    !Number.isFinite(newCoord.longitude) ||
+    Math.abs(newCoord.latitude) > 90 ||
+    Math.abs(newCoord.longitude) > 180
+  ) {
+    return { action: 'skip', distKm: 0, speedKmh: 0 };
+  }
   // Filter 1: accuracy — stricter during warmup (first N points)
   const maxAcc = pointCount < WARMUP_POINTS ? WARMUP_ACCURACY_M : MAX_ACCURACY_M;
   if (accuracy > maxAcc) {
@@ -726,6 +770,14 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
   const [conqueredZones, setConqueredZones] = useState<ConqueredZone[]>([]);
   const [totalPoints, setTotalPoints] = useState(0);
   const [totalXP, setTotalXP] = useState(0);
+  // Celdas robadas a rivales en total (vida del usuario). Usado para el
+  // desbloqueo progresivo de taunts: cada 10 robos desbloquea el siguiente
+  // mensaje y la siguiente respuesta. Se refresca tras cada saveRun.
+  const [totalSteals, setTotalSteals] = useState(0);
+  // True mientras saveRun + loadCells están en vuelo después de pulsar STOP.
+  // Mostramos LoadingScreen para que el usuario sienta que algo está pasando
+  // entre pulsar STOP y aparecer el resumen.
+  const [savingRun, setSavingRun] = useState(false);
   const [runSummary, setRunSummary] = useState<{
     visible: boolean; distance: number; time: number; points: number; xp: number; zones: number;
   } | null>(null);
@@ -739,6 +791,10 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
   // Last cell claimed — used to bridge a continuous line of cells to the next
   // one (Bresenham-style), so GPS skips don't leave holes in the trail.
   const lastClaimedCellRef = useRef<{ x: number; y: number } | null>(null);
+  // Rolling window de las últimas N coordenadas aceptadas, para detector de
+  // "estás en realidad quieto". Si todas caen dentro de un círculo pequeño
+  // → GPS drift, no real movement → no claim cells. Ver STATIONARY_*.
+  const recentCoordsRef = useRef<Coord[]>([]);
   const [remoteCells, setRemoteCells] = useState<RemoteCell[]>([]);
   const [selectedZone, setSelectedZone] = useState<RemoteZone | null>(null);
   const [userXP, setUserXP] = useState(0);
@@ -902,25 +958,11 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     return () => sub.remove();
   }, []);
 
-  // Animación para la pantalla de carga
-  const pulseAnim = useRef(new Animated.Value(0.8)).current;
-  const rotateAnim = useRef(new Animated.Value(0)).current;
-
-  useEffect(() => {
-    if (!mapLoading) return;
-    const pulse = Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulseAnim, { toValue: 1.1, duration: 800, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
-        Animated.timing(pulseAnim, { toValue: 0.8, duration: 800, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
-      ])
-    );
-    const rotate = Animated.loop(
-      Animated.timing(rotateAnim, { toValue: 1, duration: 3000, easing: Easing.linear, useNativeDriver: true })
-    );
-    pulse.start();
-    rotate.start();
-    return () => { pulse.stop(); rotate.stop(); };
-  }, [mapLoading]);
+  // Las animaciones del antiguo loading screen (pulseAnim + rotateAnim)
+  // se eliminaron al reemplazar el spinner inline por el componente
+  // <LoadingScreen />. Éste tiene su propia Animated.Value interna del aro
+  // que gira, así que los Animated.loop de aquí eran código muerto
+  // gastando ciclos sin renderizar nada.
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   // Wall-clock-based timer state: setInterval misses ticks when the JS thread is
@@ -1003,6 +1045,10 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         // Fallback al cálculo antiguo si el backend no lo manda todavía.
         setUserXP(data.stats.total_xp ?? Math.floor(data.stats.total_points / 100));
       }
+      // total_steals viene del backend (campo añadido para desbloqueo de
+      // taunts). Si una build vieja del backend no lo manda, defaulteamos a 0
+      // y el usuario empieza con solo el primer mensaje desbloqueado.
+      setTotalSteals(data?.stats?.total_steals ?? 0);
     } catch {}
   };
 
@@ -1360,6 +1406,11 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     setConqueredZones([]);
     claimedCellsRef.current = new Set();
     lastClaimedCellRef.current = null;
+    // Reset del rolling window del detector anti-drift. Si no lo limpiamos,
+    // los puntos de la carrera ANTERIOR quedaban en el buffer y podían
+    // distorsionar la detección de "estás quieto" en los primeros segundos
+    // de la nueva carrera.
+    recentCoordsRef.current = [];
     setClaimedCellsTick(t => t + 1);
     setSplits([]);
     splitsTrackingRef.current = { lastKm: 0, lastTime: 0 };
@@ -1476,6 +1527,19 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         lastMovementTime.current = Date.now();
       }
 
+      // Anti-drift: actualizamos rolling window y chequeamos si el usuario
+      // está realmente quieto (todas las últimas lecturas dentro de 15m).
+      // Si lo está, NO claimemos celdas, NO sumamos distancia, NO refrescamos
+      // lastMovementTime → el auto-pause acabará disparándose a los 20s.
+      // El punto se descarta por completo, ni siquiera entra en pathRef.
+      recentCoordsRef.current.push(newCoord);
+      if (recentCoordsRef.current.length > STATIONARY_WINDOW * 2) {
+        recentCoordsRef.current.shift();
+      }
+      if (isStationary(recentCoordsRef.current)) {
+        return;
+      }
+
       // Grid (v2): claim the cell this point falls in, plus every cell on the
       // line from the previous one (line bridge) — keeps the trail continuous
       // even when the GPS skips cells. The Set lives in a ref so updates don't
@@ -1498,8 +1562,13 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         setDistance(d => d + result.distKm);
         lastMovementTime.current = Date.now(); // Runner is moving
       }
-      if (result.speedKmh > 0) {
-        setCurrentSpeed(result.speedKmh);
+      // Velocidad con EMA (exponential moving average) en vez de mostrar el
+      // valor instantáneo. Antes, un spike de drift (p.ej. 5m de drift en 1s
+      // = 18 km/h) se veía tal cual durante 1s — confuso. Con alpha=0.3 el
+      // display se va suavizando hacia el nuevo valor y un spike aislado
+      // apenas mueve la aguja. En caminata sostenida converge en 5-6 puntos.
+      if (result.speedKmh >= 0) {
+        setCurrentSpeed(prev => prev * 0.7 + result.speedKmh * 0.3);
       }
       setSpeedWarning(false);
 
@@ -1615,11 +1684,15 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
   };
 
   const stopRun = async () => {
+    // Guard de idempotencia: si stopRun ya se está ejecutando, ignoramos
+    // taps adicionales. Sin esto, un doble tap rápido en STOP llamaba a
+    // api.saveRun() dos veces y la carrera contaba doble en stats.
+    if (!isRunningRef.current) return;
+    isRunningRef.current = false;
     setIsRunning(false);
     setIsPaused(false);
     isAutoPausedRef.current = false;
     setIsAutoPaused(false);
-    isRunningRef.current = false;
     // Freeze the final time before clearing the timer refs.
     setRunTime(computeRunTime());
     runStartTimeRef.current = null;
@@ -1627,8 +1700,11 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     pausedAccumulatedRef.current = 0;
     if (autoPauseTimer.current) { clearInterval(autoPauseTimer.current); autoPauseTimer.current = null; }
     deactivateScreenAwake();
-    if (timerRef.current) clearInterval(timerRef.current);
-    if (locationRef.current) locationRef.current.remove();
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    // Limpiar también la ref del watcher para que si se reentra (bug futuro),
+    // no intentemos remover un subscription ya cerrado. Antes solo se llamaba
+    // .remove() pero la ref quedaba colgando.
+    if (locationRef.current) { locationRef.current.remove(); locationRef.current = null; }
     // Parar background task si estaba activo
     try {
       const isTask = await TaskManager.isTaskRegisteredAsync(BACKGROUND_LOCATION_TASK);
@@ -1674,12 +1750,17 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
 
     const zonesCount = conqueredZones.filter(z => z.area > 0).length;
 
-    // Anti-noise + anti-cheat: a run only counts if the runner actually moved.
-    // 3 cells of 5m ≈ 15m of real movement — the user can't reach that by just
-    // standing still with GPS drift. Anything shorter is discarded silently
-    // (we still surface a brief warning so they know nothing got saved).
-    const MIN_CELLS_FOR_VALID_RUN = 3;
-    const isValidRun = cellCount >= MIN_CELLS_FOR_VALID_RUN;
+    // Anti-noise + anti-cheat: una carrera solo cuenta si el corredor se ha
+    // movido de verdad. Doble criterio (deben cumplirse AMBOS):
+    //   1. ≥ 5 celdas (antes 3, pero 3 las podía dar GPS drift al sentarse).
+    //   2. ≥ 50m de distancia acumulada (drift suma típicamente <20m en una
+    //      sesión de 1-2 min; un caminante real cubre 50m en ~40s).
+    // Si falla cualquiera de los dos, descartamos la carrera y avisamos.
+    const MIN_CELLS_FOR_VALID_RUN = 5;
+    const MIN_DISTANCE_KM_FOR_VALID_RUN = 0.05; // 50m
+    const isValidRun =
+      cellCount >= MIN_CELLS_FOR_VALID_RUN &&
+      distance >= MIN_DISTANCE_KM_FOR_VALID_RUN;
 
     if (isValidRun) {
       const closedZones = conqueredZones.filter(z => z.area > 0);
@@ -1690,6 +1771,9 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         const [xs, ys] = k.split(',');
         claimedCells.push({ x: parseInt(xs, 10), y: parseInt(ys, 10) });
       });
+      // Activamos el LoadingScreen mientras la carrera se guarda y los cells
+      // se recargan. Se desactiva en finally para cubrir éxito y error.
+      setSavingRun(true);
       api.saveRun({
         distanceKm: distance,
         durationSecs: runTime,
@@ -1708,14 +1792,31 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         await loadCells();
         claimedCellsRef.current = new Set();
         setClaimedCellsTick(t => t + 1);
-        // Override the summary modal's points with the authoritative value the
-        // server computed (includes streak / PB multipliers, exact new vs stolen
-        // cell points). The modal was opened earlier with the client estimate.
-        if (typeof res.points === 'number') {
-          const authXP = Math.floor(res.points / 100);
-          setRunSummary(prev => prev ? { ...prev, points: res.points!, xp: authXP } : prev);
-          setTotalXP(authXP);
-        }
+        // Refrescar total_steals para que el desbloqueo de taunts se aplique
+        // inmediatamente si el usuario ha cruzado un múltiplo de 10 en esta
+        // carrera. Re-lee también XP, que sobreescribimos abajo si vino auth.
+        loadUserXP();
+        // Crear el resumen con valores AUTORITATIVOS del backend si están
+        // disponibles. Antes teníamos un patrón setRunSummary(prev => ...)
+        // que era no-op porque runSummary todavía era null (se seteaí en
+        // .finally), así que los puntos del backend nunca llegaban al modal.
+        const authPoints = typeof res.points === 'number' ? res.points : finalPoints;
+        const authXP = typeof res.points === 'number'
+          ? Math.floor(res.points / 100)
+          : earnedXP;
+        // Apagamos LoadingScreen y mostramos resumen en el MISMO render para
+        // que React 18 los batchee en una sola transición visual (sin que el
+        // resumen "pestañee" sobre el loading).
+        setSavingRun(false);
+        setRunSummary({
+          visible: true,
+          distance,
+          time: runTime,
+          points: authPoints,
+          xp: authXP,
+          zones: zonesCount,
+        });
+        setTotalXP(authXP);
         // Show the "ZONA ROBADA" popup for either system: polygon zones (v1.5)
         // or grid cells (v1.6+). Most runs from v1.6+ will only have stolenCells.
         const hasStolen = (res.stolenZones && res.stolenZones.length > 0) ||
@@ -1729,16 +1830,19 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
               stolenPoints += sz.points || 0;
             }
           }
-          let cellCount = 0;
+          // Cuenta de celdas robadas en este popup — variable local, no
+          // confundir con cellCount del scope exterior (que es el total de
+          // celdas claimed en la carrera).
+          let stolenCellCount = 0;
           if (res.stolenCells) {
             for (const sc of res.stolenCells) {
               if (sc.prevOwnerName) names.add(sc.prevOwnerName);
-              cellCount++;
+              stolenCellCount++;
             }
           }
-          // Each cell counts as 5 points for the popup score (arbitrary, just for
-          // the celebratory number — actual game points are computed on backend).
-          stolenPoints += cellCount * 5;
+          // Cada celda robada = 5 pts para el popup (número celebratorio;
+          // los puntos reales los calcula el backend).
+          stolenPoints += stolenCellCount * 5;
           setPopup({
             visible: true,
             type: 'stolen_by_you',
@@ -1747,30 +1851,39 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
           });
         }
       }).catch((err) => {
-        // Surface save errors instead of swallowing them — otherwise the user thinks
-        // their run is saved when it's actually lost (auth expired, network error, etc).
+        // Si el backend falla, igualmente mostramos resumen con valores
+        // estimados — la carrera sí ocurrió y el usuario merece ver lo que
+        // hizo aunque no se haya guardado. También alertamos para que sepa
+        // que la carrera está perdida (auth expiró, red, etc).
         Alert.alert('Error al guardar la carrera', String(err?.message ?? err));
+        setSavingRun(false);
+        setRunSummary({
+          visible: true,
+          distance,
+          time: runTime,
+          points: finalPoints,
+          xp: earnedXP,
+          zones: zonesCount,
+        });
       });
+      // (sin .finally — setSavingRun(false) se hace en cada branch para
+      // batchear en el mismo render que setRunSummary).
     }
 
     setCurrentPath([]);
     pathRef.current = [];
+    // Limpiar también pathSegments (líneas discontinuas con dots). Antes
+    // quedaban renderizadas encima de las celdas tras terminar la carrera y
+    // creaban el efecto "rejilla con puntos" que pedía cerrar/abrir la app.
+    // Las celdas (myCellsUnion) ya reflejan el recorrido, no hace falta la
+    // polyline encima.
+    setPathSegments([]);
 
     // Reset camera to north-up flat view
     mapRef.current?.animateCamera({ heading: 0, pitch: 0 }, { duration: 500 });
 
-    // Mostrar resumen de carrera (solo si la carrera es válida — mismo umbral
-    // que el save). Si fue demasiado corta, avisamos brevemente sin modal.
-    if (isValidRun) {
-      setRunSummary({
-        visible: true,
-        distance,
-        time: runTime,
-        points: finalPoints,
-        xp: earnedXP,
-        zones: zonesCount,
-      });
-    } else if (cellCount > 0 || distance > 0) {
+    // Carrera inválida (muy corta): aviso breve, sin LoadingScreen ni resumen.
+    if (!isValidRun && (cellCount > 0 || distance > 0)) {
       Alert.alert(
         'Carrera demasiado corta',
         'No has cubierto suficiente distancia. La carrera no se ha guardado.',
@@ -1787,31 +1900,13 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
 
   // pace removed — now showing km/h directly from GPS speed
 
-  const rotateInterpolate = rotateAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: ['0deg', '360deg'],
-  });
-
+  // Carga inicial del mapa: el LoadingScreen con el personaje pixelado
+  // sustituye al spinner anterior. Como es un Modal, podemos hacer return
+  // null del resto del árbol mientras carga (más rápido) o renderizar la
+  // app completa y dejar que el modal lo tape. Optamos por la primera para
+  // no inicializar MapView hasta tener datos.
   if (mapLoading) {
-    return (
-      <View style={styles.loadingContainer}>
-        <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
-          <Image
-            source={require('../../assets/icon.png')}
-            style={styles.loadingLogo}
-            resizeMode="contain"
-          />
-        </Animated.View>
-
-        <Text style={styles.loadingTitle}>ACTUALIZANDO MAPA</Text>
-
-        <Animated.View style={{ transform: [{ rotate: rotateInterpolate }] }}>
-          <Ionicons name="locate" size={28} color={colors.orange} />
-        </Animated.View>
-
-        <Text style={styles.loadingSubtitle}>Cargando territorios...</Text>
-      </View>
-    );
+    return <LoadingScreen visible subtitle="ACTUALIZANDO MAPA" />;
   }
 
   return (
@@ -1851,7 +1946,16 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         />
       )}
 
-      {/* Received taunt or response: full-screen taunt image + "Devolver" */}
+      {/* Received taunt or response: full-screen taunt image.
+       *
+       *  REGLA de cierre del hilo:
+       *  - mode 'taunt'    → la víctima (que sufrió el robo) le manda un
+       *                      mensaje al ladrón. El ladrón puede DEVOLVER UNA
+       *                      única vez con mode='response'.
+       *  - mode 'response' → es la respuesta del ladrón. Aquí termina el hilo:
+       *                      NO se muestra botón DEVOLVER para evitar el bucle
+       *                      infinito (response → response → response...).
+       *                      Solo se puede cerrar el modal. */}
       {(currentTaunt?.mode === 'taunt' || currentTaunt?.mode === 'response') && currentTaunt.taunt_id && (
         <Modal transparent visible animationType="fade" statusBarTranslucent>
           <View style={styles.tauntReceivedContainer}>
@@ -1878,23 +1982,37 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
                 />
               );
             })()}
-            <TouchableOpacity
-              style={styles.tauntReceivedRespond}
-              onPress={() => {
-                if (currentTaunt.from_user_id) {
-                  setTauntTarget({
-                    toUserId: currentTaunt.from_user_id,
-                    toName: currentTaunt.from_user_name ?? 'Rival',
-                    runId: currentTaunt.run_id,
-                    mode: 'response',
-                  });
-                  setShowTaunts(true);
-                }
-              }}
-            >
-              <Ionicons name="flame" size={18} color="#000" />
-              <Text style={styles.tauntReceivedRespondText}>DEVOLVER</Text>
-            </TouchableOpacity>
+            {currentTaunt.mode === 'taunt' ? (
+              <TouchableOpacity
+                style={styles.tauntReceivedRespond}
+                onPress={() => {
+                  if (currentTaunt.from_user_id) {
+                    setTauntTarget({
+                      toUserId: currentTaunt.from_user_id,
+                      toName: currentTaunt.from_user_name ?? 'Rival',
+                      runId: currentTaunt.run_id,
+                      mode: 'response',
+                    });
+                    setShowTaunts(true);
+                  }
+                }}
+              >
+                <Ionicons name="flame" size={18} color="#000" />
+                <Text style={styles.tauntReceivedRespondText}>DEVOLVER</Text>
+              </TouchableOpacity>
+            ) : (
+              // mode === 'response': fin del hilo. Botón neutral solo para
+              // cerrar el modal — sin opción de seguir respondiendo.
+              <TouchableOpacity
+                style={[styles.tauntReceivedRespond, styles.tauntReceivedDismiss]}
+                onPress={async () => {
+                  try { await api.markTauntsRead([currentTaunt.id]); } catch {}
+                  setCurrentTaunt(null);
+                }}
+              >
+                <Text style={styles.tauntReceivedDismissText}>CERRAR</Text>
+              </TouchableOpacity>
+            )}
           </View>
         </Modal>
       )}
@@ -1903,6 +2021,11 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         visible={showTaunts}
         mode={tauntTarget?.mode ?? 'taunt'}
         rivalName={tauntTarget?.toName}
+        // Desbloqueo progresivo: el primero siempre disponible, +1 cada 10
+        // celdas robadas (capped a 10). Mismo umbral para taunts y responses
+        // — el usuario lo entiende como "subes de nivel robando".
+        unlockedCount={Math.max(1, Math.min(10, 1 + Math.floor(totalSteals / 10)))}
+        totalSteals={totalSteals}
         onSend={async (messageId) => {
           // Either the user is responding to a robo/received taunt (tauntTarget
           // is set), or responding to their OWN post-run "stolen_by_you" popup
@@ -1916,8 +2039,20 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
                 try { await api.markTauntsRead([currentTaunt.id]); } catch {}
                 setCurrentTaunt(null);
               }
-            } catch {
-              Alert.alert('Error', 'No se pudo enviar el mensaje. Inténtalo de nuevo.');
+            } catch (e: any) {
+              // 409 = hilo ya cerrado (ya hay un taunt/response previo para
+              // este run). Mensaje específico en vez del genérico para que el
+              // usuario entienda por qué no se envía. También marcamos como
+              // leído el inbox item para que no le aparezca otra vez.
+              if (e?.status === 409) {
+                Alert.alert('Hilo cerrado', e?.body?.error ?? 'En este hilo solo se permite un mensaje y una respuesta.');
+                if (currentTaunt) {
+                  try { await api.markTauntsRead([currentTaunt.id]); } catch {}
+                  setCurrentTaunt(null);
+                }
+              } else {
+                Alert.alert('Error', 'No se pudo enviar el mensaje. Inténtalo de nuevo.');
+              }
             }
           } else {
             // Legacy path: post-run stolen_by_you popup → user picks taunt but
@@ -1929,6 +2064,11 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         }}
         onClose={() => { setShowTaunts(false); setTauntTarget(null); }}
       />
+
+      {/* LoadingScreen post-carrera: cubre la pantalla entre STOP y resumen.
+          Personaje pixelado + logo + slogan estilo grafiti. Aparece solo
+          mientras saveRun + loadCells están en vuelo (savingRun = true). */}
+      <LoadingScreen visible={savingRun} />
 
       {/* Resumen post-carrera */}
       {runSummary?.visible && (
@@ -2058,7 +2198,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
                 <Ionicons name="close" size={22} color={colors.textSecondary} />
               </TouchableOpacity>
 
-              <View style={[styles.rivalAvatarBig, { borderColor: getRivalColor(selectedRivalZone.owner_name ?? '') }]}>
+              <View style={[styles.rivalAvatarBig, { borderColor: getRivalColor(selectedRivalZone.owner_id ?? selectedRivalZone.owner_name ?? '') }]}>
                 <Text style={styles.rivalAvatarText}>
                   {(selectedRivalZone.owner_name ?? '?').charAt(0).toUpperCase()}
                 </Text>
@@ -2123,7 +2263,13 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         </View>
       </View>
 
-      <View style={[styles.mapContainer, isRunning && { display: 'none' }]}>
+      {/* MapView siempre montado en el árbol — durante la carrera lo tapa el
+          runningScreen (overlay absoluto). Antes lo ocultábamos con display:
+          'none', pero RN Maps no refresca bien los polígonos al volver visible
+          y las celdas aparecían sueltas/sin unificar. Con overlay encima, el
+          mapa nativo sigue vivo y al terminar la carrera se ve la unión
+          correcta sin tener que cerrar/abrir la app. */}
+      <View style={styles.mapContainer}>
         <MapView
           ref={mapRef}
           style={styles.map}
@@ -2156,10 +2302,14 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
               for surrounded enemy cells. Tappable rivals open the info modal. */}
           {rivalCellsUnions.map((rival, rivalIdx) =>
             rival.polygons.map((p, polyIdx) => {
-              const ownerColor = getRivalColor(rival.ownerName ?? '');
+              // UUID del owner → garantiza color único por usuario (no por nombre).
+              const ownerColor = getRivalColor(rival.ownerId);
               return (
                 <Polygon
-                  key={`rival-${rival.ownerId}-${polyIdx}`}
+                  // Mismo motivo que el polígono de "mine-": incluir nº de
+                  // vértices fuerza a RN Maps a refrescar el polígono cuando
+                  // cambia la forma (no se queda con el contorno cacheado).
+                  key={`rival-${rival.ownerId}-${polyIdx}-${p.outer.length}`}
                   coordinates={p.outer}
                   holes={p.holes.length > 0 ? p.holes : undefined}
                   fillColor={`${ownerColor}80`}
@@ -2187,7 +2337,13 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
           )}
           {myCellsUnion.map((p, i) => (
             <Polygon
-              key={`mine-${i}`}
+              // Key incluye nº de vértices del contorno externo: si el polígono
+              // cambia de forma entre renders (p.ej. al pasar de "celdas
+              // sueltas" a "blob unificado" después de un saveRun), la key
+              // distinta fuerza a RN Maps a re-montar el polígono en lugar de
+              // intentar reusar el anterior (que a veces no se refresca y
+              // dejaba el efecto rejilla que pedía cerrar/abrir la app).
+              key={`mine-${i}-${p.outer.length}`}
               coordinates={p.outer}
               holes={p.holes.length > 0 ? p.holes : undefined}
               fillColor={`${colors.orange}80`}
@@ -2293,74 +2449,88 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
             </View>
           </View>
         )}
+
       </View>
 
-      {/* Strava-mode: hide map, show big stats during a run. Path is still tracked
-          underneath; we just don't render the GPS noise live. Final result shows
-          when the run ends. */}
-      {isRunning && (
+      {/* Strava-mode fullscreen: durante la carrera lo renderizamos como Modal
+          a nivel app para tapar TAMBIÉN la tab bar (Mapa/Stats/Ranking/...).
+          Antes era un overlay solo dentro del mapContainer y dejaba el menú
+          inferior visible — ahí no se podía pulsar (la app sigue en MapScreen)
+          y le quitaba espacio a las parciales, que chocaban con los botones
+          de pausa/stop. Ahora todo cabe holgado y los controles van dentro
+          del propio modal. */}
+      <Modal
+        visible={isRunning}
+        transparent={false}
+        animationType="fade"
+        statusBarTranslucent
+        // Bloqueamos el botón back físico de Android durante la carrera —
+        // si no, el usuario podría salirse sin parar el GPS.
+        onRequestClose={() => {}}
+      >
+        {/* Layout estilo Strava (en negro):
+             - Logo pequeño + badge PAUSADO arriba.
+             - 3 stats apilados con cifras MUY grandes (76px) y label encima.
+             - Botón pill ancho abajo (PAUSAR en marcha; STOP + REANUDAR en pausa).
+             - paddingBottom amplio para que el botón no quede por debajo de
+               la nav bar de Android (Xiaomi, gestos, etc.). */}
         <View style={styles.runningScreen}>
-          <Image
-            source={require('../../assets/icon.png')}
-            style={styles.runningLogo}
-            resizeMode="contain"
-          />
-          {(isPaused || isAutoPaused) && (
-            <View style={styles.pausedBadge}>
-              <Ionicons name="pause" size={16} color={colors.orange} />
-              <Text style={styles.pausedBadgeText}>
-                {isAutoPaused && !isPaused ? 'AUTO-PAUSA' : 'PAUSADO'}
-              </Text>
+          <View style={styles.runningTop}>
+            <Image
+              source={require('../../assets/icon.png')}
+              style={styles.runningLogo}
+              resizeMode="contain"
+            />
+            {(isPaused || isAutoPaused) && (
+              <View style={styles.pausedBadge}>
+                <Ionicons name="pause" size={14} color={colors.orange} />
+                <Text style={styles.pausedBadgeText}>
+                  {isAutoPaused && !isPaused ? 'AUTO-PAUSA' : 'PAUSADO'}
+                </Text>
+              </View>
+            )}
+          </View>
+
+          {/* Stats apilados verticales. flex:1 reparte espacio uniformemente
+              entre los 3 bloques sin que se solapen con el botón de abajo. */}
+          <View style={styles.statsStack}>
+            <View style={styles.statBlockBig}>
+              <Text style={styles.statBigLabel}>TIEMPO</Text>
+              <Text style={styles.statBigValue}>{formatTime(runTime)}</Text>
             </View>
-          )}
-          <View style={styles.runStatBlock}>
-            <Text style={styles.runStatHuge}>{formatTime(runTime)}</Text>
-            <Text style={styles.runStatHugeLabel}>TIEMPO</Text>
+            <View style={styles.statBlockBig}>
+              <Text style={styles.statBigLabel}>DISTANCIA (KM)</Text>
+              <Text style={styles.statBigValue}>{distance.toFixed(2)}</Text>
+            </View>
+            <View style={styles.statBlockBig}>
+              <Text style={styles.statBigLabel}>VELOCIDAD (KM/H)</Text>
+              <Text style={styles.statBigValue}>{currentSpeed.toFixed(1)}</Text>
+            </View>
           </View>
-          <View style={styles.runStatBlock}>
-            <Text style={styles.runStatHuge}>{distance.toFixed(2)}</Text>
-            <Text style={styles.runStatHugeLabel}>KM</Text>
-          </View>
-          <View style={styles.runStatBlock}>
-            <Text style={styles.runStatHuge}>{currentSpeed.toFixed(1)}</Text>
-            <Text style={styles.runStatHugeLabel}>KM/H</Text>
-          </View>
-          <View style={styles.splitsContainer}>
-            <Text style={styles.splitsHeader}>PARCIALES</Text>
-            {splits.length === 0 ? (
-              <Text style={styles.splitsPlaceholder}>
-                {distance < 1
-                  ? `Km 1 en progreso · ${Math.round(distance * 1000)}/1000 m`
-                  : 'Generando parcial...'}
-              </Text>
+
+          {/* Controles abajo. En marcha = un único pill PAUSAR ancho.
+              En pausa = STOP (rojo) + REANUDAR (verde) en fila. */}
+          <View style={styles.runControlsInModal}>
+            {!isPaused ? (
+              <TouchableOpacity style={styles.pausePillBtn} onPress={pauseRun} activeOpacity={0.85}>
+                <Ionicons name="pause" size={22} color="#fff" />
+                <Text style={styles.pausePillText}>PAUSAR</Text>
+              </TouchableOpacity>
             ) : (
-              <View style={styles.splitsRow}>
-                {splits.slice(-5).map((split) => {
-                  // Scale bar height by pace within the visible window. Faster (lower secs) = taller.
-                  const visible = splits.slice(-5);
-                  const minPace = Math.min(...visible.map(s => s.paceSecs));
-                  const maxPace = Math.max(...visible.map(s => s.paceSecs));
-                  const range = Math.max(maxPace - minPace, 1);
-                  const heightPct = 40 + Math.round(((maxPace - split.paceSecs) / range) * 60);
-                  const isLatest = split.km === splits[splits.length - 1].km;
-                  return (
-                    <View key={split.km} style={styles.splitItem}>
-                      <Text style={styles.splitPace}>{formatTime(split.paceSecs)}</Text>
-                      <View
-                        style={[
-                          styles.splitBar,
-                          { height: heightPct, backgroundColor: isLatest ? colors.orange : colors.bgCard },
-                        ]}
-                      />
-                      <Text style={styles.splitKm}>Km {split.km}</Text>
-                    </View>
-                  );
-                })}
+              <View style={styles.pausedControlsRow}>
+                <TouchableOpacity style={styles.stopPillBtn} onPress={stopRun} activeOpacity={0.85}>
+                  <Ionicons name="stop" size={20} color="#fff" />
+                  <Text style={styles.stopPillText}>PARAR</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.resumePillBtn} onPress={resumeRun} activeOpacity={0.85}>
+                  <Ionicons name="play" size={20} color="#fff" />
+                  <Text style={styles.resumePillText}>REANUDAR</Text>
+                </TouchableOpacity>
               </View>
             )}
           </View>
         </View>
-      )}
+      </Modal>
 
       <View style={styles.bottom}>
         {!isRunning && (
@@ -2378,26 +2548,14 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
           </View>
         )}
 
-        {!isRunning ? (
+        {/* Solo botón INICIAR cuando NO se corre. Los controles de carrera
+            (pause/stop/resume) ahora viven dentro del Modal de Strava-mode
+            para que no se solapen con las parciales. */}
+        {!isRunning && (
           <TouchableOpacity style={styles.startBtn} onPress={startRun}>
             <Ionicons name="play" size={18} color="#fff" />
             <Text style={styles.startBtnText}>INICIAR CARRERA</Text>
           </TouchableOpacity>
-        ) : !isPaused ? (
-          <View style={styles.runControls}>
-            <TouchableOpacity style={styles.pauseBtn} onPress={pauseRun} activeOpacity={0.85}>
-              <Ionicons name="pause" size={42} color="#fff" />
-            </TouchableOpacity>
-          </View>
-        ) : (
-          <View style={styles.runControls}>
-            <TouchableOpacity style={styles.stopBtn} onPress={stopRun} activeOpacity={0.85}>
-              <Ionicons name="stop" size={32} color="#fff" />
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.resumeBtn} onPress={resumeRun} activeOpacity={0.85}>
-              <Ionicons name="play" size={38} color="#fff" />
-            </TouchableOpacity>
-          </View>
         )}
       </View>
     </View>
@@ -2476,18 +2634,96 @@ const styles = StyleSheet.create({
   runStatLabel: { fontSize: 11, color: colors.textSecondary, textTransform: 'uppercase' },
   runStatDivider: { width: 1, height: 32, backgroundColor: colors.border },
   runningScreen: {
-    flex: 1, backgroundColor: colors.bg,
-    alignItems: 'center', justifyContent: 'center',
-    paddingVertical: spacing.xl, gap: spacing.xl * 1.4,
+    // Modal fullscreen (tapa tab bar y nav bar). Layout vertical:
+    //   - top: logo + badge.
+    //   - statsStack: ocupa todo el espacio sobrante con flex:1.
+    //   - controles: pegados abajo con padding inferior amplio para no
+    //     solaparse con la nav del teléfono (Android Xiaomi, gestos, etc.).
+    // paddingBottom subido 40 → 72 porque MIUI suele tener nav bar más alta
+    // (gestos / barra de captura) y antes el botón PAUSAR quedaba pegado.
+    flex: 1,
+    backgroundColor: colors.bg,
+    alignItems: 'center',
+    paddingTop: 48,
+    paddingBottom: 72,
+    paddingHorizontal: spacing.lg,
   },
-  runStatBlock: { alignItems: 'center', gap: 6 },
-  runStatHuge: {
-    fontSize: 92, fontWeight: '900', color: colors.textPrimary,
-    letterSpacing: -3, lineHeight: 96,
+  runningTop: {
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginBottom: spacing.md,
   },
-  runStatHugeLabel: {
-    fontSize: 15, fontWeight: '700', color: colors.textSecondary,
-    letterSpacing: 2.5, textTransform: 'uppercase',
+  // Stack vertical de stats. flex:1 → ocupa todo el alto restante entre
+  // top y controles. justifyContent:'space-around' distribuye los 3
+  // bloques con aire entre ellos.
+  statsStack: {
+    flex: 1,
+    width: '100%',
+    justifyContent: 'space-around',
+    alignItems: 'center',
+    paddingVertical: spacing.md,
+  },
+  statBlockBig: { alignItems: 'center', gap: 4 },
+  // Label arriba pequeño tipo Strava ("DISTANCIA (KM)").
+  statBigLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.textSecondary,
+    letterSpacing: 2.5,
+    textTransform: 'uppercase',
+  },
+  // Cifras MUY grandes — el dato es lo único que importa durante la carrera.
+  statBigValue: {
+    fontSize: 88,
+    fontWeight: '900',
+    color: colors.textPrimary,
+    letterSpacing: -3,
+    lineHeight: 92,
+  },
+  // Contenedor de controles abajo. paddingHorizontal: 0 para que los pills
+  // lleguen de borde a borde dentro del paddingHorizontal del runningScreen.
+  runControlsInModal: {
+    width: '100%',
+    alignItems: 'stretch',
+  },
+  // Botón pill PAUSAR ancho — estilo Strava.
+  pausePillBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: spacing.sm,
+    backgroundColor: colors.orange,
+    paddingVertical: 18, paddingHorizontal: spacing.xl,
+    borderRadius: radius.full,
+  },
+  pausePillText: {
+    fontSize: 17, fontWeight: '900', color: '#fff',
+    letterSpacing: 2,
+  },
+  // Cuando está pausado, dos pills en fila: PARAR (rojo) + REANUDAR (verde).
+  pausedControlsRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  stopPillBtn: {
+    flex: 1,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: spacing.sm,
+    backgroundColor: colors.danger,
+    paddingVertical: 18,
+    borderRadius: radius.full,
+  },
+  stopPillText: {
+    fontSize: 15, fontWeight: '900', color: '#fff', letterSpacing: 1.5,
+  },
+  resumePillBtn: {
+    flex: 1.5,  // botón verde un poco más ancho que el rojo
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: spacing.sm,
+    backgroundColor: colors.success,
+    paddingVertical: 18,
+    borderRadius: radius.full,
+  },
+  resumePillText: {
+    fontSize: 15, fontWeight: '900', color: '#fff', letterSpacing: 1.5,
   },
   pausedBadge: {
     flexDirection: 'row', alignItems: 'center', gap: 6,
@@ -2498,7 +2734,7 @@ const styles = StyleSheet.create({
     fontSize: 12, fontWeight: '800', color: colors.orange,
     letterSpacing: 1.5,
   },
-  runningLogo: { width: 56, height: 56, borderRadius: 12, marginBottom: spacing.sm },
+  runningLogo: { width: 40, height: 40, borderRadius: 10 },
   splitsContainer: {
     width: '100%', paddingHorizontal: spacing.lg, alignItems: 'center', gap: spacing.sm,
   },
@@ -2536,6 +2772,16 @@ const styles = StyleSheet.create({
   },
   tauntReceivedRespondText: {
     fontSize: 16, fontWeight: '800', color: '#000', letterSpacing: 1,
+  },
+  // Variante neutra para cerrar el hilo en la respuesta final (sin opción a
+  // seguir respondiendo). Mismo botón, otro look — distingue "cerrar" de
+  // "devolver" para que el usuario sepa que el hilo ya acabó.
+  tauntReceivedDismiss: {
+    backgroundColor: colors.bgCard,
+    borderWidth: 1, borderColor: colors.border,
+  },
+  tauntReceivedDismissText: {
+    fontSize: 16, fontWeight: '800', color: colors.textPrimary, letterSpacing: 1,
   },
   splitsRow: {
     flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'center',

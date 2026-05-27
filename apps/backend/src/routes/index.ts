@@ -1,10 +1,23 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
+import rateLimit from '@fastify/rate-limit';
 import { Pool } from 'pg';
 import * as dotenv from 'dotenv';
 import { hash, verify } from 'argon2';
 import { SignJWT, jwtVerify } from 'jose';
 import { Resend } from 'resend';
+import { randomBytes } from 'crypto';
+
+/**
+ * Genera un token criptográficamente seguro para email verification / reset
+ * de password. Sustituye al patrón `Math.random().toString(36)` que NO es
+ * seguro frente a predicción (Math.random comparte estado entre llamadas y
+ * un atacante con un token expuesto podría aproximar el siguiente).
+ * 32 bytes = 256 bits → ~10^77 espacios, imposible de adivinar.
+ */
+function secureToken(): string {
+  return randomBytes(32).toString('hex');
+}
 
 dotenv.config();
 
@@ -20,10 +33,36 @@ const RAILWAY_URL = process.env.RAILWAY_PUBLIC_DOMAIN
   ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
   : (process.env.RAILWAY_URL ?? 'http://localhost:3000');
 const db = new Pool({ connectionString: process.env.DATABASE_URL });
+// Fail-fast si JWT_ACCESS_SECRET no está definida: sin esta guard,
+// TextEncoder().encode(undefined) producía un secret literal "undefined" →
+// cualquiera podría forjar tokens. Mejor crashear al arranque que correr en
+// producción con auth comprometida.
+if (!process.env.JWT_ACCESS_SECRET || process.env.JWT_ACCESS_SECRET.length < 32) {
+  console.error('[FATAL] JWT_ACCESS_SECRET missing or too short (min 32 chars). Set it in Railway env vars.');
+  process.exit(1);
+}
 const SECRET = new TextEncoder().encode(process.env.JWT_ACCESS_SECRET);
 const resend = new Resend(process.env.RESEND_API_KEY || '');
 
 app.register(cors, { origin: '*' });
+
+// Rate limiting global con override más estricto en endpoints sensibles
+// (login / forgot-password / reset-password) para mitigar brute force y spam
+// de emails. Sin esto, un atacante podía probar passwords sin límite o
+// quemarnos la cuota de Resend mandando reset emails en bucle.
+//
+// Defaults globales: 200 req/min por IP (suficiente para uso normal —
+// la app puede hacer ráfagas al arrancar). Endpoints sensibles fijan su
+// propio config en el `preHandler`.
+app.register(rateLimit, {
+  global: true,
+  max: 200,
+  timeWindow: '1 minute',
+  errorResponseBuilder: (_req, ctx) => ({
+    error: 'Demasiadas peticiones, prueba en unos segundos',
+    retryAfter: ctx.after,
+  }),
+});
 
 async function initDB() {
   await db.query(`
@@ -43,6 +82,12 @@ async function initDB() {
   await db.query(`ALTER TABLE runs ADD COLUMN IF NOT EXISTS zones_count INT DEFAULT 0`);
   await db.query(`ALTER TABLE runs ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()`);
   await db.query(`ALTER TABLE runs ALTER COLUMN started_at SET DEFAULT NOW()`).catch(() => {});
+  // Idempotencia para imports de Strava: si el webhook reenvía el mismo evento
+  // (Strava reintenta hasta 3 veces ante 5xx) o un retry manual de admin
+  // dispara el import dos veces, evitamos crear runs duplicados consultando
+  // este campo + UNIQUE.
+  await db.query(`ALTER TABLE runs ADD COLUMN IF NOT EXISTS strava_activity_id BIGINT`).catch(() => {});
+  await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS runs_strava_activity_id_uniq ON runs(strava_activity_id) WHERE strava_activity_id IS NOT NULL`).catch(() => {});
 
   await db.query(`ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS total_points INT DEFAULT 0`);
   await db.query(`ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS total_km FLOAT DEFAULT 0`);
@@ -244,8 +289,23 @@ app.get('/health', async (req, reply) => {
   return reply.send({ ok: true, ts: Date.now() });
 });
 
-app.post('/auth/register', async (req: any, reply) => {
-  const { email, password, displayName, city } = req.body;
+app.post('/auth/register', {
+  // 5 registros/hora por IP — evita spam de signups (que mandan email).
+  config: { rateLimit: { max: 5, timeWindow: '1 hour' } },
+}, async (req: any, reply) => {
+  const { email, password, displayName, city } = req.body ?? {};
+  // Validación de inputs (defense in depth — el frontend también valida).
+  // Antes no había checks → email vacío, password '' o displayName null
+  // podían crear cuentas inválidas.
+  if (typeof email !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return reply.status(400).send({ error: 'Email no válido' });
+  }
+  if (typeof password !== 'string' || password.length < 8) {
+    return reply.status(400).send({ error: 'La contraseña debe tener al menos 8 caracteres' });
+  }
+  if (typeof displayName !== 'string' || displayName.trim().length < 2 || displayName.length > 32) {
+    return reply.status(400).send({ error: 'El nombre de usuario debe tener entre 2 y 32 caracteres' });
+  }
   try {
     const ex = await db.query('SELECT id FROM users WHERE email = $1', [email]);
     if (ex.rows.length) return reply.status(400).send({ error: 'Email ya registrado' });
@@ -261,7 +321,7 @@ app.post('/auth/register', async (req: any, reply) => {
     await db.query('INSERT INTO user_stats (user_id) VALUES ($1)', [uid]);
 
     // Enviar email de verificación
-    const verifyToken = Math.random().toString(36).slice(2) + Date.now().toString(36);
+    const verifyToken = secureToken();
     await db.query('UPDATE users SET verify_token = $1 WHERE id = $2', [verifyToken, uid]);
     const verifyUrl = `${RAILWAY_URL}/auth/verify-email?token=${verifyToken}`;
     try {
@@ -290,7 +350,11 @@ app.post('/auth/register', async (req: any, reply) => {
   } catch (err) { return reply.status(500).send({ error: String(err) }); }
 });
 
-app.post('/auth/login', async (req: any, reply) => {
+app.post('/auth/login', {
+  // 10 intentos/minuto por IP. Frena brute force sin molestar a usuario
+  // honesto que se equivoque escribiendo la contraseña.
+  config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
+}, async (req: any, reply) => {
   const { email, password } = req.body;
   try {
     const { rows } = await db.query('SELECT id, password_hash, display_name, email, city, email_verified FROM users WHERE email = $1', [email]);
@@ -361,7 +425,10 @@ app.post('/auth/google', async (req: any, reply) => {
 
 // ── Recuperar contraseña ─────────────────────────────────────────────────────
 
-app.post('/auth/forgot-password', async (req: any, reply) => {
+app.post('/auth/forgot-password', {
+  // 3/hora por IP — evita spam de emails de reset (quema cuota de Resend).
+  config: { rateLimit: { max: 3, timeWindow: '1 hour' } },
+}, async (req: any, reply) => {
   const { email } = req.body;
   if (!email) return reply.status(400).send({ error: 'Email requerido' });
   try {
@@ -373,7 +440,7 @@ app.post('/auth/forgot-password', async (req: any, reply) => {
     const userId = rows[0].id;
     const name = rows[0].display_name || 'Corredor';
     // Generar token aleatorio
-    const resetToken = Math.random().toString(36).slice(2) + Date.now().toString(36);
+    const resetToken = secureToken();
     const expires = new Date(Date.now() + 60 * 60 * 1000); // 1 hora
     await db.query('UPDATE users SET reset_token = $1, reset_token_expires = $2 WHERE id = $3', [resetToken, expires, userId]);
 
@@ -428,7 +495,12 @@ app.get('/auth/reset-password', async (req: any, reply) => {
   `);
 });
 
-app.post('/auth/reset-password', async (req: any, reply) => {
+app.post('/auth/reset-password', {
+  // 10/hora por IP — el reset token ya hace heavy lifting de seguridad,
+  // pero limitamos para evitar fuerza bruta sobre el token (32 bytes hex,
+  // imposible de adivinar pero defensa en profundidad nunca está de más).
+  config: { rateLimit: { max: 10, timeWindow: '1 hour' } },
+}, async (req: any, reply) => {
   const { token, password } = req.body;
   if (!token || !password) return reply.status(400).send({ error: 'Datos incompletos' });
   if (password.length < 6) return reply.status(400).send({ error: 'Mínimo 6 caracteres' });
@@ -456,14 +528,18 @@ app.get('/auth/check-username', async (req: any, reply) => {
 
 // ── Reenviar verificación ──────────────────────────────────────────────────
 
-app.post('/auth/resend-verification', async (req: any, reply) => {
+app.post('/auth/resend-verification', {
+  // 3/hora — el usuario que se acaba de registrar probablemente no necesita
+  // reenviar más de un par de veces.
+  config: { rateLimit: { max: 3, timeWindow: '1 hour' } },
+}, async (req: any, reply) => {
   const { email } = req.body;
   if (!email) return reply.status(400).send({ error: 'Email requerido' });
   try {
     const { rows } = await db.query('SELECT id, display_name, email_verified FROM users WHERE email = $1', [email]);
     if (!rows.length) return reply.send({ ok: true }); // No revelar si existe
     if (rows[0].email_verified) return reply.send({ ok: true, alreadyVerified: true });
-    const verifyToken = Math.random().toString(36).slice(2) + Date.now().toString(36);
+    const verifyToken = secureToken();
     await db.query('UPDATE users SET verify_token = $1 WHERE id = $2', [verifyToken, rows[0].id]);
     const verifyUrl = `${RAILWAY_URL}/auth/verify-email?token=${verifyToken}`;
     try {
@@ -724,7 +800,13 @@ app.get('/achievements', { preHandler: requireAuth }, async (req: any, reply) =>
 
 // ── Admin: Challenges CRUD ──────────────────────────────────────────────────
 
-const ADMIN_KEY = process.env.ADMIN_KEY || 'corrr-admin-2024';
+// Antes había fallback `'corrr-admin-2024'` hardcodeado — cualquiera con acceso
+// al repo podía llamar /admin/* si la env var no estaba puesta. Ahora fail-fast.
+if (!process.env.ADMIN_KEY || process.env.ADMIN_KEY.length < 16) {
+  console.error('[FATAL] ADMIN_KEY missing or too short (min 16 chars). Set it in Railway env vars.');
+  process.exit(1);
+}
+const ADMIN_KEY = process.env.ADMIN_KEY;
 
 const requireAdmin = async (req: any, reply: any) => {
   const key = req.headers['x-admin-key'] || (req.query as any)?.key;
@@ -1159,7 +1241,30 @@ async function checkAchievements(client: any, userId: string) {
 app.post('/runs', { preHandler: requireAuth }, async (req: any, reply) => {
   // `points` (legacy) is the client's estimate. We recompute authoritatively
   // server-side below using loopBonus + cellPoints + kmPoints * multipliers.
-  const { distanceKm, durationSecs, points: clientPointsEstimate, loopBonus, zonesCount, zones, claimedCells } = req.body;
+  const { distanceKm, durationSecs, points: clientPointsEstimate, loopBonus, zonesCount, zones, claimedCells } = req.body ?? {};
+
+  // Sanitización + límites anti-cheat. Aunque la lógica de puntos se
+  // recomputa server-side, valores absurdos en los inputs (carreras de
+  // 10000 km, arrays de millones de celdas) podrían romper queries o
+  // dejar runs falsos en la BD. Top-cap a valores físicos creíbles:
+  //   - distanceKm: máx 100 km por carrera (ultramarathon teórico).
+  //   - durationSecs: máx 24h.
+  //   - claimedCells: máx 50.000 celdas (~500 km de territorio, holgado).
+  //   - zones: máx 200.
+  const isFiniteNum = (v: any) => typeof v === 'number' && Number.isFinite(v);
+  if (!isFiniteNum(distanceKm) || distanceKm < 0 || distanceKm > 100) {
+    return reply.status(400).send({ error: 'distanceKm fuera de rango (0-100 km)' });
+  }
+  if (!isFiniteNum(durationSecs) || durationSecs < 0 || durationSecs > 86400) {
+    return reply.status(400).send({ error: 'durationSecs fuera de rango (0-86400 s)' });
+  }
+  if (claimedCells != null && (!Array.isArray(claimedCells) || claimedCells.length > 50000)) {
+    return reply.status(400).send({ error: 'claimedCells inválido o demasiado grande' });
+  }
+  if (zones != null && (!Array.isArray(zones) || zones.length > 200)) {
+    return reply.status(400).send({ error: 'zones inválido o demasiado grande' });
+  }
+
   const userId = req.userId;
   const client = await db.connect();
 
@@ -1636,7 +1741,7 @@ app.post('/friends/request', { preHandler: requireAuth }, async (req: any, reply
   if (!receiverId) return reply.status(400).send({ error: 'receiverId requerido' });
   if (receiverId === req.userId) return reply.status(400).send({ error: 'No puedes agregarte a ti mismo' });
 
-  // Check si ya existe
+  // Check si ya existe (en CUALQUIER dirección).
   const { rows: existing } = await db.query(
     `SELECT id, status FROM friendships
      WHERE (sender_id = $1 AND receiver_id = $2) OR (sender_id = $2 AND receiver_id = $1)`,
@@ -1646,8 +1751,13 @@ app.post('/friends/request', { preHandler: requireAuth }, async (req: any, reply
     return reply.send({ status: existing[0].status, message: 'Solicitud ya existe' });
   }
 
+  // ON CONFLICT DO NOTHING absorbe race conditions de doble click: si dos
+  // requests llegan al mismo tiempo, la primera inserta y la segunda no
+  // tira 500 — ambas devuelven 'pending'.
   await db.query(
-    `INSERT INTO friendships (sender_id, receiver_id, status) VALUES ($1, $2, 'pending')`,
+    `INSERT INTO friendships (sender_id, receiver_id, status)
+     VALUES ($1, $2, 'pending')
+     ON CONFLICT (sender_id, receiver_id) DO NOTHING`,
     [req.userId, receiverId]
   );
   return reply.send({ status: 'pending', message: 'Solicitud enviada' });
@@ -1854,7 +1964,7 @@ app.post('/auth/strava/register', async (req: any, reply) => {
   if (exists.length > 0) return reply.status(409).send({ error: 'Ese email ya está registrado' });
 
   const ph = await hash(password);
-  const verifyToken = Math.random().toString(36).slice(2) + Date.now().toString(36);
+  const verifyToken = secureToken();
   // Crear usuario con todos los datos prefilled de Strava + lo que el usuario
   // añadió manualmente (email, password, displayName).
   const { rows } = await db.query(
@@ -2057,6 +2167,18 @@ async function refreshStravaToken(userId: string): Promise<string | null> {
  *   - Envía push al usuario con el resumen (engagement loop)
  */
 async function importStravaActivity(userId: string, activityId: number, accessToken: string) {
+  // Idempotencia: si ya importamos esta actividad antes, saltamos. Strava
+  // reenvía webhooks ante 5xx (hasta 3 reintentos) y un admin podría re-disparar
+  // imports a mano — sin este guard, los runs y stats se contaban x2 / x3.
+  const { rows: existing } = await db.query(
+    'SELECT id FROM runs WHERE strava_activity_id = $1 LIMIT 1',
+    [activityId]
+  );
+  if (existing.length > 0) {
+    console.log(`[Strava] Actividad ${activityId} ya importada (run ${existing[0].id}), skip`);
+    return;
+  }
+
   // Detalle de la actividad
   const actRes = await fetch(`https://www.strava.com/api/v3/activities/${activityId}`, {
     headers: { Authorization: `Bearer ${accessToken}` },
@@ -2105,12 +2227,23 @@ async function importStravaActivity(userId: string, activityId: number, accessTo
   try {
     await client.query('BEGIN');
 
-    // 3) Insertar run placeholder; puntos se actualizan al final
+    // 3) Insertar run placeholder; puntos se actualizan al final.
+    //    strava_activity_id es la clave de idempotencia: el UNIQUE index
+    //    rechaza inserts duplicados si la actividad ya se procesó.
     const { rows: runRows } = await client.query(
-      `INSERT INTO runs (user_id, distance_km, duration_secs, points, zones_count, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
-      [userId, distKm, durSecs, 0, isLoop ? 1 : 0, act.start_date ?? new Date().toISOString()]
+      `INSERT INTO runs (user_id, distance_km, duration_secs, points, zones_count, created_at, strava_activity_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)
+       ON CONFLICT (strava_activity_id) WHERE strava_activity_id IS NOT NULL DO NOTHING
+       RETURNING id`,
+      [userId, distKm, durSecs, 0, isLoop ? 1 : 0, act.start_date ?? new Date().toISOString(), activityId]
     );
+    // Si ON CONFLICT disparó, runRows está vacío → otra ejecución concurrente
+    // lo metió primero. Salimos sin tocar nada.
+    if (runRows.length === 0) {
+      console.log(`[Strava] Actividad ${activityId} insertada por otro proceso, skip`);
+      await client.query('ROLLBACK');
+      return;
+    }
     const runId = runRows[0].id;
 
     // 4) Procesar celdas — detectar new vs robos (mismo patrón que POST /runs)

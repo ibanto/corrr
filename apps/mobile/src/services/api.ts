@@ -195,6 +195,10 @@ interface UserStats {
   // Total XP que el usuario ve: floor(total_points / 100) + bonus_xp.
   // El backend lo computa para evitar que cada cliente lo haga distinto.
   total_xp?: number;
+  // Nº de celdas/zonas robadas a rivales. Lo usamos para el desbloqueo
+  // progresivo de taunts: cada 10 robos desbloquea el siguiente mensaje
+  // y la siguiente respuesta.
+  total_steals?: number;
 }
 
 interface MyStats {

@@ -16,3 +16,12 @@ npm-debug.*
 yarn-debug.*
 yarn-error.*
 .git
+android/.gradle
+android/app/build
+android/build
+*.apk
+*.aab
+build-*.apk
+build-*.aab
+CORRR-*.apk
+CORRR-*.aab

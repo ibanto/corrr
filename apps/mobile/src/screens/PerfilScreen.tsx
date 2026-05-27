@@ -123,7 +123,10 @@ export default function PerfilScreen({ user, onLogout }: Props) {
       ]);
       setStats(data);
       setAchievements(achs);
-      if (profile.avatar_url) setAvatarUrl(profile.avatar_url);
+      // Setear siempre (incluso null) para que si el avatar se borra desde
+      // backend o desde otro dispositivo, el local se actualice. Antes solo
+      // se seteaba si había valor → avatar viejo se quedaba pegado.
+      setAvatarUrl(profile.avatar_url ?? null);
       if (profile.display_name) setProfileName(profile.display_name);
       if (profile.city) {
         setProfileCity(profile.city);
@@ -142,10 +145,33 @@ export default function PerfilScreen({ user, onLogout }: Props) {
   }, [loadStats, detectCity]);
 
   const handleAvatarResult = async (result: ImagePicker.ImagePickerResult) => {
-    if (!result.canceled && result.assets[0].base64) {
-      const dataUri = `data:image/jpeg;base64,${result.assets[0].base64}`;
+    if (result.canceled) return;
+    const asset = result.assets?.[0];
+    if (!asset) {
+      Alert.alert('Error', 'No se pudo procesar la imagen.');
+      return;
+    }
+    // Mostramos PRIMERO la URI local (file:// en Android) — es instantáneo
+    // y sirve aunque la subida al backend falle. El base64 lo usamos solo
+    // para la llamada de updateProfile.
+    if (asset.uri) setAvatarUrl(asset.uri);
+    if (!asset.base64) {
+      Alert.alert('Error', 'La imagen no tiene datos. Vuelve a intentarlo.');
+      return;
+    }
+    const dataUri = `data:image/jpeg;base64,${asset.base64}`;
+    try {
+      await api.updateProfile({ avatarUrl: dataUri });
+      // Una vez confirmado backend, sobreescribimos con la dataUri persistida
+      // (la URI file:// se invalida al reabrir la app; el data URI persiste).
       setAvatarUrl(dataUri);
-      try { await api.updateProfile({ avatarUrl: dataUri }); } catch {}
+    } catch (e: any) {
+      // Antes esto era catch {} silencioso → el usuario nunca sabía por qué
+      // no se guardaba la foto. Ahora mostramos el error real.
+      Alert.alert(
+        'No se pudo guardar la foto',
+        e?.message ?? 'Inténtalo de nuevo con más conexión.',
+      );
     }
   };
 
@@ -162,7 +188,9 @@ export default function PerfilScreen({ user, onLogout }: Props) {
           const result = await ImagePicker.launchCameraAsync({
             allowsEditing: true,
             aspect: [1, 1],
-            quality: 0.5,
+            // quality bajado a 0.4 → ~30% menos peso del base64.
+            // Para un avatar de 200×200 px visible es más que de sobra.
+            quality: 0.4,
             base64: true,
           });
           handleAvatarResult(result);
@@ -175,7 +203,7 @@ export default function PerfilScreen({ user, onLogout }: Props) {
             mediaTypes: ['images'],
             allowsEditing: true,
             aspect: [1, 1],
-            quality: 0.5,
+            quality: 0.4,
             base64: true,
           });
           handleAvatarResult(result);
@@ -343,7 +371,7 @@ export default function PerfilScreen({ user, onLogout }: Props) {
           { value: String(s?.total_points ?? 0), label: 'Puntos', icon: 'flame' as const },
         ].map((item, i) => (
           <View key={i} style={styles.bigStatCard}>
-            <Ionicons name={item.icon} size={22} color={colors.orange} />
+            <Ionicons name={item.icon} size={28} color={colors.orange} />
             <Text style={styles.bigStatValue}>{item.value}</Text>
             <Text style={styles.bigStatLabel}>{item.label}</Text>
           </View>
@@ -770,25 +798,31 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md, marginBottom: spacing.lg,
   },
   // Grid 2×2 grande para las stats del Perfil (Zonas / km / Carreras / Puntos).
+  // Gap entre tarjetas reducido a xs (4) — antes con sm (8) las tarjetas se
+  // veían "separadas" en pantalla.
   bigStatsGrid: {
     flexDirection: 'row', flexWrap: 'wrap',
     marginHorizontal: spacing.md, marginBottom: spacing.lg,
-    gap: spacing.sm,
+    gap: spacing.xs,
   },
+  // Card más compacta verticalmente — antes paddingVertical: xl (32) dejaba
+  // mucho aire dentro de cada tarjeta y separaba el bloque entero. Ahora md
+  // (16) → tarjetas más bajas y los 4 elementos quedan agrupados.
   bigStatCard: {
-    width: '47%', flexGrow: 1,
+    width: '49%', flexGrow: 1,
     backgroundColor: colors.bgCard,
     borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border,
-    paddingVertical: spacing.lg, paddingHorizontal: spacing.md,
-    alignItems: 'center', gap: 6,
+    paddingVertical: spacing.md, paddingHorizontal: spacing.md,
+    alignItems: 'center', gap: 4,
   },
+  // Cifras grandes (44) y label algo más visible (13) — protagonistas del Perfil.
   bigStatValue: {
-    fontSize: 32, fontWeight: '900', color: colors.textPrimary,
-    letterSpacing: -1,
+    fontSize: 44, fontWeight: '900', color: colors.textPrimary,
+    letterSpacing: -1.5, lineHeight: 48,
   },
   bigStatLabel: {
-    fontSize: 12, fontWeight: '700', color: colors.textSecondary,
-    letterSpacing: 1, textTransform: 'uppercase',
+    fontSize: 13, fontWeight: '700', color: colors.textSecondary,
+    letterSpacing: 1.2, textTransform: 'uppercase',
   },
   statItem: { flex: 1, alignItems: 'center' },
   statValue: { fontSize: 18, fontWeight: '800', color: colors.textPrimary },

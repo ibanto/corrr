@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -47,7 +47,7 @@ const TABS: { key: Tab; label: string }[] = [
 ];
 
 const SESSION_KEY = '@corrr_session';
-const CURRENT_VERSION = '1.4.2';
+const CURRENT_VERSION = '1.10.4';
 interface User { id: string; username: string; email: string; city?: string; }
 interface Session { token: string; user: User; }
 
@@ -127,6 +127,49 @@ export default function App() {
     api.getPendingFriendRequests().then(r => setPendingFriends(r.length)).catch(() => {});
   };
 
+  // Strava signup pending state (set when the OAuth callback deep link arrives
+  // with a temp token and the athlete isn't yet linked to a CORRR account).
+  // Pasamos esto al OnboardingScreen para que pinte el formulario prefilled.
+  const [pendingStravaSignup, setPendingStravaSignup] = useState<{
+    signupToken: string;
+    prefill: { firstName: string | null; lastName: string | null; city: string | null; gender: 'M' | 'F' | null; avatarUrl: string | null; bio: string | null };
+  } | null>(null);
+
+  /** Procesa una URL del esquema corrr:// (deep link). Hoy solo manejamos
+   *  el callback de Strava signup; futuros usos pueden añadirse aquí. */
+  const handleDeepLink = useCallback(async (url: string | null) => {
+    if (!url) return;
+    if (!url.startsWith('corrr://strava-auth')) return;
+    const match = url.match(/[?&]temp=([^&]+)/);
+    if (!match) return;
+    const temp = decodeURIComponent(match[1]);
+    try {
+      const res = await api.stravaExchange(temp);
+      if (res.kind === 'login' && res.accessToken && res.user) {
+        api.setToken(res.accessToken);
+        api.setUserId(res.user.id);
+        await handleAuthenticated(res.accessToken, {
+          id: res.user.id,
+          username: res.user.username,
+          email: res.user.email,
+          city: res.user.city ?? undefined,
+        });
+      } else if (res.kind === 'signup' && res.signupToken && res.prefill) {
+        setPendingStravaSignup({ signupToken: res.signupToken, prefill: res.prefill });
+      }
+    } catch (e: any) {
+      Alert.alert('Error con Strava', e?.message ?? 'No se pudo completar la autenticación con Strava.');
+    }
+  }, []);
+
+  // Listener de deep links: tanto la URL inicial (si la app se abrió fría)
+  // como las que llegan mientras está abierta.
+  useEffect(() => {
+    Linking.getInitialURL().then(handleDeepLink).catch(() => {});
+    const sub = Linking.addEventListener('url', (e) => handleDeepLink(e.url));
+    return () => sub.remove();
+  }, [handleDeepLink]);
+
   const handleLogout = async () => {
     await AsyncStorage.removeItem(SESSION_KEY);
     api.setToken('');
@@ -150,18 +193,25 @@ export default function App() {
     return (
       <>
         <StatusBar barStyle="light-content" backgroundColor={colors.bg} />
-        <OnboardingScreen onAuthenticated={handleAuthenticated} />
+        <OnboardingScreen
+          onAuthenticated={handleAuthenticated}
+          pendingStravaSignup={pendingStravaSignup}
+          onStravaSignupConsumed={() => setPendingStravaSignup(null)}
+        />
       </>
     );
   }
 
-  const renderScreen = () => {
+  // MapScreen stays mounted across tab switches so an active run survives navigation
+  // (location watchers, timers, pathRef etc. are component state that would be lost on unmount).
+  // Other tabs mount/unmount on demand — only the map is "live" enough to need persistence.
+  const renderOverlayScreen = () => {
     switch (activeTab) {
-      case 'Mapa':    return <MapScreen user={user} onNavigateToShop={() => setActiveTab('Retos')} />;
       case 'Stats':   return <StatsScreen user={user} />;
       case 'Ranking': return <RankingScreen user={user} pendingCount={pendingFriends} onPendingCountChange={setPendingFriends} />;
       case 'Retos':   return <RetosScreen />;
       case 'Perfil':  return <PerfilScreen user={user} onLogout={handleLogout} />;
+      default:        return null;
     }
   };
 
@@ -176,7 +226,12 @@ export default function App() {
         onClose={() => setStolenPopup({ visible: false })}
       />
       <SafeAreaView style={styles.safeArea}>
-        <View style={styles.screen}>{renderScreen()}</View>
+        <View style={styles.screen}>
+          <View style={[StyleSheet.absoluteFill, { display: activeTab === 'Mapa' ? 'flex' : 'none' }]}>
+            <MapScreen user={user} onNavigateToShop={() => setActiveTab('Retos')} />
+          </View>
+          {activeTab !== 'Mapa' && renderOverlayScreen()}
+        </View>
       </SafeAreaView>
       <SafeAreaView style={styles.tabBarSafe}>
         <View style={styles.tabBar}>

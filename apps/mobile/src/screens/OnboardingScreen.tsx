@@ -12,9 +12,11 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  Image,
   ImageBackground,
   ImageSourcePropType,
   ScrollView,
+  Linking,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, radius } from '../theme';
@@ -47,12 +49,28 @@ const INTRO_PAGES: { image: ImageSourcePropType; buttonColor: string; buttonText
 
 interface Props {
   onAuthenticated: (token: string, user: any) => void;
+  pendingStravaSignup?: {
+    signupToken: string;
+    prefill: {
+      firstName: string | null; lastName: string | null;
+      city: string | null; gender: 'M' | 'F' | null;
+      avatarUrl: string | null; bio: string | null;
+    };
+  } | null;
+  onStravaSignupConsumed?: () => void;
 }
 
-type Mode = 'intro' | 'splash' | 'login' | 'register' | 'forgot' | 'verify';
+type Mode = 'intro' | 'splash' | 'login' | 'register' | 'forgot' | 'verify' | 'strava-signup';
 
-export default function OnboardingScreen({ onAuthenticated }: Props) {
+export default function OnboardingScreen({ onAuthenticated, pendingStravaSignup, onStravaSignupConsumed }: Props) {
   const [mode, setMode] = useState<Mode>('intro');
+
+  // Cuando llega un signup pendiente desde el deep link de Strava, saltamos
+  // al modo prefilled. El padre llama onStravaSignupConsumed cuando completemos
+  // para limpiar el estado y evitar re-entrar al volver atrás.
+  useEffect(() => {
+    if (pendingStravaSignup) setMode('strava-signup');
+  }, [pendingStravaSignup]);
   const [introPage, setIntroPage] = useState(0);
   const flatListRef = useRef<FlatList>(null);
   const [email, setEmail] = useState('');
@@ -183,6 +201,56 @@ export default function OnboardingScreen({ onAuthenticated }: Props) {
       } else {
         Alert.alert('Error', msg);
       }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  /** Inicia el OAuth con Strava. Abre el navegador del sistema con la URL de
+   *  Strava; cuando autoriza, Strava redirige al backend, el backend redirige al
+   *  deep link corrr:// → App.tsx captura el deep link y decide login o signup. */
+  const handleStravaConnect = async () => {
+    setLoading(true);
+    try {
+      const url = await api.getStravaSignupUrl();
+      await Linking.openURL(url);
+    } catch (err: any) {
+      Alert.alert('Error', `No se pudo conectar con Strava: ${err?.message ?? 'inténtalo de nuevo'}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  /** Finaliza el registro con Strava. Se llama desde el form `strava-signup`
+   *  después de que el usuario añada email + password + username. */
+  const handleStravaRegister = async () => {
+    if (!pendingStravaSignup) return;
+    if (!email || !password || !username) {
+      Alert.alert('Faltan datos', 'Email, contraseña y nombre de usuario son obligatorios.');
+      return;
+    }
+    setLoading(true);
+    try {
+      const res = await api.stravaRegister({
+        signupToken: pendingStravaSignup.signupToken,
+        email, password,
+        displayName: username,
+        firstName: pendingStravaSignup.prefill.firstName ?? undefined,
+        surname: pendingStravaSignup.prefill.lastName ?? undefined,
+        city: city || pendingStravaSignup.prefill.city || undefined,
+        gender: pendingStravaSignup.prefill.gender ?? undefined,
+      });
+      onStravaSignupConsumed?.();
+      if (res.pendingVerification) {
+        setResendDone(false);
+        setMode('verify');
+      } else if (res.accessToken && res.user) {
+        api.setToken(res.accessToken);
+        api.setUserId(res.user.id);
+        onAuthenticated(res.accessToken, res.user);
+      }
+    } catch (err: any) {
+      Alert.alert('Error', err?.message ?? 'No se pudo completar el registro');
     } finally {
       setLoading(false);
     }
@@ -320,16 +388,39 @@ export default function OnboardingScreen({ onAuthenticated }: Props) {
         <View style={styles.authHeader}>
           <Text style={{ fontSize: 48, textAlign: 'center' }}>🔥</Text>
           <Text style={styles.authTitle}>
-            {mode === 'forgot' ? 'Recuperar contraseña' : mode === 'login' ? 'Iniciar sesión' : 'Crear cuenta'}
+            {mode === 'forgot' ? 'Recuperar contraseña'
+              : mode === 'login' ? 'Iniciar sesión'
+              : mode === 'strava-signup' ? 'Completa tu registro'
+              : 'Crear cuenta'}
           </Text>
           <Text style={styles.authSubtitle}>
-            {mode === 'forgot'
-              ? 'Te enviaremos un enlace para restablecer tu contraseña'
-              : mode === 'login' ? 'Bienvenido de vuelta, corredor' : 'Únete a miles de corredores en España'}
+            {mode === 'forgot' ? 'Te enviaremos un enlace para restablecer tu contraseña'
+              : mode === 'login' ? 'Bienvenido de vuelta, corredor'
+              : mode === 'strava-signup' ? 'Solo añade email y contraseña — el resto lo trajimos de Strava'
+              : 'Únete a miles de corredores en España'}
           </Text>
         </View>
+
+        {/* Banner Strava — solo visible en modo strava-signup, muestra qué datos
+            llegaron prefilled del OAuth para que el usuario se sienta confirmado. */}
+        {mode === 'strava-signup' && pendingStravaSignup && (
+          <View style={styles.stravaPrefillBanner}>
+            {pendingStravaSignup.prefill.avatarUrl && (
+              <Image source={{ uri: pendingStravaSignup.prefill.avatarUrl }} style={styles.stravaPrefillAvatar} />
+            )}
+            <View style={{ flex: 1 }}>
+              <Text style={styles.stravaPrefillTitle}>
+                Conectado con Strava ✓
+              </Text>
+              <Text style={styles.stravaPrefillSub}>
+                {[pendingStravaSignup.prefill.firstName, pendingStravaSignup.prefill.lastName].filter(Boolean).join(' ') || 'Atleta'}
+                {pendingStravaSignup.prefill.city ? ` · ${pendingStravaSignup.prefill.city}` : ''}
+              </Text>
+            </View>
+          </View>
+        )}
         <View style={styles.form}>
-          {mode === 'register' && (
+          {(mode === 'register' || mode === 'strava-signup') && (
             <>
               <View style={styles.inputGroup}>
                 <Text style={styles.inputLabel}>Nombre de usuario</Text>
@@ -405,6 +496,12 @@ export default function OnboardingScreen({ onAuthenticated }: Props) {
                 <Text style={styles.btnPrimaryText}>Enviar enlace →</Text>
               )}
             </TouchableOpacity>
+          ) : mode === 'strava-signup' ? (
+            <TouchableOpacity style={[styles.btnPrimary, { marginTop: spacing.lg }]} onPress={handleStravaRegister} disabled={loading}>
+              {loading ? <ActivityIndicator color="#fff" /> : (
+                <Text style={styles.btnPrimaryText}>Crear cuenta con Strava →</Text>
+              )}
+            </TouchableOpacity>
           ) : (
             <TouchableOpacity style={[styles.btnPrimary, { marginTop: spacing.lg }]} onPress={handleSubmit} disabled={loading}>
               {loading ? <ActivityIndicator color="#fff" /> : (
@@ -412,12 +509,38 @@ export default function OnboardingScreen({ onAuthenticated }: Props) {
               )}
             </TouchableOpacity>
           )}
-          <TouchableOpacity onPress={() => setMode(mode === 'forgot' ? 'login' : mode === 'login' ? 'register' : 'login')} style={styles.switchMode}>
-            <Text style={styles.switchModeText}>
-              {mode === 'forgot' ? 'Volver a iniciar sesión'
-                : mode === 'login' ? '¿No tienes cuenta? Regístrate' : '¿Ya tienes cuenta? Inicia sesión'}
-            </Text>
-          </TouchableOpacity>
+
+          {/* Botón "Connect with Strava" — alternativa de auth. Solo visible en
+              login y register normales. En strava-signup ya estamos dentro del
+              flujo, no tiene sentido mostrarlo. */}
+          {(mode === 'login' || mode === 'register') && (
+            <View style={styles.stravaConnectWrap}>
+              <View style={styles.stravaConnectDivider}>
+                <View style={styles.stravaDividerLine} />
+                <Text style={styles.stravaDividerText}>O</Text>
+                <View style={styles.stravaDividerLine} />
+              </View>
+              <TouchableOpacity onPress={handleStravaConnect} disabled={loading} activeOpacity={0.85}>
+                <Image
+                  source={require('../../assets/btn_strava_connect_with_orange.png')}
+                  style={styles.stravaConnectBtn}
+                  resizeMode="contain"
+                />
+              </TouchableOpacity>
+              <Text style={styles.stravaConnectHint}>
+                {mode === 'login' ? 'Inicia sesión con tu cuenta de Strava' : 'Rellenamos tu perfil con datos de Strava'}
+              </Text>
+            </View>
+          )}
+
+          {mode !== 'strava-signup' && (
+            <TouchableOpacity onPress={() => setMode(mode === 'forgot' ? 'login' : mode === 'login' ? 'register' : 'login')} style={styles.switchMode}>
+              <Text style={styles.switchModeText}>
+                {mode === 'forgot' ? 'Volver a iniciar sesión'
+                  : mode === 'login' ? '¿No tienes cuenta? Regístrate' : '¿Ya tienes cuenta? Inicia sesión'}
+              </Text>
+            </TouchableOpacity>
+          )}
         </View>
       </ScrollView>
     </KeyboardAvoidingView>
@@ -526,4 +649,31 @@ const styles = StyleSheet.create({
   switchMode: { alignItems: 'center', marginTop: spacing.md },
   switchModeText: { color: colors.orange, fontSize: 14, fontWeight: '500' },
   forgotText: { color: colors.textSecondary, fontSize: 13, textAlign: 'right' },
+  // Botón oficial "Connect with Strava" + divisor visual "O"
+  // marginTop bajado de lg (24) a sm (8) y marginBottom del divider a 0:
+  // total -20px, sube el botón "Connect with Strava" para que no quede tan
+  // suelto al final de la pantalla de login.
+  stravaConnectWrap: { marginTop: spacing.sm, alignItems: 'center', gap: spacing.sm },
+  stravaConnectDivider: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
+    width: '100%',
+  },
+  stravaDividerLine: { flex: 1, height: 1, backgroundColor: colors.border },
+  stravaDividerText: { color: colors.textSecondary, fontSize: 12, fontWeight: '700', letterSpacing: 1 },
+  stravaConnectBtn: { height: 48, width: 48 * 5.95, maxWidth: '100%' },
+  stravaConnectHint: { color: colors.textSecondary, fontSize: 12, textAlign: 'center' },
+  // Banner que aparece cuando entras en modo strava-signup mostrando los
+  // datos prefilled del atleta (avatar + nombre + ciudad).
+  stravaPrefillBanner: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
+    marginHorizontal: spacing.lg, marginBottom: spacing.md,
+    backgroundColor: '#1A0A00', borderColor: '#FC4C02', borderWidth: 1,
+    borderRadius: radius.md, padding: spacing.md,
+  },
+  stravaPrefillAvatar: {
+    width: 44, height: 44, borderRadius: 22,
+    backgroundColor: colors.bgCard,
+  },
+  stravaPrefillTitle: { color: colors.textPrimary, fontSize: 14, fontWeight: '800' },
+  stravaPrefillSub: { color: colors.textSecondary, fontSize: 12, marginTop: 2 },
 });

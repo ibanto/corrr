@@ -292,9 +292,18 @@ export default function RankingScreen({ user, pendingCount = 0, onPendingCountCh
     if (!item.userId) return;
     try {
       const res = await api.sendFriendRequest(item.userId);
-      Alert.alert('👥 Solicitud enviada', `Has enviado solicitud a ${item.username}`);
-    } catch {
-      Alert.alert('👥 Solicitud enviada', `Solicitud enviada a ${item.username}`);
+      // Diferenciamos por status: 'pending' = nueva, otros = ya existía.
+      // Antes mostrábamos siempre "enviada" aunque ya fueran amigos o el
+      // request hubiera fallado — engaño UX.
+      if (res?.status === 'accepted') {
+        Alert.alert('👥 Ya sois amigos', `${item.username} ya está en tus amigos.`);
+      } else if (res?.status === 'pending' && res?.message?.includes('ya existe')) {
+        Alert.alert('Solicitud pendiente', `Ya enviaste una solicitud a ${item.username}.`);
+      } else {
+        Alert.alert('👥 Solicitud enviada', `Has enviado solicitud a ${item.username}.`);
+      }
+    } catch (e: any) {
+      Alert.alert('Error', `No se pudo enviar la solicitud: ${e?.message ?? 'inténtalo de nuevo'}`);
     }
   };
 

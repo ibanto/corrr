@@ -9,6 +9,7 @@ import {
   Modal,
   Dimensions,
   ImageSourcePropType,
+  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, radius } from '../theme';
@@ -51,20 +52,43 @@ const RESPONSES: TauntMessage[] = [
 
 export type TauntMode = 'taunt' | 'response';
 
+/** Used by MapScreen to render received taunts full-screen. The shared list
+ *  is the same one we expose via the picker. */
+export function getTauntFullImage(mode: TauntMode, id: number): ImageSourcePropType | null {
+  const list = mode === 'response' ? RESPONSES : TAUNTS;
+  const item = list.find(t => t.id === id);
+  return item?.full ?? null;
+}
+
 interface Props {
   visible: boolean;
   mode?: TauntMode;
   rivalName?: string;
   zoneName?: string;
+  // Nº de mensajes/respuestas desbloqueados. Por defecto 1 (solo el primero).
+  // Se desbloquea +1 por cada 10 celdas robadas a rivales (capped a 10).
+  // El mismo nº aplica tanto a TAUNTS como a RESPONSES.
+  unlockedCount?: number;
+  // Robos totales del usuario, para calcular cuánto le falta al próximo
+  // desbloqueo y enseñárselo al usuario cuando pulsa un mensaje bloqueado.
+  totalSteals?: number;
   onSend: (messageId: number, mode: TauntMode) => void;
   onClose: () => void;
 }
 
-export default function TauntSelector({ visible, mode = 'taunt', rivalName, zoneName, onSend, onClose }: Props) {
+export default function TauntSelector({
+  visible, mode = 'taunt', rivalName, zoneName,
+  unlockedCount = 1, totalSteals = 0,
+  onSend, onClose,
+}: Props) {
   const [preview, setPreview] = useState<TauntMessage | null>(null);
 
   const messages = mode === 'taunt' ? TAUNTS : RESPONSES;
   const title = mode === 'taunt' ? 'RESPONDER' : 'DEVOLVER';
+  // Clamp al rango [1, 10] por seguridad.
+  const unlocked = Math.max(1, Math.min(10, unlockedCount));
+  // Robos que faltan para el próximo desbloqueo (siguiente bloque de 10).
+  const stealsToNext = unlocked >= 10 ? 0 : 10 - (totalSteals % 10);
 
   if (!visible) return null;
 
@@ -118,26 +142,60 @@ export default function TauntSelector({ visible, mode = 'taunt', rivalName, zone
           <View style={{ width: 40 }} />
         </View>
 
+        {/* Hint con progreso de desbloqueo. Solo se muestra si aún quedan
+            mensajes por desbloquear, para no ensuciar la UI cuando ya están
+            todos disponibles. */}
+        {unlocked < 10 && (
+          <View style={styles.unlockHint}>
+            <Ionicons name="lock-closed" size={14} color={colors.orange} />
+            <Text style={styles.unlockHintText}>
+              {unlocked}/10 desbloqueado · roba {stealsToNext} {stealsToNext === 1 ? 'celda' : 'celdas'} más para el siguiente
+            </Text>
+          </View>
+        )}
+
         {/* Grid */}
         <ScrollView
           style={styles.scrollView}
           contentContainerStyle={styles.grid}
           showsVerticalScrollIndicator={false}
         >
-          {messages.map(msg => (
-            <TouchableOpacity
-              key={msg.id}
-              style={styles.thumbContainer}
-              onPress={() => setPreview(msg)}
-              activeOpacity={0.8}
-            >
-              <Image
-                source={msg.thumb}
-                style={styles.thumbImage}
-                resizeMode="cover"
-              />
-            </TouchableOpacity>
-          ))}
+          {messages.map(msg => {
+            const isLocked = msg.id > unlocked;
+            return (
+              <TouchableOpacity
+                key={msg.id}
+                style={styles.thumbContainer}
+                onPress={() => {
+                  if (isLocked) {
+                    // Bloqueado: feedback claro al usuario en vez de silencio.
+                    // Calculamos cuántos robos faltan para que ESTE mensaje en
+                    // concreto se desbloquee (cada mensaje #N requiere
+                    // (N-1)*10 robos).
+                    const need = Math.max(1, (msg.id - 1) * 10 - totalSteals);
+                    Alert.alert(
+                      'Mensaje bloqueado',
+                      `Roba ${need} ${need === 1 ? 'celda' : 'celdas'} más a rivales para desbloquearlo.`,
+                    );
+                    return;
+                  }
+                  setPreview(msg);
+                }}
+                activeOpacity={isLocked ? 1 : 0.8}
+              >
+                <Image
+                  source={msg.thumb}
+                  style={[styles.thumbImage, isLocked && styles.thumbLocked]}
+                  resizeMode="cover"
+                />
+                {isLocked && (
+                  <View style={styles.lockOverlay}>
+                    <Ionicons name="lock-closed" size={28} color="#fff" />
+                  </View>
+                )}
+              </TouchableOpacity>
+            );
+          })}
         </ScrollView>
       </View>
     </Modal>
@@ -201,6 +259,36 @@ const styles = StyleSheet.create({
   thumbImage: {
     width: '100%',
     height: '100%',
+  },
+  // Cuando el mensaje está bloqueado: bajamos opacidad a la imagen y
+  // superponemos un overlay oscuro con un candado. Visualmente lee como
+  // "no disponible todavía" sin esconder del todo qué hay detrás.
+  thumbLocked: {
+    opacity: 0.25,
+  },
+  lockOverlay: {
+    position: 'absolute',
+    top: 0, left: 0, right: 0, bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.45)',
+  },
+  unlockHint: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xs,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    backgroundColor: `${colors.orange}15`,
+    borderBottomWidth: 1,
+    borderBottomColor: `${colors.orange}30`,
+  },
+  unlockHintText: {
+    fontSize: 12,
+    color: colors.orange,
+    fontWeight: '700',
+    letterSpacing: 0.3,
   },
   // Preview
   previewContainer: {
