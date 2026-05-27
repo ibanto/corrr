@@ -797,6 +797,15 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
   // until we're confident enough to delete it.
   const claimedCellsRef = useRef<Set<string>>(new Set());
   const [claimedCellsTick, setClaimedCellsTick] = useState(0); // bump to force re-render
+  // Generación de polígonos: se incrementa SOLO cuando hay un cambio "duro"
+  // de fuente de datos (al terminar una carrera, tras reload de cells). Su
+  // función es entrar en la key de cada <Polygon> para forzar a RN-Maps a
+  // desmontar y remontar TODOS los polígonos, en vez de reusar la instancia
+  // anterior (que a veces cachea el render y se queda con coords obsoletos
+  // — el bug "rejilla de celdas" que pedía cerrar/abrir la app). Ojo: no
+  // bumpear durante la carrera, RN-Maps reusa polígonos eficientemente
+  // mientras solo crecen.
+  const [polygonGeneration, setPolygonGeneration] = useState(0);
   // Last cell claimed — used to bridge a continuous line of cells to the next
   // one (Bresenham-style), so GPS skips don't leave holes in the trail.
   const lastClaimedCellRef = useRef<{ x: number; y: number } | null>(null);
@@ -1813,6 +1822,10 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         await loadCells();
         claimedCellsRef.current = new Set();
         setClaimedCellsTick(t => t + 1);
+        // Forzar remount completo de todos los polígonos. Sin esto, RN-Maps
+        // reusaba la instancia anterior con coords obsoletos y se quedaba
+        // mostrando "rejilla de celdas" hasta que el usuario reabría la app.
+        setPolygonGeneration(g => g + 1);
         // Refrescar total_steals para que el desbloqueo de taunts se aplique
         // inmediatamente si el usuario ha cruzado un múltiplo de 10 en esta
         // carrera. Re-lee también XP, que sobreescribimos abajo si vino auth.
@@ -2327,10 +2340,11 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
               const ownerColor = getRivalColor(rival.ownerId);
               return (
                 <Polygon
-                  // Mismo motivo que el polígono de "mine-": incluir nº de
-                  // vértices fuerza a RN Maps a refrescar el polígono cuando
-                  // cambia la forma (no se queda con el contorno cacheado).
-                  key={`rival-${rival.ownerId}-${polyIdx}-${p.outer.length}`}
+                  // Key incluye polygonGeneration: cuando termina una carrera
+                  // bumpea y TODOS los polígonos se remontan limpios. El
+                  // outer.length adicional cubre cambios incrementales
+                  // durante la carrera (cuando la generación no cambia).
+                  key={`rival-${polygonGeneration}-${rival.ownerId}-${polyIdx}-${p.outer.length}`}
                   coordinates={p.outer}
                   holes={p.holes.length > 0 ? p.holes : undefined}
                   fillColor={`${ownerColor}80`}
@@ -2358,13 +2372,12 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
           )}
           {myCellsUnion.map((p, i) => (
             <Polygon
-              // Key incluye nº de vértices del contorno externo: si el polígono
-              // cambia de forma entre renders (p.ej. al pasar de "celdas
-              // sueltas" a "blob unificado" después de un saveRun), la key
-              // distinta fuerza a RN Maps a re-montar el polígono en lugar de
-              // intentar reusar el anterior (que a veces no se refresca y
-              // dejaba el efecto rejilla que pedía cerrar/abrir la app).
-              key={`mine-${i}-${p.outer.length}`}
+              // Key incluye polygonGeneration: bumpea al terminar una carrera
+              // y fuerza remount limpio de todos los polígonos (RN-Maps no
+              // puede aferrarse a una instancia anterior con coords zombies).
+              // outer.length cubre cambios incrementales durante el run sin
+              // necesidad de bumpear la generación cada tick.
+              key={`mine-${polygonGeneration}-${i}-${p.outer.length}`}
               coordinates={p.outer}
               holes={p.holes.length > 0 ? p.holes : undefined}
               fillColor={`${colors.orange}80`}

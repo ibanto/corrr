@@ -13,7 +13,9 @@ import {
   ImageSourcePropType,
   Alert,
   Linking,
+  AppState,
 } from 'react-native';
+import { checkForUpdates } from './src/utils/checkForUpdates';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from './src/theme';
@@ -47,7 +49,11 @@ const TABS: { key: Tab; label: string }[] = [
 ];
 
 const SESSION_KEY = '@corrr_session';
-const CURRENT_VERSION = '1.10.5';
+// Exportada para que PerfilScreen pueda usar la misma constante al llamar
+// al botón manual "Buscar actualizaciones" sin riesgo de desincronizarla.
+// Recordatorio: bumpear esto JUNTO con versionCode/versionName de
+// build.gradle en cada release (ver CLAUDE.md §4).
+export const CURRENT_VERSION = '1.10.5';
 interface User { id: string; username: string; email: string; city?: string; }
 interface Session { token: string; user: User; }
 
@@ -92,32 +98,18 @@ export default function App() {
     })();
   }, []);
 
-  // Check for app updates
+  // Auto-check de versión: al arrancar la app Y cada vez que vuelva a
+  // foreground tras estar en background. Antes solo corría al montar
+  // (useEffect con deps vacías) → si el usuario nunca cerraba la app del
+  // todo, el aviso de "nueva versión" no llegaba nunca. Con AppState lo
+  // reintentamos al activar la app, que es cuando es útil para el usuario.
+  // Modo silent: no decimos nada si no hay update ni si la red falla.
   useEffect(() => {
-    (async () => {
-      try {
-        const res = await fetch('https://corrr-api-production.up.railway.app/app/version');
-        const data = await res.json();
-        if (data.latestVersion && data.latestVersion !== CURRENT_VERSION) {
-          // Compare version numbers
-          const current = CURRENT_VERSION.split('.').map(Number);
-          const latest = data.latestVersion.split('.').map(Number);
-          const isNewer = latest[0] > current[0] ||
-            (latest[0] === current[0] && latest[1] > current[1]) ||
-            (latest[0] === current[0] && latest[1] === current[1] && latest[2] > current[2]);
-          if (isNewer) {
-            Alert.alert(
-              '¡Nueva versión disponible!',
-              `CORRR ${data.latestVersion} ya está disponible. Actualiza para disfrutar de las últimas mejoras.`,
-              [
-                { text: 'Ahora no', style: 'cancel' },
-                { text: 'Actualizar', onPress: () => Linking.openURL(data.updateUrl) },
-              ]
-            );
-          }
-        }
-      } catch {}
-    })();
+    checkForUpdates(CURRENT_VERSION, true);
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') checkForUpdates(CURRENT_VERSION, true);
+    });
+    return () => sub.remove();
   }, []);
 
   const handleAuthenticated = async (token: string, userData: User) => {
