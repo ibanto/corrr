@@ -33,13 +33,16 @@ const RAILWAY_URL = process.env.RAILWAY_PUBLIC_DOMAIN
   ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
   : (process.env.RAILWAY_URL ?? 'http://localhost:3000');
 const db = new Pool({ connectionString: process.env.DATABASE_URL });
-// Fail-fast si JWT_ACCESS_SECRET no está definida: sin esta guard,
-// TextEncoder().encode(undefined) producía un secret literal "undefined" →
-// cualquiera podría forjar tokens. Mejor crashear al arranque que correr en
-// producción con auth comprometida.
-if (!process.env.JWT_ACCESS_SECRET || process.env.JWT_ACCESS_SECRET.length < 32) {
-  console.error('[FATAL] JWT_ACCESS_SECRET missing or too short (min 32 chars). Set it in Railway env vars.');
+// JWT_ACCESS_SECRET sí o sí debe existir: sin él, TextEncoder().encode(undefined)
+// produciría un secret literal "undefined" → cualquiera podría forjar tokens.
+// Si es corto pero existe, avisamos (warning, no fail) para no romper deploys
+// con secrets ya en producción.
+if (!process.env.JWT_ACCESS_SECRET) {
+  console.error('[FATAL] JWT_ACCESS_SECRET missing. Set it in Railway env vars.');
   process.exit(1);
+}
+if (process.env.JWT_ACCESS_SECRET.length < 32) {
+  console.warn('[WARN] JWT_ACCESS_SECRET is shorter than 32 chars. Consider rotating to a 32+ char random value.');
 }
 const SECRET = new TextEncoder().encode(process.env.JWT_ACCESS_SECRET);
 const resend = new Resend(process.env.RESEND_API_KEY || '');
@@ -800,11 +803,16 @@ app.get('/achievements', { preHandler: requireAuth }, async (req: any, reply) =>
 
 // ── Admin: Challenges CRUD ──────────────────────────────────────────────────
 
-// Antes había fallback `'corrr-admin-2024'` hardcodeado — cualquiera con acceso
-// al repo podía llamar /admin/* si la env var no estaba puesta. Ahora fail-fast.
-if (!process.env.ADMIN_KEY || process.env.ADMIN_KEY.length < 16) {
-  console.error('[FATAL] ADMIN_KEY missing or too short (min 16 chars). Set it in Railway env vars.');
+// ADMIN_KEY: antes había fallback `'corrr-admin-2024'` hardcodeado en el
+// código — cualquiera con acceso al repo podía llamar /admin/* si no había
+// env var. Ahora exigimos que esté definida (fail si missing), pero si es
+// corta solo avisamos (no romper deploys con valores existentes cortos).
+if (!process.env.ADMIN_KEY) {
+  console.error('[FATAL] ADMIN_KEY missing. Set it in Railway env vars.');
   process.exit(1);
+}
+if (process.env.ADMIN_KEY.length < 16) {
+  console.warn('[WARN] ADMIN_KEY is shorter than 16 chars. Consider rotating to a 16+ char random value.');
 }
 const ADMIN_KEY = process.env.ADMIN_KEY;
 
