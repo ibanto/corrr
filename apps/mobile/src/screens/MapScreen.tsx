@@ -806,6 +806,13 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
   // bumpear durante la carrera, RN-Maps reusa polígonos eficientemente
   // mientras solo crecen.
   const [polygonGeneration, setPolygonGeneration] = useState(0);
+  // Defensa extra contra el bug "rejilla solapada": al terminar una carrera
+  // ocultamos TODOS los polígonos durante un frame antes de remontarlos. El
+  // unmount completo (no por cambio de key, que RN-Maps a veces ignora a
+  // nivel nativo) fuerza a la capa nativa de Google Maps a destruir las
+  // instancias Polygon viejas. Luego el `true` las monta limpias. Esto pasa
+  // detrás del LoadingScreen (`savingRun`), así que el usuario no ve flicker.
+  const [polygonsVisible, setPolygonsVisible] = useState(true);
   // Last cell claimed — used to bridge a continuous line of cells to the next
   // one (Bresenham-style), so GPS skips don't leave holes in the trail.
   const lastClaimedCellRef = useRef<{ x: number; y: number } | null>(null);
@@ -1815,6 +1822,12 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         claimedCells,
       }).then(async (res) => {
         loadZones();
+        // Ocultar polígonos ANTES del reload: cuando polygonsVisible=false
+        // el render del array colapsa a `false` y React desmonta TODOS los
+        // <Polygon>, lo que obliga a la capa nativa de Google Maps a
+        // destruir las instancias antiguas (RN-Maps a veces no las destruye
+        // si solo cambia la key dentro de un array).
+        setPolygonsVisible(false);
         // Wait for the cells reload to finish before clearing the local set —
         // otherwise we'd see a brief "no cells" flash between the clear and the
         // remoteCells state update. Clearing prevents the double-render (two
@@ -1822,10 +1835,12 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         await loadCells();
         claimedCellsRef.current = new Set();
         setClaimedCellsTick(t => t + 1);
-        // Forzar remount completo de todos los polígonos. Sin esto, RN-Maps
-        // reusaba la instancia anterior con coords obsoletos y se quedaba
-        // mostrando "rejilla de celdas" hasta que el usuario reabría la app.
         setPolygonGeneration(g => g + 1);
+        // Esperar 1-2 frames para que el commit de `false` llegue al nativo
+        // antes de volver a montar. Sin esta espera React batchearía
+        // false→true en el mismo render y nativo nunca vería el unmount.
+        await new Promise(r => setTimeout(r, 50));
+        setPolygonsVisible(true);
         // Refrescar total_steals para que el desbloqueo de taunts se aplique
         // inmediatamente si el usuario ha cruzado un múltiplo de 10 en esta
         // carrera. Re-lee también XP, que sobreescribimos abajo si vino auth.
@@ -2333,8 +2348,10 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
           {/* Grid v2 — unified territory polygons. Each owner's cells are merged
               into one (or several disjoint) polygons with a single perimeter
               stroke and no internal cell lines. polygon-clipping handles holes
-              for surrounded enemy cells. Tappable rivals open the info modal. */}
-          {rivalCellsUnions.map((rival, rivalIdx) =>
+              for surrounded enemy cells. Tappable rivals open the info modal.
+              `polygonsVisible` se pone a false 1 frame al terminar una carrera
+              para forzar el unmount de las instancias nativas (ver state). */}
+          {polygonsVisible && rivalCellsUnions.map((rival, rivalIdx) =>
             rival.polygons.map((p, polyIdx) => {
               // UUID del owner → garantiza color único por usuario (no por nombre).
               const ownerColor = getRivalColor(rival.ownerId);
@@ -2370,7 +2387,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
               );
             })
           )}
-          {myCellsUnion.map((p, i) => (
+          {polygonsVisible && myCellsUnion.map((p, i) => (
             <Polygon
               // Key incluye polygonGeneration: bumpea al terminar una carrera
               // y fuerza remount limpio de todos los polígonos (RN-Maps no
