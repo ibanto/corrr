@@ -21,8 +21,7 @@ import * as Location from 'expo-location';
 import { colors, spacing, radius } from '../theme';
 import { api, MyStats, RunRecord, Achievement, ProfileData } from '../services/api';
 import EditProfileScreen from './EditProfileScreen';
-import { checkForUpdates } from '../utils/checkForUpdates';
-import { CURRENT_VERSION } from '../../App';
+import { checkForUpdates, CURRENT_VERSION } from '../utils/checkForUpdates';
 
 interface Props {
   user: { username: string; id: string; city?: string } | null;

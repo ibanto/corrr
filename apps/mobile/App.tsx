@@ -15,7 +15,7 @@ import {
   Linking,
   AppState,
 } from 'react-native';
-import { checkForUpdates } from './src/utils/checkForUpdates';
+import { checkForUpdates, CURRENT_VERSION } from './src/utils/checkForUpdates';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from './src/theme';
@@ -49,11 +49,9 @@ const TABS: { key: Tab; label: string }[] = [
 ];
 
 const SESSION_KEY = '@corrr_session';
-// Exportada para que PerfilScreen pueda usar la misma constante al llamar
-// al botón manual "Buscar actualizaciones" sin riesgo de desincronizarla.
-// Recordatorio: bumpear esto JUNTO con versionCode/versionName de
-// build.gradle en cada release (ver CLAUDE.md §4).
-export const CURRENT_VERSION = '1.10.5';
+// CURRENT_VERSION ahora vive en src/utils/checkForUpdates.ts — no aquí —
+// para romper la dependencia circular App ↔ PerfilScreen que rompía el
+// botón "Buscar actualizaciones".
 interface User { id: string; username: string; email: string; city?: string; }
 interface Session { token: string; user: User; }
 

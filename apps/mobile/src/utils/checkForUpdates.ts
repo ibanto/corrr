@@ -2,6 +2,13 @@ import { Alert, Linking } from 'react-native';
 
 const VERSION_ENDPOINT = 'https://corrr-api-production.up.railway.app/app/version';
 
+/** Versión actual del cliente. Se exporta desde aquí (no desde App.tsx)
+ *  para evitar la dependencia circular App ↔ PerfilScreen, que dejaba
+ *  CURRENT_VERSION como `undefined` en PerfilScreen y rompía el botón
+ *  "Buscar actualizaciones" en silencio. Recordatorio: bumpear esto JUNTO
+ *  con versionCode/versionName de build.gradle en cada release (CLAUDE.md §4). */
+export const CURRENT_VERSION = '1.10.6';
+
 /** Compara dos versiones semver tipo "1.10.5". Devuelve true si `latest`
  *  es estrictamente más nueva que `current`. Asume formato X.Y.Z fijo. */
 function isNewerVersion(latest: string, current: string): boolean {
