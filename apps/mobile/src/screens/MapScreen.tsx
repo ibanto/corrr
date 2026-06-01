@@ -822,6 +822,12 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
   const recentCoordsRef = useRef<Coord[]>([]);
   const [remoteCells, setRemoteCells] = useState<RemoteCell[]>([]);
   const [selectedZone, setSelectedZone] = useState<RemoteZone | null>(null);
+  // Modal de "aviso destacado" (prominent disclosure) que Google Play exige
+  // mostrar ANTES de invocar el diálogo del sistema para
+  // ACCESS_BACKGROUND_LOCATION. La política requiere que el usuario haga
+  // una acción afirmativa explícita dentro de la app reconociendo qué datos
+  // se recogen y por qué. Sin esto, rechazo automático en revisión.
+  const [bgDisclosureVisible, setBgDisclosureVisible] = useState(false);
   const [userXP, setUserXP] = useState(0);
   const [mapRegion, setMapRegion] = useState(DEFAULT_REGION);
   const [cityName, setCityName] = useState('...');
@@ -1417,7 +1423,34 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     }
     // Aviso "Pantalla activa" eliminado en v1.6.2 — el foreground service
     // sobrevive a la pantalla apagada perfectamente, ya no hay riesgo real.
+
+    // Si el permiso de background ya está concedido de una sesión anterior,
+    // saltamos el aviso destacado y arrancamos directo. Solo lo mostramos
+    // cuando vamos a invocar de verdad el diálogo del sistema.
+    const { status: existingBgStatus } = await Location.getBackgroundPermissionsAsync();
+    if (existingBgStatus === 'granted') {
+      doStartRun();
+      return;
+    }
+
+    // Aviso destacado obligatorio por política de Google Play antes de
+    // pedir ACCESS_BACKGROUND_LOCATION. Cuando el usuario pulse "Aceptar"
+    // en el modal, handleBgDisclosureAccept llama a doStartRun y allí se
+    // dispara el diálogo del sistema.
+    setBgDisclosureVisible(true);
+  };
+
+  const handleBgDisclosureAccept = () => {
+    setBgDisclosureVisible(false);
     doStartRun();
+  };
+
+  const handleBgDisclosureDecline = () => {
+    setBgDisclosureVisible(false);
+    Alert.alert(
+      'Permiso necesario',
+      'Sin acceso a la ubicación en background CORRR no puede registrar tu carrera cuando bloqueas la pantalla. Vuelve a pulsar "Iniciar carrera" cuando quieras intentarlo.',
+    );
   };
 
   const doStartRun = async () => {
@@ -2609,6 +2642,85 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
           </TouchableOpacity>
         )}
       </View>
+
+      {/* Aviso destacado de ubicación en background. OBLIGATORIO antes de
+          invocar el diálogo de permiso del sistema (política de Google Play
+          para ACCESS_BACKGROUND_LOCATION). Sin esto la app no pasa revisión.
+          El usuario tiene que pulsar "Aceptar y continuar" para que tras eso
+          se llame a requestBackgroundPermissionsAsync y aparezca el diálogo
+          nativo de Android. Si pulsa "Ahora no", se cancela el inicio de la
+          carrera. */}
+      <Modal
+        visible={bgDisclosureVisible}
+        transparent
+        animationType="fade"
+        statusBarTranslucent
+        onRequestClose={handleBgDisclosureDecline}
+      >
+        <View style={styles.bgDisclosureBackdrop}>
+          <View style={styles.bgDisclosureCard}>
+            <View style={styles.bgDisclosureHeader}>
+              <Image source={require('../../assets/icon.png')} style={styles.bgDisclosureLogo} />
+              <Text style={styles.bgDisclosureTitle}>Permiso de ubicación</Text>
+            </View>
+
+            <Text style={styles.bgDisclosureLead}>
+              Para registrar tu carrera correctamente, CORRR necesita acceso
+              a tu ubicación incluso cuando bloqueas la pantalla o cambias
+              de aplicación.
+            </Text>
+
+            <View style={styles.bgDisclosureSection}>
+              <Text style={styles.bgDisclosureSectionTitle}>¿Qué datos recogemos?</Text>
+              <Text style={styles.bgDisclosureSectionBody}>
+                Únicamente la ruta GPS de tu carrera mientras esté activa
+                (desde "Iniciar carrera" hasta "Parar"). Se calcula
+                distancia, ritmo y las celdas de territorio que pisas.
+              </Text>
+            </View>
+
+            <View style={styles.bgDisclosureSection}>
+              <Text style={styles.bgDisclosureSectionTitle}>¿Por qué en segundo plano?</Text>
+              <Text style={styles.bgDisclosureSectionBody}>
+                Android suspende las apps cuando la pantalla se bloquea. Sin
+                el permiso en segundo plano se perderían tramos de tu carrera
+                cada vez que apagues la pantalla, falseando la distancia y el
+                territorio que conquistas.
+              </Text>
+            </View>
+
+            <View style={styles.bgDisclosureSection}>
+              <Text style={styles.bgDisclosureSectionTitle}>¿A dónde van tus datos?</Text>
+              <Text style={styles.bgDisclosureSectionBody}>
+                A tu cuenta de CORRR en nuestro servidor (EU, GDPR). No se
+                ceden a terceros y puedes borrarlos cuando quieras desde
+                Perfil → Eliminar cuenta.
+              </Text>
+            </View>
+
+            <Text style={styles.bgDisclosureFootnote}>
+              Tras pulsar "Aceptar y continuar", Android te pedirá confirmación.
+              Elige "Permitir todo el tiempo" para mejor experiencia.
+            </Text>
+
+            <TouchableOpacity
+              style={styles.bgDisclosureAcceptBtn}
+              onPress={handleBgDisclosureAccept}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.bgDisclosureAcceptText}>Aceptar y continuar</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.bgDisclosureDeclineBtn}
+              onPress={handleBgDisclosureDecline}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.bgDisclosureDeclineText}>Ahora no</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -2979,5 +3091,85 @@ const styles = StyleSheet.create({
   sentinelBuy: { fontSize: 13, fontWeight: '700', color: colors.orange },
   sentinelBalance: {
     fontSize: 12, color: colors.textSecondary, textAlign: 'center', marginTop: spacing.sm,
+  },
+
+  // ── Aviso destacado de ubicación en background (Google Play policy) ──
+  bgDisclosureBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.75)',
+    justifyContent: 'center',
+    paddingHorizontal: spacing.lg,
+  },
+  bgDisclosureCard: {
+    backgroundColor: colors.bg,
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  bgDisclosureHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginBottom: spacing.md,
+  },
+  bgDisclosureLogo: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+  },
+  bgDisclosureTitle: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: colors.textPrimary,
+  },
+  bgDisclosureLead: {
+    fontSize: 14,
+    color: colors.textSecondary,
+    lineHeight: 20,
+    marginBottom: spacing.md,
+  },
+  bgDisclosureSection: {
+    marginBottom: spacing.md,
+  },
+  bgDisclosureSectionTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.orange,
+    marginBottom: 4,
+  },
+  bgDisclosureSectionBody: {
+    fontSize: 13,
+    color: colors.textSecondary,
+    lineHeight: 18,
+  },
+  bgDisclosureFootnote: {
+    fontSize: 12,
+    color: colors.textMuted,
+    fontStyle: 'italic',
+    marginTop: spacing.xs,
+    marginBottom: spacing.md,
+    lineHeight: 16,
+  },
+  bgDisclosureAcceptBtn: {
+    backgroundColor: colors.orange,
+    paddingVertical: 14,
+    borderRadius: radius.full,
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  bgDisclosureAcceptText: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#fff',
+  },
+  bgDisclosureDeclineBtn: {
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  bgDisclosureDeclineText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.textSecondary,
   },
 });
