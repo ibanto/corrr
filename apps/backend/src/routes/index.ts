@@ -2514,7 +2514,7 @@ app.post('/strava/webhook', async (req: any, reply) => {
 // release. Si las env vars no están, se usan los fallbacks hardcodeados —
 // que SÍ hay que mantener sincronizados manualmente con cada subida a Play.
 const LATEST_APP_VERSION = process.env.LATEST_APP_VERSION ?? '1.10.6';
-const LATEST_APP_VC = parseInt(process.env.LATEST_APP_VC ?? '40', 10);
+const LATEST_APP_VC = parseInt(process.env.LATEST_APP_VC ?? '41', 10);
 const MIN_APP_VERSION = process.env.MIN_APP_VERSION ?? '1.0.0';
 
 app.get('/app/version', async (_req: any, reply) => {
