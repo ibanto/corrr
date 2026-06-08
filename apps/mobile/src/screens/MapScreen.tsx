@@ -1042,6 +1042,16 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
 
   useEffect(() => {
     (async () => {
+      // Cold-start (v1.10.8): arrancar loadZones/loadCells contra
+      // DEFAULT_REGION inmediatamente, sin esperar al permiso ni al fix
+      // GPS. Antes el mapa se quedaba en blanco 2-5 segundos en arranques
+      // fríos (lastKnown null + getCurrentPosition lento). Ahora vemos
+      // cells al instante y cuando llega la posición real, re-centramos y
+      // re-cargamos con coords del usuario. Las dos llamadas duplicadas
+      // valen la pena por la sensación de inmediatez.
+      loadZones(DEFAULT_REGION.latitude, DEFAULT_REGION.longitude);
+      loadCells(DEFAULT_REGION.latitude, DEFAULT_REGION.longitude);
+
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status === 'granted') {
         try {
