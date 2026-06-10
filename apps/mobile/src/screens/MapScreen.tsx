@@ -1871,12 +1871,16 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         // destruir las instancias antiguas (RN-Maps a veces no las destruye
         // si solo cambia la key dentro de un array).
         setPolygonsVisible(false);
-        // Wait for the cells reload to finish before clearing the local set —
-        // otherwise we'd see a brief "no cells" flash between the clear and the
-        // remoteCells state update. Clearing prevents the double-render (two
-        // alpha tones overlapping on the same cells).
         await loadCells();
-        claimedCellsRef.current = new Set();
+        // NO vaciamos claimedCellsRef (v1.10.9). loadCells solo trae las celdas
+        // del VIEWPORT actual, y tras la carrera la cámara está en zoom 17
+        // (cerca, del modo carrera) → solo carga celdas alrededor del punto
+        // final del run. Si borrábamos el set local, el resto del recorrido
+        // (fuera del viewport) desaparecía y el mapa no se ponía todo naranja
+        // hasta reabrir la app (que recarga con zoom amplio). Manteniendo el
+        // set local, las celdas del run siguen pintadas pase lo que pase con
+        // el viewport. myCellsUnion deduplica por clave, así que tener una
+        // celda en remoteCells Y en claimedCellsRef NO causa doble-alpha.
         setClaimedCellsTick(t => t + 1);
         setPolygonGeneration(g => g + 1);
         // Esperar 1-2 frames para que el commit de `false` llegue al nativo
