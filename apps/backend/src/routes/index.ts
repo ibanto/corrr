@@ -213,7 +213,11 @@ async function initDB() {
 
   // ── Points engine state (v1.7 economy) ─────────────────────────────────────
   // last_run_date + streak_days power the "carrera 3 días seguidos = ×1.5" bonus.
-  // best_daily_km powers the "supera tu mejor km/día = ×1.2 en puntos por km" bonus.
+  // best_daily_km: pese al nombre, almacena la MEJOR DISTANCIA DE UNA SOLA
+  // CARRERA (no la suma diaria). El multiplicador PB ×1.2 se aplica cuando la
+  // carrera supera ese récord. NO renombramos la columna en producción (datos
+  // vivos) para evitar una migración arriesgada; el nombre se mantiene por
+  // compatibilidad pero la semántica real es "best_single_run_km".
   await db.query(`ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS last_run_date DATE`).catch(() => {});
   await db.query(`ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS streak_days INT DEFAULT 0`).catch(() => {});
   await db.query(`ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS best_daily_km FLOAT DEFAULT 0`).catch(() => {});
@@ -1266,7 +1270,7 @@ async function checkAchievements(client: any, userId: string) {
 app.post('/runs', { preHandler: requireAuth }, async (req: any, reply) => {
   // `points` (legacy) is the client's estimate. We recompute authoritatively
   // server-side below using loopBonus + cellPoints + kmPoints * multipliers.
-  const { distanceKm, durationSecs, points: clientPointsEstimate, loopBonus, zonesCount, zones, claimedCells } = req.body ?? {};
+  const { distanceKm, durationSecs, points: clientPointsEstimate, loopBonus, loopClosed, zonesCount, zones, claimedCells } = req.body ?? {};
 
   // Sanitización + límites anti-cheat. Aunque la lógica de puntos se
   // recomputa server-side, valores absurdos en los inputs (carreras de
@@ -1456,12 +1460,24 @@ app.post('/runs', { preHandler: requireAuth }, async (req: any, reply) => {
     //   total       = round(subtotal * streak_mult)    (×1.5 if streak ≥ 3 days)
     const kmPointsBase = Math.round((distanceKm || 0) * 10);
     const cellPoints = newCellCount * 1 + stolenCells.length * 2;
-    // Backwards compat: v1.6.x clients didn't send loopBonus separately. We can't
-    // perfectly back-extract it from the legacy `points` (which mixes km + loop +
-    // cell estimate), so for those we just trust the client estimate and skip
-    // recomputation entirely. v1.7+ sends loopBonus explicitly → full recompute.
-    const isLegacyClient = loopBonus === undefined;
-    const safeLoopBonus = Math.max(0, Math.floor(Number(loopBonus) || 0));
+    // Loop bonus — AUTORITATIVO server-side (v1.10.10+). El cliente moderno
+    // envía `loopClosed` (bool: ¿cerró un círculo en la carrera?). Calculamos
+    // aquí el bono y NO confiamos en ningún estimate del cliente:
+    //   - El territorio interior del loop ya se premia como cell_points (1/celda
+    //     vía flood-fill), así que el bono es un "extra plano por cerrar", no
+    //     por-celda → evita el doble conteo que tenía el sistema legacy.
+    //   - 25 pts por loop; 50 si la carrera fue ≥ 3 km (premia loops grandes).
+    // Compat: clientes antiguos sin `loopClosed` pero con `loopBonus` → usamos
+    // su valor con clamp (cap 75). Si NO mandan ninguno de los dos → 0. Antes
+    // ahí confiábamos el estimate COMPLETO del cliente (bypass anti-cheat);
+    // ahora siempre recomputamos.
+    const sentLoopClosed = typeof loopClosed === 'boolean';
+    let safeLoopBonus = 0;
+    if (sentLoopClosed) {
+      safeLoopBonus = loopClosed ? (distanceKm >= 3 ? 50 : 25) : 0;
+    } else if (loopBonus !== undefined) {
+      safeLoopBonus = Math.max(0, Math.min(75, Math.floor(Number(loopBonus) || 0)));
+    }
 
     // Streak: look at last_run_date. Same day = no change. Consecutive day = +1.
     // Anything else = reset to 1.
@@ -1485,9 +1501,10 @@ app.post('/runs', { preHandler: requireAuth }, async (req: any, reply) => {
 
     const kmPoints = Math.round(kmPointsBase * pbMultiplier);
     const subtotal = kmPoints + cellPoints + safeLoopBonus;
-    const authoritativePoints = isLegacyClient
-      ? Math.max(0, Math.floor(Number(clientPointsEstimate) || 0))
-      : Math.round(subtotal * streakMultiplier);
+    // Siempre recomputamos server-side (el bypass legacy que confiaba el
+    // estimate del cliente se ha eliminado). clientPointsEstimate solo se usa
+    // ya como valor de display optimista en el cliente, nunca aquí.
+    const authoritativePoints = Math.round(subtotal * streakMultiplier);
 
     // Persist the recomputed points on the run row (we inserted with the
     // client's estimate earlier).
@@ -1540,6 +1557,8 @@ app.post('/runs', { preHandler: requireAuth }, async (req: any, reply) => {
       breakdown: {
         kmPoints,
         cellPoints,
+        newCells: newCellCount,
+        stolenCells: stolenCells.length,
         loopBonus: safeLoopBonus,
         streakMultiplier,
         pbMultiplier,

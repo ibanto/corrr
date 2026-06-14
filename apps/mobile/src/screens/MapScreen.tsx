@@ -771,6 +771,20 @@ function isBufferStraightLine(lastGoodPoint: Coord, bufferPoints: Coord[]): bool
   return sinuosity < SINUOSITY_THRESHOLD; // ratio close to 1 = straight line
 }
 
+/** Una fila del desglose de puntos del resumen post-carrera. `highlight` pinta
+ *  el valor en naranja (para multiplicadores, que son lo "premium"). */
+function BreakdownRow({ label, value, hint, highlight }: { label: string; value: string; hint?: string; highlight?: boolean }) {
+  return (
+    <View style={styles.breakdownRow}>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.breakdownLabel}>{label}</Text>
+        {hint ? <Text style={styles.breakdownHint}>{hint}</Text> : null}
+      </View>
+      <Text style={[styles.breakdownValue, highlight && styles.breakdownValueHi]}>{value}</Text>
+    </View>
+  );
+}
+
 export default function MapScreen({ user, onNavigateToShop }: Props) {
   const [isRunning, setIsRunning] = useState(false);
   const [runTime, setRunTime] = useState(0);
@@ -789,8 +803,18 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
   const [savingRun, setSavingRun] = useState(false);
   const [runSummary, setRunSummary] = useState<{
     visible: boolean; distance: number; time: number; points: number; xp: number; zones: number;
+    breakdown?: {
+      kmPoints: number; cellPoints: number; newCells?: number; stolenCells?: number;
+      loopBonus: number; streakMultiplier: number; pbMultiplier: number;
+      streakDays: number; beatPB: boolean;
+    } | null;
   } | null>(null);
   const [loopDetected, setLoopDetected] = useState(false);
+  // Espejo síncrono de "¿se cerró un círculo en esta carrera?". loopDetected es
+  // state (async) y stopRun necesita leer el valor al vuelo para mandar
+  // `loopClosed` al backend, que calcula el bono de loop autoritativo. Se pone
+  // a true dentro de closeLoop y se resetea al iniciar carrera.
+  const loopClosedRef = useRef(false);
   const [remoteZones, setRemoteZones] = useState<RemoteZone[]>([]);
   // Grid (v2): cells claimed in the current run live in a Set keyed by "x,y".
   // The polygon system above still runs in parallel during the v1.5 → v1.6 transition
@@ -1377,12 +1401,14 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
 
     const isSteal = stealCount > 0;
 
-    // Puntos por cerrar loop: 100 si recorrido > 3 km, sino 50
-    // Loop closure bonuses (v1.7 economy): 25 for short loops, 50 for ≥3km loops,
-    // +25 per rival polygon stolen at close. Cell-level points are computed
-    // server-side at saveRun (1 new / 2 stolen) so we don't know the breakdown yet here.
-    const loopBase = distance >= 3 ? 50 : 25;
-    const loopPoints = loopBase + (stealCount * 25);
+    // Marca síncrona de cierre de loop para que stopRun mande `loopClosed` al
+    // backend (que calcula el bono autoritativo). El bono real lo decide el
+    // servidor; aquí solo computamos un PREVIEW plano (25 / 50 si ≥3km) para el
+    // popup y el contador en vivo. Eliminado el término legacy `stealCount * 25`
+    // (zonas-polígono v1.5) que casi nunca se disparaba en el mundo de celdas y
+    // creaba incoherencia con el cálculo server-side.
+    loopClosedRef.current = true;
+    const loopPoints = distance >= 3 ? 50 : 25;
 
     // Merge new zone with existing own zones (union, not stack)
     setConqueredZones(prev => {
@@ -1490,6 +1516,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     splitsTrackingRef.current = { lastKm: 0, lastTime: 0 };
     setCurrentPath([]);
     setLoopDetected(false);
+    loopClosedRef.current = false; // reset del espejo síncrono de cierre de loop
     setSpeedWarning(false);
     isAutoPausedRef.current = false;
     setIsAutoPaused(false);
@@ -1858,7 +1885,8 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         distanceKm: distance,
         durationSecs: runTime,
         points: finalPoints, // client estimate — backend ignores and recomputes
-        loopBonus: totalPoints, // sum of loop closure bonuses (trusted)
+        loopBonus: totalPoints, // legacy: preview de bonos de loop (backend lo clampa)
+        loopClosed: loopClosedRef.current, // v1.10.10: el backend calcula el bono autoritativo
         xp: earnedXP,
         zonesCount,
         zones: closedZones.map(z => ({ coords: z.coords, area: z.area, points: z.points })),
@@ -1911,6 +1939,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
           points: authPoints,
           xp: authXP,
           zones: zonesCount,
+          breakdown: res.breakdown ?? null,
         });
         setTotalXP(authXP);
         // Show the "ZONA ROBADA" popup for either system: polygon zones (v1.5)
@@ -2201,6 +2230,30 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
                   <Text style={styles.summaryXpValue}>+{runSummary.xp} XP</Text>
                 </View>
               </View>
+
+              {/* Desglose de puntos (v1.10.10): hace visible de dónde sale el
+                  total. Antes el usuario veía un número opaco; ahora ve km,
+                  celdas, robos, bono de cierre y multiplicadores. */}
+              {runSummary.breakdown && (
+                <View style={styles.summaryBreakdown}>
+                  <BreakdownRow label="Distancia" value={`+${runSummary.breakdown.kmPoints}`} hint={`${runSummary.distance.toFixed(2)} km`} />
+                  {(runSummary.breakdown.newCells ?? 0) > 0 && (
+                    <BreakdownRow label="Celdas nuevas" value={`+${runSummary.breakdown.newCells}`} hint={`${runSummary.breakdown.newCells} × 1`} />
+                  )}
+                  {(runSummary.breakdown.stolenCells ?? 0) > 0 && (
+                    <BreakdownRow label="Celdas robadas" value={`+${(runSummary.breakdown.stolenCells ?? 0) * 2}`} hint={`${runSummary.breakdown.stolenCells} × 2`} />
+                  )}
+                  {runSummary.breakdown.loopBonus > 0 && (
+                    <BreakdownRow label="Cierre de círculo" value={`+${runSummary.breakdown.loopBonus}`} hint="¡zona cerrada!" />
+                  )}
+                  {runSummary.breakdown.pbMultiplier > 1 && (
+                    <BreakdownRow label="Récord personal" value="×1.2" hint="nueva mejor distancia" highlight />
+                  )}
+                  {runSummary.breakdown.streakMultiplier > 1 && (
+                    <BreakdownRow label={`Racha ${runSummary.breakdown.streakDays} días`} value="×1.5" hint="¡sigue así!" highlight />
+                  )}
+                </View>
+              )}
 
               <TouchableOpacity
                 style={styles.summaryBtn}
@@ -3037,6 +3090,19 @@ const styles = StyleSheet.create({
   summaryPointsLabel: { fontSize: 14, color: colors.textSecondary, fontWeight: '600' },
   summaryXpRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   summaryXpValue: { fontSize: 18, fontWeight: '800', color: '#FFD700' },
+  // Desglose de puntos (v1.10.10)
+  summaryBreakdown: {
+    width: '100%', marginBottom: spacing.lg, gap: 2,
+  },
+  breakdownRow: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingVertical: 8, paddingHorizontal: spacing.sm,
+    borderBottomWidth: 1, borderBottomColor: colors.border,
+  },
+  breakdownLabel: { fontSize: 14, fontWeight: '700', color: colors.textPrimary },
+  breakdownHint: { fontSize: 11, color: colors.textMuted, marginTop: 1 },
+  breakdownValue: { fontSize: 15, fontWeight: '800', color: colors.textSecondary },
+  breakdownValueHi: { color: colors.orange },
   summaryBtn: {
     backgroundColor: colors.orange, paddingVertical: 14, paddingHorizontal: 48,
     borderRadius: radius.full,

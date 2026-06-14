@@ -155,7 +155,12 @@ interface CellRunPayload extends RunPayload {
   claimedCells?: Cell[];
   // Loop closure bonus accumulated client-side during the run. Sent separately
   // so the backend can recompute the authoritative point total with multipliers.
+  // Legacy (clientes < v1.10.10). El backend lo clampa a [0,75].
   loopBonus?: number;
+  // v1.10.10+: ¿se cerró al menos un círculo en la carrera? El backend calcula
+  // el bono de loop autoritativo a partir de esto (25 / 50 si ≥3km), en vez de
+  // confiar en el estimate del cliente.
+  loopClosed?: boolean;
 }
 
 interface RunSaveResult {
@@ -169,6 +174,8 @@ interface RunSaveResult {
   breakdown?: {
     kmPoints: number;
     cellPoints: number;
+    newCells?: number;
+    stolenCells?: number;
     loopBonus: number;
     streakMultiplier: number;
     pbMultiplier: number;

@@ -2,12 +2,21 @@ import { Alert, Linking } from 'react-native';
 
 const VERSION_ENDPOINT = 'https://corrr-api-production.up.railway.app/app/version';
 
+/** Guard a nivel de módulo: el aviso automático de "nueva versión" se muestra
+ *  como MUCHO una vez por sesión de app. Antes el re-check en cada foreground
+ *  (AppState 'active') re-disparaba el Alert una y otra vez → si el backend
+ *  anunciaba una versión que aún no estaba en Play, el usuario quedaba en un
+ *  bucle infinito de "Nueva versión disponible" imposible de cerrar. El botón
+ *  manual de Perfil pasa silent=false y NO respeta este guard (siempre da
+ *  feedback al usuario que lo pulsa a propósito). */
+let autoUpdatePromptShown = false;
+
 /** Versión actual del cliente. Se exporta desde aquí (no desde App.tsx)
  *  para evitar la dependencia circular App ↔ PerfilScreen, que dejaba
  *  CURRENT_VERSION como `undefined` en PerfilScreen y rompía el botón
  *  "Buscar actualizaciones" en silencio. Recordatorio: bumpear esto JUNTO
  *  con versionCode/versionName de build.gradle en cada release (CLAUDE.md §4). */
-export const CURRENT_VERSION = '1.10.9';
+export const CURRENT_VERSION = '1.10.10';
 
 /** Compara dos versiones semver tipo "1.10.5". Devuelve true si `latest`
  *  es estrictamente más nueva que `current`. Asume formato X.Y.Z fijo. */
@@ -42,6 +51,11 @@ export async function checkForUpdates(currentVersion: string, silent: boolean): 
     return;
   }
   if (isNewerVersion(data.latestVersion, currentVersion)) {
+    // En modo auto (silent), no re-mostramos el aviso si ya salió esta sesión.
+    // Evita el bucle de "Nueva versión disponible" en cada foreground cuando
+    // el backend anuncia una versión que todavía no está disponible en Play.
+    if (silent && autoUpdatePromptShown) return;
+    if (silent) autoUpdatePromptShown = true;
     Alert.alert(
       '¡Nueva versión disponible!',
       `CORRR ${data.latestVersion} ya está disponible. Actualiza para disfrutar de las últimas mejoras.`,
