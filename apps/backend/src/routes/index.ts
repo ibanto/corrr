@@ -222,6 +222,15 @@ async function initDB() {
   await db.query(`ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS streak_days INT DEFAULT 0`).catch(() => {});
   await db.query(`ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS best_daily_km FLOAT DEFAULT 0`).catch(() => {});
 
+  // ── Índices de rendimiento (rankings) ──────────────────────────────────────
+  // /ranking/global, /city y /cities ordenan por total_points DESC. Sin índice,
+  // Postgres ordena TODA la tabla en cada request. Con el índice DESC puede
+  // leerlo ya ordenado y cortar en LIMIT 100. user_id ya tiene unique/PK (el
+  // INSERT sin ON CONFLICT no genera duplicados), así que no hace falta tocarlo.
+  await db.query(`CREATE INDEX IF NOT EXISTS user_stats_total_points_idx ON user_stats(total_points DESC)`).catch(() => {});
+  // /ranking/city filtra y /cities agrupa por LOWER(city). Índice funcional.
+  await db.query(`CREATE INDEX IF NOT EXISTS users_city_lower_idx ON users(LOWER(city))`).catch(() => {});
+
   // ── Cells (grid-based territory, v2 model) ─────────────────────────────────
   // 10m × 10m cells (v1.8.0 — was 5m before). Identified by integer (cell_x,
   // cell_y) computed from lat/lng. Coexists with the polygon `zones` table
@@ -288,6 +297,19 @@ async function sendPushNotification(pushToken: string, title: string, body: stri
   }
 }
 
+/** Envía un email SIN bloquear la respuesta (fire-and-forget). Antes cada
+ *  `await resend.emails.send(...)` añadía ~300-800ms a lo que esperaba el
+ *  usuario en registro / reset / Strava. Resend ya es "best-effort" (si el
+ *  email falla, el flujo no debe romperse), así que disparamos en background
+ *  y logueamos el error. El usuario recibe su respuesta al instante.
+ *  Nota: cuando crezca el volumen, migrar a una cola real (BullMQ) con
+ *  reintentos — ver backlog de escalabilidad. */
+function sendEmail(payload: { from: string; to: string; subject: string; html: string }) {
+  resend.emails.send(payload).catch((emailErr) => {
+    console.error('[Email] Error enviando a', payload.to, ':', emailErr);
+  });
+}
+
 const requireAuth = async (req: any, reply: any) => {
   const auth = req.headers.authorization;
   if (!auth?.startsWith('Bearer ')) return reply.status(401).send({ error: 'No autorizado' });
@@ -342,7 +364,7 @@ app.post('/auth/register', {
     await db.query('UPDATE users SET verify_token = $1 WHERE id = $2', [verifyToken, uid]);
     const verifyUrl = `${RAILWAY_URL}/auth/verify-email?token=${verifyToken}`;
     try {
-      await resend.emails.send({
+      sendEmail({
         from: 'CORRR <hola@corrr.es>',
         to: email,
         subject: 'Verifica tu email — CORRR',
@@ -464,7 +486,7 @@ app.post('/auth/forgot-password', {
     // Enviar email
     const resetUrl = `${RAILWAY_URL}/auth/reset-password?token=${resetToken}`;
     try {
-      await resend.emails.send({
+      sendEmail({
         from: 'CORRR <hola@corrr.es>',
         to: email,
         subject: 'Restablecer tu contraseña — CORRR',
@@ -560,7 +582,7 @@ app.post('/auth/resend-verification', {
     await db.query('UPDATE users SET verify_token = $1 WHERE id = $2', [verifyToken, rows[0].id]);
     const verifyUrl = `${RAILWAY_URL}/auth/verify-email?token=${verifyToken}`;
     try {
-      await resend.emails.send({
+      sendEmail({
         from: 'CORRR <hola@corrr.es>',
         to: email,
         subject: 'Verifica tu email — CORRR',
@@ -2040,7 +2062,7 @@ app.post('/auth/strava/register', async (req: any, reply) => {
   // Email de verificación (mismo bloque que el /auth/register clásico)
   const verifyUrl = `${RAILWAY_URL}/auth/verify-email?token=${verifyToken}`;
   try {
-    await resend.emails.send({
+    sendEmail({
       from: 'CORRR <hola@corrr.es>',
       to: email,
       subject: 'Verifica tu email — CORRR',
