@@ -716,7 +716,26 @@ app.post('/users/push-token', { preHandler: requireAuth }, async (req: any, repl
 
 // ── Ranking ───────────────────────────────────────────────────────────────────
 
+// Cache en memoria de rankings. Son read-heavy y toleran ~30s de desfase, así
+// que servimos el resultado cacheado y solo golpeamos la BD cuando expira. Vive
+// en la instancia (1 sola en Railway → sin Redis). Al escalar a multi-instancia,
+// migrar a Redis (ver backlog). No invalidamos al guardar carreras a propósito:
+// 30s de leaderboard "viejo" es aceptable y evita acoplar /runs con el ranking.
+const RANKING_TTL_MS = 30_000;
+const rankingCache = new Map<string, { data: any; expires: number }>();
+function getRankingCache(key: string): any | null {
+  const hit = rankingCache.get(key);
+  if (hit && hit.expires > Date.now()) return hit.data;
+  if (hit) rankingCache.delete(key);
+  return null;
+}
+function setRankingCache(key: string, data: any) {
+  rankingCache.set(key, { data, expires: Date.now() + RANKING_TTL_MS });
+}
+
 app.get('/ranking/global', async (req, reply) => {
+  const cached = getRankingCache('global');
+  if (cached) return reply.send(cached);
   const { rows } = await db.query(`
     SELECT u.id AS user_id, u.display_name, u.city,
            COALESCE(s.total_points, 0) AS total_points,
@@ -726,12 +745,16 @@ app.get('/ranking/global', async (req, reply) => {
     ORDER BY COALESCE(s.total_points, 0) DESC
     LIMIT 100
   `);
+  setRankingCache('global', rows);
   return reply.send(rows);
 });
 
 app.get('/ranking/city', async (req: any, reply) => {
   const { city } = req.query;
   if (!city) return reply.status(400).send({ error: 'city requerido' });
+  const cacheKey = `city:${String(city).toLowerCase()}`;
+  const cached = getRankingCache(cacheKey);
+  if (cached) return reply.send(cached);
   const { rows } = await db.query(`
     SELECT u.id AS user_id, u.display_name, u.city,
            COALESCE(s.total_points, 0) AS total_points,
@@ -742,11 +765,14 @@ app.get('/ranking/city', async (req: any, reply) => {
     ORDER BY COALESCE(s.total_points, 0) DESC
     LIMIT 100
   `, [city]);
+  setRankingCache(cacheKey, rows);
   return reply.send(rows);
 });
 
 // Top 1 por cada ciudad, ordenado alfabéticamente
 app.get('/ranking/cities', async (req, reply) => {
+  const cached = getRankingCache('cities');
+  if (cached) return reply.send(cached);
   const { rows } = await db.query(`
     SELECT DISTINCT ON (LOWER(u.city))
            u.id AS user_id, u.display_name, u.city,
@@ -757,6 +783,7 @@ app.get('/ranking/cities', async (req, reply) => {
     WHERE u.city IS NOT NULL AND u.city != ''
     ORDER BY LOWER(u.city), COALESCE(s.total_points, 0) DESC
   `);
+  setRankingCache('cities', rows);
   return reply.send(rows);
 });
 
