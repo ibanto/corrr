@@ -13,6 +13,7 @@ import {
   AppStateStatus,
   NativeModules,
   Platform,
+  ActivityIndicator,
 } from 'react-native';
 import MapView, { Polygon, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import * as Location from 'expo-location';
@@ -837,6 +838,9 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
   // instancias Polygon viejas. Luego el `true` las monta limpias. Esto pasa
   // detrás del LoadingScreen (`savingRun`), así que el usuario no ve flicker.
   const [polygonsVisible, setPolygonsVisible] = useState(true);
+  // True mientras el botón de refrescar el mapa está recargando. Deshabilita el
+  // botón y muestra spinner para evitar dobles toques.
+  const [refreshingMap, setRefreshingMap] = useState(false);
   // Last cell claimed — used to bridge a continuous line of cells to the next
   // one (Bresenham-style), so GPS skips don't leave holes in the trail.
   const lastClaimedCellRef = useRef<{ x: number; y: number } | null>(null);
@@ -1172,6 +1176,30 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       );
       setRemoteCells(cells);
     } catch {}
+  };
+
+  /** Refrescar el mapa a mano (botón de la cabecera). Recarga celdas + zonas y
+   *  fuerza el remount limpio de los polígonos (mismo truco que stopRun:
+   *  ocultar → recargar → bump generación → mostrar). Resuelve el caso de
+   *  "perímetro marcado pero interior opaco" tras una carrera SIN tener que
+   *  salir y volver a entrar al mapa. */
+  const refreshMap = async () => {
+    if (refreshingMap) return; // evita dobles toques
+    setRefreshingMap(true);
+    try {
+      setPolygonsVisible(false);
+      await Promise.all([loadCells(), loadZones()]);
+      // NO vaciamos claimedCellsRef (igual que en stopRun desde v1.10.9):
+      // loadCells solo trae el viewport actual, así que el set local garantiza
+      // que las celdas fuera de pantalla sigan pintadas. myCellsUnion deduplica.
+      setClaimedCellsTick(t => t + 1);
+      setPolygonGeneration(g => g + 1);
+      await new Promise(r => setTimeout(r, 50)); // deja que el unmount llegue a nativo
+      setPolygonsVisible(true);
+    } catch {}
+    finally {
+      setRefreshingMap(false);
+    }
   };
 
   /** Fetch unread taunts and queue them. Called on mount + on AppState 'active'.
@@ -2400,16 +2428,24 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
           <Text style={styles.cityLabel}>{cityName}</Text>
           <Text style={styles.citySubtitle}>{user?.username ?? 'Runner'}</Text>
         </View>
-        <View style={styles.headerStats}>
-          <View style={styles.headerStat}>
-            <Ionicons name="flame" size={14} color={colors.orange} />
-            <Text style={styles.headerStatValue}>{totalPoints}</Text>
-          </View>
-          <View style={styles.headerStat}>
-            <Ionicons name="flag" size={14} color={colors.orange} />
-            <Text style={styles.headerStatValue}>{conqueredZones.filter(z => z.area > 0).length}</Text>
-          </View>
-        </View>
+        {/* Botón de refrescar el mapa. Sustituye a los antiguos contadores de
+            sesión (llama=puntos, bandera=zonas) que eran poco útiles. Recarga
+            celdas/zonas y fuerza un remount limpio de los polígonos → arregla el
+            caso "perímetro marcado pero interior opaco" tras una carrera sin
+            tener que salir del mapa. */}
+        <TouchableOpacity
+          style={styles.refreshBtn}
+          onPress={refreshMap}
+          disabled={refreshingMap}
+          activeOpacity={0.7}
+        >
+          {refreshingMap ? (
+            <ActivityIndicator size="small" color={colors.orange} />
+          ) : (
+            <Ionicons name="refresh" size={20} color={colors.orange} />
+          )}
+          <Text style={styles.refreshBtnText}>{refreshingMap ? 'Actualizando' : 'Refrescar'}</Text>
+        </TouchableOpacity>
       </View>
 
       {/* MapView siempre montado en el árbol — durante la carrera lo tapa el
@@ -2820,6 +2856,12 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: colors.border,
   },
   headerStatValue: { fontSize: 13, fontWeight: '700', color: colors.textPrimary },
+  refreshBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: colors.bgCard,
+    paddingHorizontal: spacing.md, paddingVertical: 8, borderRadius: radius.full,
+    borderWidth: 1, borderColor: colors.border, minWidth: 124, justifyContent: 'center',
+  },
+  refreshBtnText: { fontSize: 13, fontWeight: '700', color: colors.orange },
   mapContainer: { flex: 1, position: 'relative' },
   map: { flex: 1 },
   centerBtn: {
