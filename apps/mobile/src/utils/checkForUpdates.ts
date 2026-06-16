@@ -16,7 +16,7 @@ let autoUpdatePromptShown = false;
  *  CURRENT_VERSION como `undefined` en PerfilScreen y rompía el botón
  *  "Buscar actualizaciones" en silencio. Recordatorio: bumpear esto JUNTO
  *  con versionCode/versionName de build.gradle en cada release (CLAUDE.md §4). */
-export const CURRENT_VERSION = '1.10.10';
+export const CURRENT_VERSION = '1.10.11';
 
 /** Compara dos versiones semver tipo "1.10.5". Devuelve true si `latest`
  *  es estrictamente más nueva que `current`. Asume formato X.Y.Z fijo. */
