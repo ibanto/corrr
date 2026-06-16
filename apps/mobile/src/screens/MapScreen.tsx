@@ -1873,13 +1873,21 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       }
     }
 
-    // Flood-fill any region fully enclosed by the cells walked this run. This is
-    // what guarantees "if it closes, it closes" — interior cells get claimed even
-    // if the mid-run loop detector missed the loop. Runs once, at the end.
-    const filledCells = fillEnclosedCells(claimedCellsRef.current);
-    if (filledCells.size !== claimedCellsRef.current.size) {
-      claimedCellsRef.current = filledCells;
-      setClaimedCellsTick(t => t + 1);
+    // Flood-fill de las regiones encerradas por el recorrido. SOLO se ejecuta si
+    // de verdad se cerró un loop (loopClosedRef, puesto por closeLoop tanto en la
+    // detección mid-run como en el auto-cierre de arriba). Antes corría SIEMPRE
+    // "por si el detector falló", pero eso permitía rellenos fantasma: un salto
+    // GPS podía encerrar una región sin que hubiera un loop real → flood-fill
+    // rellenaba una cuña enorme que el usuario nunca corrió (ver bug del "diagonal"
+    // en Barcelona). Gatearlo al loop real elimina esa clase sin nerfear loops
+    // legítimos (que sí disparan la detección). Trade-off menor: un loop real que
+    // el detector no pille no rellenará su interior — caso raro y preferible.
+    if (loopClosedRef.current) {
+      const filledCells = fillEnclosedCells(claimedCellsRef.current);
+      if (filledCells.size !== claimedCellsRef.current.size) {
+        claimedCellsRef.current = filledCells;
+        setClaimedCellsTick(t => t + 1);
+      }
     }
 
     // 10 pts/km (v1.7 economy). The final total here is a client-side ESTIMATE
