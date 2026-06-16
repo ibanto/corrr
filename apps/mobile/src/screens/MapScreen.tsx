@@ -279,7 +279,14 @@ const MAX_SPEED_KMH = 30;        // Anti-cheat: max speed allowed
 const MAX_ACCURACY_M = 18;       // Ignore GPS points with accuracy worse than 18m
 const WARMUP_ACCURACY_M = 12;    // First 5 points need accuracy < 12m (GPS warming up)
 const WARMUP_POINTS = 5;         // Number of initial points with strict accuracy
-const MIN_POINT_DIST_M = 3;      // Ignore points closer than 3m (noise)
+const MIN_POINT_DIST_M = 6;      // Suelo absoluto de movimiento real (antes 3m).
+// Suelo de ruido DINÁMICO: el movimiento mínimo para contar como real depende
+// de la precisión del GPS. Si te has "movido" menos que tu margen de error, casi
+// seguro es ruido. floor = max(MIN_POINT_DIST_M, accuracy * NOISE_ACCURACY_FACTOR).
+// Sin esto, al andar lento (mov. real ~3m/3s < ruido GPS ±5-10m) el ruido inflaba
+// la distancia ~2.36× (verificado vs Apple Watch: CORRR 1.42km vs reloj 0.60km).
+// Subir el factor → menos sobreconteo pero más riesgo de infracontar; ajustable.
+const NOISE_ACCURACY_FACTOR = 0.8;
 const MAX_POINT_DIST_M = 100;    // Teleport if jump > 100m in a single update
 const TELEPORT_TIME_THRESHOLD = 8; // Only count as teleport if also >8s gap
 const SINUOSITY_THRESHOLD = 1.3; // Buffer path/straight ratio below this = straight line = teleport
@@ -708,8 +715,12 @@ function filterGpsPoint(
   const distM = distKm * 1000;
   const timeDiff = prevTimestamp > 0 ? (newTimestamp - prevTimestamp) / 1000 : 3;
 
-  // Filter 2: too close (GPS noise / standing still)
-  if (distM < MIN_POINT_DIST_M) {
+  // Filter 2: ruido GPS. Suelo dinámico según la precisión — si te has "movido"
+  // menos que tu margen de error, es ruido, no movimiento. El punto saltado
+  // MANTIENE el ancla (no se actualiza prevCoord), así que el desplazamiento real
+  // se acaba contando cuando supera el suelo → de-noised, no se pierde.
+  const noiseFloorM = Math.max(MIN_POINT_DIST_M, accuracy * NOISE_ACCURACY_FACTOR);
+  if (distM < noiseFloorM) {
     return { action: 'skip', distKm: 0, speedKmh: 0 };
   }
 
