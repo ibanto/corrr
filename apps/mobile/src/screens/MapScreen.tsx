@@ -1215,10 +1215,19 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
 
   /** Fetch unread taunts and queue them. Called on mount + on AppState 'active'.
    *  Each item gets shown one at a time via the tauntQueue useEffect below. */
+  // Ids de taunts ya encolados esta sesión. Evita que el sondeo periódico
+  // re-encole los mismos no-leídos una y otra vez (crearía modales duplicados).
+  // Un taunt leído deja de venir en getUnreadTaunts, así que el set solo crece
+  // con los que están pendientes de mostrarse — tamaño acotado.
+  const enqueuedTauntIdsRef = useRef<Set<string>>(new Set());
   const checkUnreadTaunts = async () => {
     try {
       const { taunts } = await api.getUnreadTaunts();
-      if (taunts && taunts.length > 0) setTauntQueue(prev => [...prev, ...taunts]);
+      if (!taunts || taunts.length === 0) return;
+      const fresh = taunts.filter(t => !enqueuedTauntIdsRef.current.has(t.id));
+      if (fresh.length === 0) return;
+      for (const t of fresh) enqueuedTauntIdsRef.current.add(t.id);
+      setTauntQueue(prev => [...prev, ...fresh]);
     } catch {}
   };
 
@@ -1230,6 +1239,18 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       setTauntQueue(rest);
     }
   }, [tauntQueue, currentTaunt]);
+
+  // Sondeo periódico del inbox mientras la app está abierta. Antes solo se
+  // consultaba al montar y al volver a foreground → si la app ya estaba abierta,
+  // un mensaje/respuesta entrante NO aparecía hasta minimizar y reabrir (de ahí
+  // el "la respuesta no le llega a B"). Con un poll cada 45s los taunts y
+  // responses entrantes salen solos. Pausado durante la carrera para no
+  // distraer; al terminar, el foreground/siguiente tick lo recoge.
+  useEffect(() => {
+    if (isRunning) return;
+    const id = setInterval(() => { checkUnreadTaunts(); }, 45_000);
+    return () => clearInterval(id);
+  }, [isRunning]);
 
   // Pre-computed unions of cells per owner. Rebuilt only when remoteCells or
   // this-run claims change — polygon-clipping is too expensive to do per render.
