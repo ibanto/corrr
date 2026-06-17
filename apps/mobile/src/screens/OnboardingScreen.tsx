@@ -75,6 +75,8 @@ export default function OnboardingScreen({ onAuthenticated, pendingStravaSignup,
   const flatListRef = useRef<FlatList>(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  // Toggle del icono del ojo en el campo contraseña (feedback testers).
+  const [showPassword, setShowPassword] = useState(false);
   const [username, setUsername] = useState('');
   const [city, setCity] = useState('');
   const [loading, setLoading] = useState(false);
@@ -198,6 +200,33 @@ export default function OnboardingScreen({ onAuthenticated, pendingStravaSignup,
       } else if (msg.includes('Email no verificado')) {
         setResendDone(false);
         setMode('verify');
+      } else {
+        Alert.alert('Error', msg);
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  /** Tras verificar el email (por enlace), el usuario vuelve aquí. El email y la
+   *  contraseña SIGUEN en memoria desde el registro, así que iniciamos sesión
+   *  directo en vez de mandarle al formulario a reteclear (feedback testers:
+   *  "auto-login tras registro"). Si aún no ha pulsado el enlace, el backend
+   *  responde "no verificado" y se lo decimos sin perder los datos. */
+  const handleLoginAfterVerify = async () => {
+    if (!email || !password) { setMode('login'); return; }
+    setLoading(true);
+    try {
+      const res = await api.login(email, password);
+      api.setToken(res.accessToken);
+      api.setUserId(res.user.id);
+      onAuthenticated(res.accessToken, res.user);
+    } catch (err: any) {
+      const msg = err?.message || String(err);
+      if (msg.includes('Email no verificado') || err?.body?.pendingVerification) {
+        Alert.alert('Aún sin verificar', 'Pulsa primero el enlace del email que te enviamos y vuelve a intentarlo.');
+      } else if (msg.includes('Credenciales')) {
+        setMode('login'); // algo raro con las credenciales en memoria → al form normal
       } else {
         Alert.alert('Error', msg);
       }
@@ -387,13 +416,16 @@ export default function OnboardingScreen({ onAuthenticated, pendingStravaSignup,
             {email}
           </Text>
           <Text style={{ fontSize: 14, color: colors.textMuted, textAlign: 'center', marginBottom: spacing.xl, lineHeight: 20 }}>
-            Haz clic en el enlace del email para activar tu cuenta. Después vuelve aquí e inicia sesión.
+            Haz clic en el enlace del email para activar tu cuenta. Después vuelve aquí y pulsa el botón — entrarás directo, sin volver a escribir nada.
           </Text>
           <TouchableOpacity
             style={[styles.btnPrimary, { width: '100%' }]}
-            onPress={() => setMode('login')}
+            onPress={handleLoginAfterVerify}
+            disabled={loading}
           >
-            <Text style={styles.btnPrimaryText}>Iniciar sesión →</Text>
+            {loading ? <ActivityIndicator color="#fff" /> : (
+              <Text style={styles.btnPrimaryText}>Ya lo he verificado → entrar</Text>
+            )}
           </TouchableOpacity>
           <TouchableOpacity
             style={{ marginTop: spacing.lg, padding: spacing.sm }}
@@ -518,14 +550,27 @@ export default function OnboardingScreen({ onAuthenticated, pendingStravaSignup,
           {mode !== 'forgot' && (
             <View style={styles.inputGroup}>
               <Text style={styles.inputLabel}>Contraseña</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="••••••••"
-                placeholderTextColor={colors.textMuted}
-                value={password}
-                onChangeText={setPassword}
-                secureTextEntry
-              />
+              <View style={{ position: 'relative', justifyContent: 'center' }}>
+                <TextInput
+                  style={[styles.input, { paddingRight: 48 }]}
+                  placeholder="••••••••"
+                  placeholderTextColor={colors.textMuted}
+                  value={password}
+                  onChangeText={setPassword}
+                  secureTextEntry={!showPassword}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+                {/* Icono del ojo: alterna ver/ocultar la contraseña (feedback testers). */}
+                <TouchableOpacity
+                  onPress={() => setShowPassword(v => !v)}
+                  style={{ position: 'absolute', right: 12, top: 0, bottom: 0, justifyContent: 'center', paddingHorizontal: 4 }}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                  accessibilityLabel={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+                >
+                  <Ionicons name={showPassword ? 'eye-off' : 'eye'} size={20} color={colors.textMuted} />
+                </TouchableOpacity>
+              </View>
               {mode === 'login' && (
                 <TouchableOpacity onPress={() => setMode('forgot')} style={{ marginTop: 8 }}>
                   <Text style={styles.forgotText}>¿Has olvidado tu contraseña?</Text>
