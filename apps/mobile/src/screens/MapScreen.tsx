@@ -276,6 +276,12 @@ function unionCellsToPolygons(cells: { x: number; y: number }[]): UnionedPolygon
 
 // ── GPS Filtering (Strava-grade) ──────────────────────────────────────────
 const MAX_SPEED_KMH = 30;        // Anti-cheat: max speed allowed
+const MAX_SPEED_MPS = MAX_SPEED_KMH / 3.6; // clamp para la integración de velocidad
+// Velocidad mínima (m/s) para contar como movimiento real al medir la distancia
+// por velocidad GPS (Doppler). Por debajo (~1.8 km/h) la "velocidad" del chip
+// suele ser ruido estando parado → no sumamos metros (la distancia no sube
+// parado en un semáforo). Ver nota en handleLocationUpdate.
+const MIN_MOVING_MPS = 0.5;
 const MAX_ACCURACY_M = 18;       // Ignore GPS points with accuracy worse than 18m
 const WARMUP_ACCURACY_M = 12;    // First 5 points need accuracy < 12m (GPS warming up)
 const WARMUP_POINTS = 5;         // Number of initial points with strict accuracy
@@ -807,7 +813,16 @@ function BreakdownRow({ label, value, hint, highlight }: { label: string; value:
 export default function MapScreen({ user, onNavigateToShop }: Props) {
   const [isRunning, setIsRunning] = useState(false);
   const [runTime, setRunTime] = useState(0);
+  // `distance` es la distancia OFICIAL, ahora medida por velocidad GPS (Doppler):
+  // integramos speed×dt en vez de sumar saltos de posición (inmune al zigzag de
+  // drift que inflaba la distancia 3×). Ver handleLocationUpdate.
   const [distance, setDistance] = useState(0);
+  // Método VIEJO (suma de saltos de posición) en paralelo. SOLO para comparar
+  // con el nuevo en el resumen y validar cuál acierta en este móvil. Temporal.
+  const [distancePosDelta, setDistancePosDelta] = useState(0);
+  // Timestamp de la ÚLTIMA lectura GPS cruda (cada lectura, no solo las
+  // aceptadas), para el dt de la integración velocidad×tiempo. Reset por run.
+  const lastRawTimestampRef = useRef(0);
   const [currentPath, setCurrentPath] = useState<Coord[]>([]);
   const [conqueredZones, setConqueredZones] = useState<ConqueredZone[]>([]);
   const [totalPoints, setTotalPoints] = useState(0);
@@ -821,7 +836,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
   // entre pulsar STOP y aparecer el resumen.
   const [savingRun, setSavingRun] = useState(false);
   const [runSummary, setRunSummary] = useState<{
-    visible: boolean; distance: number; time: number; points: number; xp: number; zones: number;
+    visible: boolean; distance: number; distancePosDelta?: number; time: number; points: number; xp: number; zones: number;
     breakdown?: {
       kmPoints: number; cellPoints: number; newCells?: number; stolenCells?: number;
       loopBonus: number; streakMultiplier: number; pbMultiplier: number;
@@ -953,6 +968,26 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
           const goodBufferPts = bufferToProcess.filter(p => p.accuracy <= MAX_ACCURACY_M);
           const bufferCoords = goodBufferPts.map(p => ({ latitude: p.latitude, longitude: p.longitude }));
 
+          // ── Distancia OFICIAL del buffer por velocidad GPS (Doppler) ──────
+          // Integramos speed×dt sobre los puntos del buffer (cada uno con su dt),
+          // igual que en foreground. El método viejo (posición) se acumula aparte
+          // en distancePosDelta. dt>6s = corte entre lotes → no se integra ese
+          // hueco con la velocidad instantánea.
+          {
+            let dopplerBufKm = 0;
+            let prevBufTs = lastRawTimestampRef.current;
+            for (const p of goodBufferPts) {
+              const dt = prevBufTs > 0 ? (p.timestamp - prevBufTs) / 1000 : 0;
+              prevBufTs = p.timestamp;
+              if (dt > 0 && dt <= 6 && p.speed >= 0) {
+                const spd = Math.min(p.speed, MAX_SPEED_MPS);
+                if (spd >= MIN_MOVING_MPS) dopplerBufKm += (spd * dt) / 1000;
+              }
+            }
+            lastRawTimestampRef.current = prevBufTs;
+            if (dopplerBufKm > 0) setDistance(d => d + dopplerBufKm);
+          }
+
           // Sinuosity check: if buffer is basically a straight line → teleport, don't draw it
           if (lastGood && bufferCoords.length >= 2 && isBufferStraightLine(lastGood, bufferCoords)) {
             // Straight line = phone was asleep, GPS gave bad intermediate points
@@ -965,8 +1000,9 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
             pathRef.current = [newStart];
             lastLocationTimestamp.current = lastBuf.timestamp;
             // Count distance as straight line (approximate, better than nothing)
+            // Método VIEJO (validación) → distancePosDelta; la oficial es Doppler.
             const skipDist = getDistanceKm(lastGood, newStart);
-            if (skipDist > 0.005) setDistance(d => d + skipDist);
+            if (skipDist > 0.005) setDistancePosDelta(d => d + skipDist);
             // Phone was asleep → don't bridge across the gap. Claim the cell
             // where the runner actually is now and reset the bridge anchor.
             const sc = coordToCell(newStart.latitude, newStart.longitude);
@@ -1015,7 +1051,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
                 lastClaimedCellRef.current = cell;
               }
             }
-            if (addedDist > 0) setDistance(d => d + addedDist);
+            if (addedDist > 0) setDistancePosDelta(d => d + addedDist); // método viejo (validación)
             if (addedCellInBuffer) setClaimedCellsTick(t => t + 1);
           }
 
@@ -1569,6 +1605,8 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     pauseStartedAtRef.current = null;
     pausedAccumulatedRef.current = 0;
     setDistance(0);
+    setDistancePosDelta(0);
+    lastRawTimestampRef.current = 0;
     setTotalPoints(0);
     setConqueredZones([]);
     claimedCellsRef.current = new Set();
@@ -1662,6 +1700,22 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       const speed = loc.coords.speed ?? -1;
       const prev = pathRef.current.length > 0 ? pathRef.current[pathRef.current.length - 1] : null;
 
+      // ── Distancia OFICIAL por velocidad GPS (Doppler) ───────────────────
+      // Integramos la velocidad que reporta el chip (speed × dt) en CADA lectura
+      // (no solo las aceptadas), inmune al zigzag de drift que infla la posición.
+      // Parado: speed≈0 → 0 metros (la distancia no sube en un semáforo). El
+      // método viejo (posición) se sigue acumulando aparte en distancePosDelta
+      // solo para comparar en el resumen. dt>6s = hubo un corte (pausa/lock);
+      // ese hueco lo cuenta el buffer de background, no aquí (evita fantasmas).
+      {
+        const rawDt = lastRawTimestampRef.current > 0 ? (now - lastRawTimestampRef.current) / 1000 : 0;
+        lastRawTimestampRef.current = now;
+        if (rawDt > 0 && rawDt <= 6 && speed >= 0 && accuracy <= MAX_ACCURACY_M) {
+          const spd = Math.min(speed, MAX_SPEED_MPS);
+          if (spd >= MIN_MOVING_MPS) setDistance(d => d + (spd * rawDt) / 1000);
+        }
+      }
+
       const result = filterGpsPoint(newCoord, prev, now, lastLocationTimestamp.current, accuracy, speed, pathRef.current.length);
 
       if (result.action === 'skip') {
@@ -1743,7 +1797,9 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       }
 
       if (result.distKm > 0) {
-        setDistance(d => d + result.distKm);
+        // Método VIEJO (validación): suma de saltos de posición. La distancia
+        // oficial la lleva la integración por velocidad de arriba.
+        setDistancePosDelta(d => d + result.distKm);
         lastMovementTime.current = Date.now(); // Runner is moving
       }
       // Velocidad con EMA (exponential moving average) en vez de mostrar el
@@ -1960,9 +2016,12 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     // Si falla cualquiera de los dos, descartamos la carrera y avisamos.
     const MIN_CELLS_FOR_VALID_RUN = 5;
     const MIN_DISTANCE_KM_FOR_VALID_RUN = 0.05; // 50m
+    // Máximo de ambos métodos: no descartamos una carrera real si el método
+    // nuevo (velocidad) infracuenta en este móvil mientras lo validamos.
+    const distanceForValidity = Math.max(distance, distancePosDelta);
     const isValidRun =
       cellCount >= MIN_CELLS_FOR_VALID_RUN &&
-      distance >= MIN_DISTANCE_KM_FOR_VALID_RUN;
+      distanceForValidity >= MIN_DISTANCE_KM_FOR_VALID_RUN;
 
     if (isValidRun) {
       const closedZones = conqueredZones.filter(z => z.area > 0);
@@ -2080,6 +2139,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         setRunSummary({
           visible: true,
           distance,
+          distancePosDelta,
           time: runTime,
           points: finalPoints,
           xp: earnedXP,
@@ -2103,7 +2163,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     mapRef.current?.animateCamera({ heading: 0, pitch: 0 }, { duration: 500 });
 
     // Carrera inválida (muy corta): aviso breve, sin LoadingScreen ni resumen.
-    if (!isValidRun && (cellCount > 0 || distance > 0)) {
+    if (!isValidRun && (cellCount > 0 || distanceForValidity > 0)) {
       Alert.alert(
         'Carrera demasiado corta',
         'No has cubierto suficiente distancia. La carrera no se ha guardado.',
@@ -2313,6 +2373,15 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
                   <Text style={styles.summaryStatLabel}>zonas</Text>
                 </View>
               </View>
+
+              {/* VALIDACIÓN TEMPORAL (quitar tras confirmar): distancia por el
+                  método nuevo (velocidad GPS, el número grande de arriba) vs el
+                  viejo (posición). Comparar con el iPhone para validar el Doppler. */}
+              {typeof runSummary.distancePosDelta === 'number' && (
+                <Text style={{ color: '#888', fontSize: 11, textAlign: 'center', marginTop: 6, marginBottom: 2 }}>
+                  velocidad {runSummary.distance.toFixed(2)} km   ·   posición {runSummary.distancePosDelta.toFixed(2)} km
+                </Text>
+              )}
 
               <View style={styles.summaryPoints}>
                 <View style={styles.summaryPointsRow}>
