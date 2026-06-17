@@ -279,14 +279,22 @@ const MAX_SPEED_KMH = 30;        // Anti-cheat: max speed allowed
 const MAX_ACCURACY_M = 18;       // Ignore GPS points with accuracy worse than 18m
 const WARMUP_ACCURACY_M = 12;    // First 5 points need accuracy < 12m (GPS warming up)
 const WARMUP_POINTS = 5;         // Number of initial points with strict accuracy
-const MIN_POINT_DIST_M = 6;      // Suelo absoluto de movimiento real (antes 3m).
-// Suelo de ruido DINÁMICO: el movimiento mínimo para contar como real depende
-// de la precisión del GPS. Si te has "movido" menos que tu margen de error, casi
-// seguro es ruido. floor = max(MIN_POINT_DIST_M, accuracy * NOISE_ACCURACY_FACTOR).
-// Sin esto, al andar lento (mov. real ~3m/3s < ruido GPS ±5-10m) el ruido inflaba
-// la distancia ~2.36× (verificado vs Apple Watch: CORRR 1.42km vs reloj 0.60km).
-// Subir el factor → menos sobreconteo pero más riesgo de infracontar; ajustable.
-const NOISE_ACCURACY_FACTOR = 0.8;
+// Suelo de ruido FIJO: si te has "movido" menos que esto entre dos lecturas, es
+// jitter del GPS, no movimiento real. El punto saltado MANTIENE el ancla (no se
+// actualiza prevCoord), así que el desplazamiento real se acaba contando cuando
+// supera el suelo → de-noised, no se pierde.
+//
+// 6m (antes 3m) absorbe el zigzag de drift que inflaba la distancia ~2.36× al
+// andar lento (verificado vs Apple Watch: CORRR 1.42km vs reloj 0.60km).
+//
+// OJO — NO volver al suelo DINÁMICO max(6, accuracy*0.8): como el Filtro 1 deja
+// pasar accuracy hasta 18m, ese suelo subía a 12-14m y rechazaba movimiento REAL
+// (puntos de background a ~8m), causando 3 regresiones en vc47: km sin contar en
+// reposo, velocidad congelada al parar, y diagonales rectas que cruzan edificios
+// (cellLine puenteaba los huecos saltados). El suelo fijo de 6m las arregla las
+// tres. Es el knob de tuning km: si re-mide y SOBREcuenta → subir a 7-8; si
+// INFRAcuenta → bajar a 5. Iterar con APK debug por USB, no subiendo AAB a Play.
+const MIN_POINT_DIST_M = 6;
 const MAX_POINT_DIST_M = 100;    // Teleport if jump > 100m in a single update
 const TELEPORT_TIME_THRESHOLD = 8; // Only count as teleport if also >8s gap
 const SINUOSITY_THRESHOLD = 1.3; // Buffer path/straight ratio below this = straight line = teleport
@@ -715,12 +723,11 @@ function filterGpsPoint(
   const distM = distKm * 1000;
   const timeDiff = prevTimestamp > 0 ? (newTimestamp - prevTimestamp) / 1000 : 3;
 
-  // Filter 2: ruido GPS. Suelo dinámico según la precisión — si te has "movido"
-  // menos que tu margen de error, es ruido, no movimiento. El punto saltado
-  // MANTIENE el ancla (no se actualiza prevCoord), así que el desplazamiento real
-  // se acaba contando cuando supera el suelo → de-noised, no se pierde.
-  const noiseFloorM = Math.max(MIN_POINT_DIST_M, accuracy * NOISE_ACCURACY_FACTOR);
-  if (distM < noiseFloorM) {
+  // Filter 2: ruido GPS. Suelo FIJO (no dinámico — ver nota en MIN_POINT_DIST_M):
+  // si te has "movido" menos que el suelo, es jitter, no movimiento. El punto
+  // saltado MANTIENE el ancla (no se actualiza prevCoord), así que el
+  // desplazamiento real se acaba contando cuando supera el suelo → de-noised.
+  if (distM < MIN_POINT_DIST_M) {
     return { action: 'skip', distKm: 0, speedKmh: 0 };
   }
 
@@ -1594,6 +1601,16 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         isAutoPausedRef.current = true;
         setIsAutoPaused(true);
         pauseStartedAtRef.current = Date.now();
+        setCurrentSpeed(0);
+      } else if (stillFor >= 6) {
+        // Sin movimiento real reciente → la velocidad mostrada se desvanece
+        // hacia 0 en vez de quedar congelada en el último valor. La EMA de
+        // velocidad solo se actualiza en puntos ACEPTADOS; al parar, los puntos
+        // de drift caen bajo el suelo de ruido y se descartan, así que sin esto
+        // la aguja se queda clavada en los km/h que llevabas. Independiente del
+        // GPS: este intervalo corre cada 3s pase lo que pase. Desde 10 km/h
+        // baja 10→6→3.6→… y llega a ~0 antes del auto-pause de los 20s.
+        setCurrentSpeed(prev => (prev < 0.5 ? 0 : prev * 0.6));
       }
     }, 3000);
     setCurrentSpeed(0);
@@ -1814,6 +1831,16 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         isAutoPausedRef.current = true;
         setIsAutoPaused(true);
         pauseStartedAtRef.current = Date.now();
+        setCurrentSpeed(0);
+      } else if (stillFor >= 6) {
+        // Sin movimiento real reciente → la velocidad mostrada se desvanece
+        // hacia 0 en vez de quedar congelada en el último valor. La EMA de
+        // velocidad solo se actualiza en puntos ACEPTADOS; al parar, los puntos
+        // de drift caen bajo el suelo de ruido y se descartan, así que sin esto
+        // la aguja se queda clavada en los km/h que llevabas. Independiente del
+        // GPS: este intervalo corre cada 3s pase lo que pase. Desde 10 km/h
+        // baja 10→6→3.6→… y llega a ~0 antes del auto-pause de los 20s.
+        setCurrentSpeed(prev => (prev < 0.5 ? 0 : prev * 0.6));
       }
     }, 3000);
     // Recompute from Date.now() each tick — self-healing against missed ticks
