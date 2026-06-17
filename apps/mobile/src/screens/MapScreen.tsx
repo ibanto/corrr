@@ -1449,11 +1449,14 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       }
     }
 
-    // Grid (v2): rasterize the closed polygon into 5m cells. Every cell whose
-    // center falls inside the loop becomes ours, even the ones we didn't walk over.
-    // Sync — cheap enough (<100ms even for huge loops) and we need the cells
-    // before the popup/save fire.
-    if (snapped.length >= 3) {
+    // Grid (v2): rasterize the closed polygon into cells — el interior del loop
+    // se reclama aunque no lo pisaras (mecánica tipo Pokémon GO). PERO solo si la
+    // ruta es CONTINUA (sin gaps). Con gaps (pantalla bloqueada → pathSegments)
+    // arriba usamos convexHull, cuya envolvente reclama un área ENORME que nunca
+    // se pisó → relleno fantasma (el lóbulo gigante que desaparecía al reabrir la
+    // app, porque era solo local). Con gaps nos quedamos con las celdas realmente
+    // pisadas: mejor infrarrellenar que pintar territorio falso.
+    if (!hasGaps && snapped.length >= 3) {
       const interiorCells = rasterizePolygonToCells(snapped);
       let added = 0;
       for (const c of interiorCells) {
@@ -1986,7 +1989,10 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     // en Barcelona). Gatearlo al loop real elimina esa clase sin nerfear loops
     // legítimos (que sí disparan la detección). Trade-off menor: un loop real que
     // el detector no pille no rellenará su interior — caso raro y preferible.
-    if (loopClosedRef.current) {
+    // Solo en rutas CONTINUAS (sin gaps). Con gaps (pantalla bloqueada) el
+    // flood-fill puede encerrar regiones que no se corrieron → mismo fantasma
+    // que el convexHull de closeLoop. pathSegments aún no se ha limpiado aquí.
+    if (loopClosedRef.current && pathSegments.length === 0) {
       const filledCells = fillEnclosedCells(claimedCellsRef.current);
       if (filledCells.size !== claimedCellsRef.current.size) {
         claimedCellsRef.current = filledCells;
