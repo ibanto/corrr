@@ -26,6 +26,13 @@ import { api, RemoteZone, RemoteCell, TauntInbox } from '../services/api';
 import ZonePopup, { PopupType } from '../components/ZonePopup';
 import TauntSelector, { getTauntFullImage } from '../components/TauntSelector';
 import LoadingScreen from '../components/LoadingScreen';
+import { randomPhrase } from '../data/motivationalPhrases';
+
+// Feature flag REVERSIBLE: durante la carrera mostramos una frase motivacional
+// (estilo BEBAS, mayúsculas, rota cada minuto) EN VEZ del km/h —que iba mal y
+// aporta poco en una app más juego que cronómetro—. Poner en `false` vuelve al
+// km/h al instante. Para dejar SOLO tiempo + km, basta con quitar el bloque.
+const USE_PHRASES_INSTEAD_OF_SPEED = true;
 
 /** Helper that picks the right taunt image for inbox display. The mode 'taunt'
  *  in our taunts table corresponds to the message set (1-10), 'response' to the
@@ -908,6 +915,14 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
   const [zoomedOutTooMuch, setZoomedOutTooMuch] = useState(false);
   const [speedWarning, setSpeedWarning] = useState(false);
   const [currentSpeed, setCurrentSpeed] = useState(0);
+  // Frase motivacional que rota cada minuto durante la carrera (sustituye km/h).
+  const [runPhrase, setRunPhrase] = useState(() => randomPhrase());
+  useEffect(() => {
+    if (!isRunning) return;
+    setRunPhrase(p => randomPhrase(p));
+    const id = setInterval(() => setRunPhrase(p => randomPhrase(p)), 60000);
+    return () => clearInterval(id);
+  }, [isRunning]);
   const [isPaused, setIsPaused] = useState(false);
   // Splits (parciales): pace per completed km. Recorded when distance crosses an integer km.
   const [splits, setSplits] = useState<{ km: number; paceSecs: number }[]>([]);
@@ -2832,8 +2847,21 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
               <Text style={styles.statBigValue}>{distance.toFixed(2)}</Text>
             </View>
             <View style={styles.statBlockBig}>
-              <Text style={styles.statBigLabel}>VELOCIDAD (KM/H)</Text>
-              <Text style={styles.statBigValue}>{currentSpeed.toFixed(1)}</Text>
+              {USE_PHRASES_INSTEAD_OF_SPEED ? (
+                <Text
+                  style={styles.motivationalPhrase}
+                  adjustsFontSizeToFit
+                  numberOfLines={3}
+                  minimumFontScale={0.45}
+                >
+                  {runPhrase}
+                </Text>
+              ) : (
+                <>
+                  <Text style={styles.statBigLabel}>VELOCIDAD (KM/H)</Text>
+                  <Text style={styles.statBigValue}>{currentSpeed.toFixed(1)}</Text>
+                </>
+              )}
             </View>
           </View>
 
@@ -3093,6 +3121,21 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     letterSpacing: -3,
     lineHeight: 92,
+  },
+  // Frase motivacional (sustituye al km/h). Estilo "tipo BEBAS": condensada
+  // nativa de Android + negra + mayúsculas. adjustsFontSizeToFit encoge las
+  // frases largas y deja grandes las cortas, ocupando el mismo hueco.
+  motivationalPhrase: {
+    fontFamily: 'sans-serif-condensed',
+    fontSize: 46,
+    fontWeight: '900',
+    color: colors.orange,
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+    textAlign: 'center',
+    lineHeight: 46,
+    alignSelf: 'stretch',
+    paddingHorizontal: 16,
   },
   // Contenedor de controles abajo. paddingHorizontal: 0 para que los pills
   // lleguen de borde a borde dentro del paddingHorizontal del runningScreen.
