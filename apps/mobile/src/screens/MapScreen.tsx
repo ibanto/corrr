@@ -2395,15 +2395,6 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
                 </View>
               </View>
 
-              {/* VALIDACIÓN TEMPORAL (quitar tras confirmar): distancia por el
-                  método nuevo (velocidad GPS, el número grande de arriba) vs el
-                  viejo (posición). Comparar con el iPhone para validar el Doppler. */}
-              {typeof runSummary.distancePosDelta === 'number' && (
-                <Text style={{ color: '#888', fontSize: 11, textAlign: 'center', marginTop: 6, marginBottom: 2 }}>
-                  velocidad {runSummary.distance.toFixed(2)} km   ·   posición {runSummary.distancePosDelta.toFixed(2)} km
-                </Text>
-              )}
-
               <View style={styles.summaryPoints}>
                 <View style={styles.summaryPointsRow}>
                   <Ionicons name="flame" size={20} color={colors.orange} />
