@@ -3,7 +3,7 @@
     "name": "CORRR",
     "slug": "mobile",
     "scheme": "corrr",
-    "version": "1.10.13",
+    "version": "1.10.14",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -25,7 +25,7 @@
     },
     "android": {
       "package": "app.corrr",
-      "versionCode": 49,
+      "versionCode": 50,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#0A0A0A"
