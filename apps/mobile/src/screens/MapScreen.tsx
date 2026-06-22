@@ -2842,8 +2842,8 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
                 <Text
                   style={styles.motivationalPhrase}
                   adjustsFontSizeToFit
-                  numberOfLines={3}
-                  minimumFontScale={0.45}
+                  numberOfLines={5}
+                  minimumFontScale={0.25}
                 >
                   {runPhrase}
                 </Text>
@@ -3124,7 +3124,10 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
     textTransform: 'uppercase',
     textAlign: 'center',
-    lineHeight: 46,
+    // SIN lineHeight fijo: no escala con adjustsFontSizeToFit y provocaba que
+    // las frases largas se cortaran. Con el alto automático, la frase entera
+    // siempre cabe encogiendo (hasta 5 líneas / scale 0.25). Frases cortas
+    // siguen saliendo grandes.
     alignSelf: 'stretch',
     paddingHorizontal: 16,
   },
