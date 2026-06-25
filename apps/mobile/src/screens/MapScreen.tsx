@@ -3117,7 +3117,11 @@ const styles = StyleSheet.create({
   // nativa de Android + negra + mayúsculas. adjustsFontSizeToFit encoge las
   // frases largas y deja grandes las cortas, ocupando el mismo hueco.
   motivationalPhrase: {
-    fontFamily: 'sans-serif-condensed',
+    // Fuente condensada por plataforma (estilo BEBAS). Android tiene la
+    // condensada nativa; iOS NO ('sans-serif-condensed' no existe) → usamos
+    // Avenir Next Condensed Heavy, condensada del sistema iOS. (Futuro: cargar
+    // Bebas Neue real con expo-font para que sea idéntica en ambas.)
+    fontFamily: Platform.select({ ios: 'AvenirNextCondensed-Heavy', android: 'sans-serif-condensed' }),
     fontSize: 46,
     fontWeight: '900',
     color: colors.orange,

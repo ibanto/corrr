@@ -17,7 +17,10 @@
       "supportsTablet": true,
       "bundleIdentifier": "app.corrr",
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "UIBackgroundModes": ["location"],
+        "NSCameraUsageDescription": "CORRR usa la cámara para que te hagas una foto de perfil.",
+        "NSPhotoLibraryUsageDescription": "CORRR accede a tus fotos para que elijas tu foto de perfil."
       },
       "config": {
         "googleMapsApiKey": "AIzaSyC_1Y2Fo6S9X6GJU5Upx4EZxrw4JFf_xNU"
