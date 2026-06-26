@@ -219,10 +219,22 @@ class ApiService {
 
   setToken(token: string) {
     this.token = token;
+    // Nueva sesión (token no vacío) → rearmar el aviso de "sesión caducada".
+    if (token) this.unauthorizedFired = false;
   }
 
   setUserId(id: string) {
     this.userId = id;
+  }
+
+  /** Callback que la app registra para reaccionar a un 401 en una llamada
+   *  AUTENTICADA (token de 7d caducado/inválido): cerrar sesión y mandar a
+   *  login. `unauthorizedFired` evita dispararlo más de una vez por sesión
+   *  (se rearma en setToken al volver a loguear). */
+  private onUnauthorized: (() => void) | null = null;
+  private unauthorizedFired = false;
+  setOnUnauthorized(cb: () => void) {
+    this.onUnauthorized = cb;
   }
 
   private async request<T>(path: string, options?: RequestInit): Promise<T> {
@@ -238,6 +250,14 @@ class ApiService {
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
+      // 401 en una llamada AUTENTICADA (no /auth/*) → token muerto. Avisamos a
+      // la app UNA vez para que cierre sesión y mande a login (token nuevo). Sin
+      // esto el usuario quedaba "logueado" con token caducado → todo daba 401 y
+      // el mapa se colgaba, sin salida salvo reinstalar.
+      if (res.status === 401 && this.token && !path.startsWith('/auth') && !this.unauthorizedFired) {
+        this.unauthorizedFired = true;
+        this.onUnauthorized?.();
+      }
       const err: any = new Error(body.error || `API error ${res.status}`);
       err.body = body;
       err.status = res.status;

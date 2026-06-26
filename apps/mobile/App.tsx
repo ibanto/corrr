@@ -168,6 +168,16 @@ export default function App() {
     setActiveTab('Mapa');
   };
 
+  // Sesión caducada (token de 7d expirado → 401 en una llamada autenticada):
+  // cerramos sesión y mandamos a login para obtener un token nuevo. El guard
+  // "una sola vez" vive en api.ts y se rearma al volver a loguear.
+  useEffect(() => {
+    api.setOnUnauthorized(() => {
+      Alert.alert('Sesión caducada', 'Por seguridad tu sesión ha expirado. Vuelve a iniciar sesión.');
+      handleLogout();
+    });
+  }, []);
+
   // Pantalla de carga mientras restauramos sesión
   if (loading) {
     return (
