@@ -22,6 +22,7 @@ import { colors, spacing, radius } from '../theme';
 import { api, MyStats, RunRecord, Achievement, ProfileData } from '../services/api';
 import EditProfileScreen from './EditProfileScreen';
 import { checkForUpdates, CURRENT_VERSION } from '../utils/checkForUpdates';
+import { STRAVA_ENABLED } from '../config/features';
 
 interface Props {
   user: { username: string; id: string; city?: string } | null;
@@ -396,23 +397,27 @@ export default function PerfilScreen({ user, onLogout }: Props) {
           principales bien grandes + integraciones (Strava, premium). */}
 
       {/* Strava Connect — usa el botón oficial de Strava (brand guidelines obligan
-          a usar este botón exacto en flujos OAuth, no se puede recrear). */}
-      <View style={styles.stravaSection}>
-        <Text style={styles.stravaSectionSub}>Conquista zonas con tus últimas carreras de Strava</Text>
-        <TouchableOpacity onPress={handleConnectStrava} disabled={stravaLoading} activeOpacity={0.85}>
-          {stravaLoading ? (
-            <View style={styles.stravaButtonLoading}>
-              <ActivityIndicator size="small" color="#fff" />
-            </View>
-          ) : (
-            <Image
-              source={require('../../assets/btn_strava_connect_with_orange.png')}
-              style={styles.stravaButton}
-              resizeMode="contain"
-            />
-          )}
-        </TouchableOpacity>
-      </View>
+          a usar este botón exacto en flujos OAuth, no se puede recrear).
+          Oculto mientras STRAVA_ENABLED esté en false (Strava cobra por su API).
+          El handler y el flujo OAuth quedan intactos para reactivarlo. */}
+      {STRAVA_ENABLED && (
+        <View style={styles.stravaSection}>
+          <Text style={styles.stravaSectionSub}>Conquista zonas con tus últimas carreras de Strava</Text>
+          <TouchableOpacity onPress={handleConnectStrava} disabled={stravaLoading} activeOpacity={0.85}>
+            {stravaLoading ? (
+              <View style={styles.stravaButtonLoading}>
+                <ActivityIndicator size="small" color="#fff" />
+              </View>
+            ) : (
+              <Image
+                source={require('../../assets/btn_strava_connect_with_orange.png')}
+                style={styles.stravaButton}
+                resizeMode="contain"
+              />
+            )}
+          </TouchableOpacity>
+        </View>
+      )}
 
       <View style={styles.premiumCard}>
         <View style={styles.premiumTop}>

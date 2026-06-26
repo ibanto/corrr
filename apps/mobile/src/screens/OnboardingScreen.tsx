@@ -21,6 +21,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, radius } from '../theme';
 import { api } from '../services/api';
+import { STRAVA_ENABLED } from '../config/features';
 
 const { width, height } = Dimensions.get('window');
 
@@ -606,8 +607,9 @@ export default function OnboardingScreen({ onAuthenticated, pendingStravaSignup,
 
           {/* Botón "Connect with Strava" — alternativa de auth. Solo visible en
               login y register normales. En strava-signup ya estamos dentro del
-              flujo, no tiene sentido mostrarlo. */}
-          {(mode === 'login' || mode === 'register') && (
+              flujo, no tiene sentido mostrarlo. Oculto mientras STRAVA_ENABLED
+              esté en false (Strava cobra por su API). El resto del flujo queda. */}
+          {STRAVA_ENABLED && (mode === 'login' || mode === 'register') && (
             <View style={styles.stravaConnectWrap}>
               <View style={styles.stravaConnectDivider}>
                 <View style={styles.stravaDividerLine} />
