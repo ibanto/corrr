@@ -1138,6 +1138,11 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
   };
 
   useEffect(() => {
+    // Red de seguridad: pase lo que pase con la carga inicial (zonas, red,
+    // permiso, una petición que se cuelga sin resolver durante un redeploy del
+    // backend…), el mapa NUNCA debe quedarse atascado en "ACTUALIZANDO MAPA".
+    // A los 8s lo mostramos sí o sí; el mapa es usable aunque las zonas tarden.
+    const mapLoadingSafety = setTimeout(() => setMapLoading(false), 8000);
     (async () => {
       // Cold-start (v1.10.8): arrancar loadZones/loadCells contra
       // DEFAULT_REGION inmediatamente, sin esperar al permiso ni al fix
@@ -1179,6 +1184,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         loadZones(DEFAULT_REGION.latitude, DEFAULT_REGION.longitude);
       }
     })();
+    return () => clearTimeout(mapLoadingSafety);
   }, []);
 
   const loadUserXP = async () => {
@@ -1218,7 +1224,13 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
 
       // Detectar si me han robado zonas (usar zonas deconflictadas)
       checkForStolenZones(finalZones);
-    } catch {}
+    } catch {
+      // CRÍTICO: si la carga de zonas falla (red caída, backend reiniciándose
+      // en un redeploy, 401…) hay que limpiar igualmente el loading. Antes el
+      // catch vacío dejaba el mapa colgado para siempre en "ACTUALIZANDO MAPA"
+      // sin reintento. El mapa funciona sin zonas (las celdas cargan aparte).
+      setMapLoading(false);
+    }
   };
 
   /** Load cells (v2 grid) for the current map viewport. Cheap call; runs alongside
