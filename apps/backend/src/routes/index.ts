@@ -51,6 +51,12 @@ if (process.env.JWT_ACCESS_SECRET.length < 32) {
   console.warn('[WARN] JWT_ACCESS_SECRET is shorter than 32 chars. Consider rotating to a 32+ char random value.');
 }
 const SECRET = new TextEncoder().encode(process.env.JWT_ACCESS_SECRET);
+// TTL del token de SESIÓN. Subido de 7d a 90d: no hay refresh tokens, así que el
+// access token ES la sesión; con 7d el usuario tenía que re-loguear cada semana
+// (mala UX, sobre todo en producción pública). 90d = re-login ~trimestral. La
+// app (vc52+) maneja el 401 al caducar mandando a login, así que es indoloro.
+// (Futuro: refresh tokens de verdad si hace falta acortar el access token.)
+const SESSION_TOKEN_TTL = '90d';
 const resend = new Resend(process.env.RESEND_API_KEY || '');
 
 app.register(cors, { origin: '*' });
@@ -406,7 +412,7 @@ app.post('/auth/login', {
     }
     const token = await new SignJWT({ sub: u.id })
       .setProtectedHeader({ alg: 'HS256' })
-      .setExpirationTime('7d')
+      .setExpirationTime(SESSION_TOKEN_TTL)
       .sign(SECRET);
     return reply.send({ accessToken: token, user: { id: u.id, username: u.display_name, email: u.email, city: u.city } });
   } catch (err) { return reply.status(500).send({ error: String(err) }); }
@@ -452,7 +458,7 @@ app.post('/auth/google', async (req: any, reply) => {
 
     const token = await new SignJWT({ sub: userId })
       .setProtectedHeader({ alg: 'HS256' })
-      .setExpirationTime('7d')
+      .setExpirationTime(SESSION_TOKEN_TTL)
       .sign(SECRET);
 
     return reply.send({
@@ -2010,7 +2016,7 @@ app.post('/auth/strava/exchange', async (req: any, reply) => {
       [payload.accessToken, payload.refreshToken, payload.expiresAt, u.id]
     );
     const accessToken = await new SignJWT({ sub: u.id })
-      .setProtectedHeader({ alg: 'HS256' }).setExpirationTime('7d').sign(SECRET);
+      .setProtectedHeader({ alg: 'HS256' }).setExpirationTime(SESSION_TOKEN_TTL).sign(SECRET);
     return reply.send({
       kind: 'login',
       accessToken,
@@ -2108,7 +2114,7 @@ app.post('/auth/strava/register', async (req: any, reply) => {
   } catch (e) { console.error('[Email] verify err:', e); }
 
   const accessToken = await new SignJWT({ sub: userId })
-    .setProtectedHeader({ alg: 'HS256' }).setExpirationTime('7d').sign(SECRET);
+    .setProtectedHeader({ alg: 'HS256' }).setExpirationTime(SESSION_TOKEN_TTL).sign(SECRET);
   return reply.status(201).send({
     accessToken,
     user: { id: userId, username: displayName, email, city: city ?? null },
@@ -2185,7 +2191,7 @@ app.post('/auth/strava/link', {
   }
 
   const accessToken = await new SignJWT({ sub: u.id })
-    .setProtectedHeader({ alg: 'HS256' }).setExpirationTime('7d').sign(SECRET);
+    .setProtectedHeader({ alg: 'HS256' }).setExpirationTime(SESSION_TOKEN_TTL).sign(SECRET);
   return reply.send({
     accessToken,
     user: { id: u.id, username: u.display_name, email, city: u.city },
