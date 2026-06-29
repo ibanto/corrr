@@ -1483,25 +1483,14 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       }
     }
 
-    // Grid (v2): rasterize the closed polygon into cells — el interior del loop
-    // se reclama aunque no lo pisaras (mecánica tipo Pokémon GO). PERO solo si la
-    // ruta es CONTINUA (sin gaps). Con gaps (pantalla bloqueada → pathSegments)
-    // arriba usamos convexHull, cuya envolvente reclama un área ENORME que nunca
-    // se pisó → relleno fantasma (el lóbulo gigante que desaparecía al reabrir la
-    // app, porque era solo local). Con gaps nos quedamos con las celdas realmente
-    // pisadas: mejor infrarrellenar que pintar territorio falso.
-    if (!hasGaps && snapped.length >= 3) {
-      const interiorCells = rasterizePolygonToCells(snapped);
-      let added = 0;
-      for (const c of interiorCells) {
-        const k = cellKey(c.x, c.y);
-        if (!claimedCellsRef.current.has(k)) {
-          claimedCellsRef.current.add(k);
-          added++;
-        }
-      }
-      if (added > 0) setClaimedCellsTick(t => t + 1);
-    }
+    // El relleno del INTERIOR del loop ya NO se rasteriza aquí desde `snapped`.
+    // El fantasma lo causaba el convexHull (reclama la envolvente convexa, área
+    // jamás pisada). Ahora el interior lo rellena stopRun con fillEnclosedCells
+    // sobre las celdas REALMENTE pisadas (el rastro + sus puentes cellLine):
+    // es un flood-fill desde fuera, SEGURO — solo reclama lo topológicamente
+    // encerrado por el rastro, funciona con gaps si el rastro está conectado, y
+    // nunca infla. Ver stopRun. (`snapped` se sigue usando abajo para el polígono
+    // de zona / robo / área, no para reclamar celdas.)
 
     const area = polygonArea(snapped);
 
@@ -2023,10 +2012,14 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     // en Barcelona). Gatearlo al loop real elimina esa clase sin nerfear loops
     // legítimos (que sí disparan la detección). Trade-off menor: un loop real que
     // el detector no pille no rellenará su interior — caso raro y preferible.
-    // Solo en rutas CONTINUAS (sin gaps). Con gaps (pantalla bloqueada) el
-    // flood-fill puede encerrar regiones que no se corrieron → mismo fantasma
-    // que el convexHull de closeLoop. pathSegments aún no se ha limpiado aquí.
-    if (loopClosedRef.current && pathSegments.length === 0) {
+    // Rellenar el INTERIOR del loop con flood-fill SIEMPRE que se cerró un loop
+    // (con o sin gaps). fillEnclosedCells es auto-limitado: solo reclama celdas
+    // topológicamente ENCERRADAS por el rastro real (el rastro con sus puentes
+    // cellLine). Si el rastro cierra → rellena el interior; si está roto (gaps
+    // con teleport) → no rellena nada de más. NUNCA infla (a diferencia del
+    // convexHull, que era el verdadero fantasma y ya no se usa). Estas celdas
+    // se mandan al backend → al reabrir el interior sigue cerrado (consistente).
+    if (loopClosedRef.current) {
       const filledCells = fillEnclosedCells(claimedCellsRef.current);
       if (filledCells.size !== claimedCellsRef.current.size) {
         claimedCellsRef.current = filledCells;
