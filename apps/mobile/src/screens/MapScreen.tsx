@@ -289,6 +289,13 @@ const MAX_SPEED_MPS = MAX_SPEED_KMH / 3.6; // clamp para la integración de velo
 // suele ser ruido estando parado → no sumamos metros (la distancia no sube
 // parado en un semáforo). Ver nota en handleLocationUpdate.
 const MIN_MOVING_MPS = 0.5;
+// Máximo dt (segundos) entre dos lecturas para integrar velocidad×tiempo. A
+// ritmo de paseo, con distanceInterval=8m, una lectura llega cada ~6-10s; con
+// pantalla bloqueada Android espacia aún más. Con el cap en 6s se caían casi
+// todos los intervalos de paseo → infraconteo (~64% real, medido vs iPhone:
+// CORRR 1.31 vs reloj 2.06 km). 15s captura paseo + background moderado y sigue
+// descartando huecos largos de verdad (pausa/lock profundo).
+const MAX_DOPPLER_DT_S = 15;
 const MAX_ACCURACY_M = 18;       // Ignore GPS points with accuracy worse than 18m
 const WARMUP_ACCURACY_M = 12;    // First 5 points need accuracy < 12m (GPS warming up)
 const WARMUP_POINTS = 5;         // Number of initial points with strict accuracy
@@ -994,7 +1001,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
             for (const p of goodBufferPts) {
               const dt = prevBufTs > 0 ? (p.timestamp - prevBufTs) / 1000 : 0;
               prevBufTs = p.timestamp;
-              if (dt > 0 && dt <= 6 && p.speed >= 0) {
+              if (dt > 0 && dt <= MAX_DOPPLER_DT_S && p.speed >= 0) {
                 const spd = Math.min(p.speed, MAX_SPEED_MPS);
                 if (spd >= MIN_MOVING_MPS) dopplerBufKm += (spd * dt) / 1000;
               }
@@ -1740,7 +1747,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       {
         const rawDt = lastRawTimestampRef.current > 0 ? (now - lastRawTimestampRef.current) / 1000 : 0;
         lastRawTimestampRef.current = now;
-        if (rawDt > 0 && rawDt <= 6 && speed >= 0 && accuracy <= MAX_ACCURACY_M) {
+        if (rawDt > 0 && rawDt <= MAX_DOPPLER_DT_S && speed >= 0 && accuracy <= MAX_ACCURACY_M) {
           const spd = Math.min(speed, MAX_SPEED_MPS);
           if (spd >= MIN_MOVING_MPS) setDistance(d => d + (spd * rawDt) / 1000);
         }
@@ -2122,6 +2129,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         setRunSummary({
           visible: true,
           distance,
+          distancePosDelta,
           time: runTime,
           points: authPoints,
           xp: authXP,
@@ -2406,6 +2414,15 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
                   <Text style={styles.summaryStatLabel}>zonas</Text>
                 </View>
               </View>
+
+              {/* CALIBRACIÓN TEMPORAL (quitar antes de producción): distancia por
+                  el método nuevo (velocidad GPS, el grande de arriba) vs el viejo
+                  (posición). Comparar con el iPhone para afinar. */}
+              {typeof runSummary.distancePosDelta === 'number' && (
+                <Text style={{ color: '#888', fontSize: 12, textAlign: 'center', marginTop: 6, marginBottom: 2 }}>
+                  velocidad {runSummary.distance.toFixed(2)} km   ·   posición {runSummary.distancePosDelta.toFixed(2)} km
+                </Text>
+              )}
 
               <View style={styles.summaryPoints}>
                 <View style={styles.summaryPointsRow}>
