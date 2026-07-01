@@ -296,6 +296,14 @@ const MIN_MOVING_MPS = 0.5;
 // CORRR 1.31 vs reloj 2.06 km). 15s captura paseo + background moderado y sigue
 // descartando huecos largos de verdad (pausa/lock profundo).
 const MAX_DOPPLER_DT_S = 15;
+// Factor de calibración de la distancia por velocidad. El GPS de muchos Android
+// (medido en Xiaomi) reporta la velocidad de ANDAR ~40% más alta de lo real, así
+// que la integración velocidad×tiempo se pasa de forma consistente. Medido vs
+// Apple Watch en 2 caminatas: CORRR 1.38× y 1.44× la distancia real (mientras la
+// distancia por POSICIÓN se iba a ~2.8×, aún peor). Factor 0.72 deja el método
+// de velocidad dentro de ±4%. Ajustable si algún dispositivo/ritmo se desvía;
+// el arreglo "de libro" (fusión con acelerómetro / Kalman) queda para más adelante.
+const DOPPLER_CALIBRATION = 0.72;
 const MAX_ACCURACY_M = 18;       // Ignore GPS points with accuracy worse than 18m
 const WARMUP_ACCURACY_M = 12;    // First 5 points need accuracy < 12m (GPS warming up)
 const WARMUP_POINTS = 5;         // Number of initial points with strict accuracy
@@ -1003,7 +1011,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
               prevBufTs = p.timestamp;
               if (dt > 0 && dt <= MAX_DOPPLER_DT_S && p.speed >= 0) {
                 const spd = Math.min(p.speed, MAX_SPEED_MPS);
-                if (spd >= MIN_MOVING_MPS) dopplerBufKm += (spd * dt) / 1000;
+                if (spd >= MIN_MOVING_MPS) dopplerBufKm += (spd * dt) / 1000 * DOPPLER_CALIBRATION;
               }
             }
             lastRawTimestampRef.current = prevBufTs;
@@ -1738,7 +1746,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         lastRawTimestampRef.current = now;
         if (rawDt > 0 && rawDt <= MAX_DOPPLER_DT_S && speed >= 0 && accuracy <= MAX_ACCURACY_M) {
           const spd = Math.min(speed, MAX_SPEED_MPS);
-          if (spd >= MIN_MOVING_MPS) setDistance(d => d + (spd * rawDt) / 1000);
+          if (spd >= MIN_MOVING_MPS) setDistance(d => d + (spd * rawDt) / 1000 * DOPPLER_CALIBRATION);
         }
       }
 
