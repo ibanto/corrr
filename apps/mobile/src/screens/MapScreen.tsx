@@ -1262,8 +1262,12 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       // Use the current viewport's delta to compute the bounding box. We could
       // be more precise by reading the actual region from onRegionChangeComplete,
       // but ±latDelta gives us roughly what's on screen.
-      const halfLat = currentDelta.current.latDelta / 2;
-      const halfLng = currentDelta.current.lngDelta / 2;
+      // Radio mínimo ~1km: tras una carrera la cámara está en zoom 17 (viewport
+      // pequeño); sin este mínimo, un "Refrescar" a ese zoom traería solo un trozo
+      // y el resto del run desaparecería (ahora claimedCellsRef se vacía tras
+      // guardar). Con el mínimo, el refresh cubre un run típico.
+      const halfLat = Math.max(currentDelta.current.latDelta / 2, 0.01);
+      const halfLng = Math.max(currentDelta.current.lngDelta / 2, 0.01);
       const { cells } = await api.getCellsInViewport(
         useLat + halfLat,
         useLat - halfLat,
@@ -1272,6 +1276,34 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       );
       setRemoteCells(cells);
     } catch {}
+  };
+
+  /** Tras una carrera: recarga las celdas del servidor cubriendo TODO el bounding
+   *  box del run (a partir de claimedCellsRef), no solo el viewport tight de zoom
+   *  17. Permite luego VACIAR claimedCellsRef y pintar SOLO la verdad del servidor,
+   *  igual que al reabrir la app → sin dobles tonos ni solapes de la capa local. */
+  const loadCellsForRunArea = async () => {
+    if (claimedCellsRef.current.size === 0) { await loadCells(); return; }
+    try {
+      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+      claimedCellsRef.current.forEach(k => {
+        const ci = k.indexOf(',');
+        const x = parseInt(k.slice(0, ci), 10);
+        const y = parseInt(k.slice(ci + 1), 10);
+        if (x < minX) minX = x; if (x > maxX) maxX = x;
+        if (y < minY) minY = y; if (y > maxY) maxY = y;
+      });
+      const pad = 2; // celdas de margen alrededor del run
+      const { cells } = await api.getCellsInViewport(
+        (maxY + 1 + pad) * CELL_LAT_DEG, // north
+        (minY - pad) * CELL_LAT_DEG,     // south
+        (maxX + 1 + pad) * CELL_LNG_DEG, // east
+        (minX - pad) * CELL_LNG_DEG,     // west
+      );
+      setRemoteCells(cells);
+    } catch {
+      await loadCells().catch(() => {});
+    }
   };
 
   /** Refrescar el mapa a mano (botón de la cabecera). Recarga celdas + zonas y
@@ -2094,16 +2126,15 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         // destruir las instancias antiguas (RN-Maps a veces no las destruye
         // si solo cambia la key dentro de un array).
         setPolygonsVisible(false);
-        await loadCells();
-        // NO vaciamos claimedCellsRef (v1.10.9). loadCells solo trae las celdas
-        // del VIEWPORT actual, y tras la carrera la cámara está en zoom 17
-        // (cerca, del modo carrera) → solo carga celdas alrededor del punto
-        // final del run. Si borrábamos el set local, el resto del recorrido
-        // (fuera del viewport) desaparecía y el mapa no se ponía todo naranja
-        // hasta reabrir la app (que recarga con zoom amplio). Manteniendo el
-        // set local, las celdas del run siguen pintadas pase lo que pase con
-        // el viewport. myCellsUnion deduplica por clave, así que tener una
-        // celda en remoteCells Y en claimedCellsRef NO causa doble-alpha.
+        // Recargar las celdas del servidor sobre TODA el área del run (no solo el
+        // viewport tight de zoom 17) y VACIAR claimedCellsRef → el mapa post-
+        // carrera queda IGUAL que al reabrir la app: solo la verdad del servidor,
+        // sin el doble tono / solapes que dejaba la capa local (claimedCellsRef)
+        // encima de un remoteCells desactualizado. Antes NO vaciábamos para no
+        // perder las celdas fuera del viewport, pero eso causaba el ruido visual;
+        // al traer el área ENTERA del run, vaciar es seguro y consistente.
+        await loadCellsForRunArea();
+        claimedCellsRef.current = new Set();
         setClaimedCellsTick(t => t + 1);
         setPolygonGeneration(g => g + 1);
         // Esperar 1-2 frames para que el commit de `false` llegue al nativo
