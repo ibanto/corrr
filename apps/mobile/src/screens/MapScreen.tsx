@@ -2447,15 +2447,6 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
                 </View>
               </View>
 
-              {/* CALIBRACIÓN TEMPORAL (quitar antes de producción): distancia por
-                  el método nuevo (velocidad GPS, el grande de arriba) vs el viejo
-                  (posición). Comparar con el iPhone para afinar. */}
-              {typeof runSummary.distancePosDelta === 'number' && (
-                <Text style={{ color: '#888', fontSize: 12, textAlign: 'center', marginTop: 6, marginBottom: 2 }}>
-                  velocidad {runSummary.distance.toFixed(2)} km   ·   posición {runSummary.distancePosDelta.toFixed(2)} km
-                </Text>
-              )}
-
               <View style={styles.summaryPoints}>
                 <View style={styles.summaryPointsRow}>
                   <Ionicons name="flame" size={20} color={colors.orange} />
