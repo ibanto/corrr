@@ -911,6 +911,14 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
   // una acción afirmativa explícita dentro de la app reconociendo qué datos
   // se recogen y por qué. Sin esto, rechazo automático en revisión.
   const [bgDisclosureVisible, setBgDisclosureVisible] = useState(false);
+  // Aviso destacado equivalente para el permiso de ubicación FOREGROUND.
+  // Rechazo de Google (jul-2026, "Divulgación insuficiente y poco destacada"):
+  // pedíamos ACCESS_FINE_LOCATION a pelo al montar el mapa, sin divulgación
+  // previa dentro de la app. TODO diálogo de permiso de ubicación debe ir
+  // precedido inmediatamente de su aviso. Se resuelve como promesa para
+  // poder await-ear la decisión del usuario en los flujos async.
+  const [fgDisclosureVisible, setFgDisclosureVisible] = useState(false);
+  const fgDisclosureResolveRef = useRef<((accepted: boolean) => void) | null>(null);
   const [userXP, setUserXP] = useState(0);
   const [mapRegion, setMapRegion] = useState(DEFAULT_REGION);
   const [cityName, setCityName] = useState('...');
@@ -1169,8 +1177,13 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       loadZones(DEFAULT_REGION.latitude, DEFAULT_REGION.longitude);
       loadCells(DEFAULT_REGION.latitude, DEFAULT_REGION.longitude);
 
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status === 'granted') {
+      // Rechazo Google jul-2026: aquí se pedía el permiso a pelo al montar
+      // el mapa. Ahora el diálogo del sistema solo aparece tras aceptar el
+      // aviso destacado (ensureForegroundPermission). Si el usuario dice
+      // "Ahora no", el mapa sigue funcionando sobre DEFAULT_REGION y se le
+      // volverá a ofrecer al pulsar "Iniciar carrera".
+      const granted = await ensureForegroundPermission();
+      if (granted) {
         try {
           // Primero intentar última ubicación conocida (instantáneo)
           const lastKnown = await Location.getLastKnownPositionAsync();
@@ -1620,9 +1633,37 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     setLoopDetected(false);
   };
 
-  const startRun = async () => {
+  // Garantiza el permiso de ubicación foreground CUMPLIENDO la política de
+  // divulgación destacada: si ya está concedido no muestra nada; si no,
+  // enseña primero el aviso propio y solo tras "Aceptar" invoca el diálogo
+  // del sistema. Nunca llamar a requestForegroundPermissionsAsync directo.
+  const ensureForegroundPermission = async (): Promise<boolean> => {
+    const { status: existing } = await Location.getForegroundPermissionsAsync();
+    if (existing === 'granted') return true;
+    const accepted = await new Promise<boolean>(resolve => {
+      fgDisclosureResolveRef.current = resolve;
+      setFgDisclosureVisible(true);
+    });
+    if (!accepted) return false;
     const { status } = await Location.requestForegroundPermissionsAsync();
-    if (status !== 'granted') {
+    return status === 'granted';
+  };
+
+  const handleFgDisclosureAccept = () => {
+    setFgDisclosureVisible(false);
+    fgDisclosureResolveRef.current?.(true);
+    fgDisclosureResolveRef.current = null;
+  };
+
+  const handleFgDisclosureDecline = () => {
+    setFgDisclosureVisible(false);
+    fgDisclosureResolveRef.current?.(false);
+    fgDisclosureResolveRef.current = null;
+  };
+
+  const startRun = async () => {
+    const granted = await ensureForegroundPermission();
+    if (!granted) {
       Alert.alert('Permiso necesario', 'CORRR necesita tu ubicación para registrar la carrera.');
       return;
     }
@@ -1973,7 +2014,11 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     try {
       const bgRunning = await TaskManager.isTaskRegisteredAsync(BACKGROUND_LOCATION_TASK);
       if (!bgRunning) {
-        const { status } = await Location.requestBackgroundPermissionsAsync();
+        // getBackgroundPermissionsAsync (NO request): al reanudar, el permiso
+        // ya se concedió al iniciar la carrera. Si fue revocado a mitad, NO
+        // podemos lanzar el diálogo del sistema sin divulgación previa
+        // (política Play); seguimos solo-foreground.
+        const { status } = await Location.getBackgroundPermissionsAsync();
         if (status === 'granted') {
           bgLocationBuffer = [];
           try { await AsyncStorage.removeItem(BG_BUFFER_KEY); } catch {}
@@ -2959,6 +3004,71 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         )}
       </View>
 
+      {/* Aviso destacado de ubicación FOREGROUND. Igual de obligatorio que el
+          de background: el rechazo de jul-2026 fue por pedir este permiso al
+          montar el mapa sin divulgación previa. Reutiliza los estilos del
+          modal de background. */}
+      <Modal
+        visible={fgDisclosureVisible}
+        transparent
+        animationType="fade"
+        statusBarTranslucent
+        onRequestClose={handleFgDisclosureDecline}
+      >
+        <View style={styles.bgDisclosureBackdrop}>
+          <View style={styles.bgDisclosureCard}>
+            <View style={styles.bgDisclosureHeader}>
+              <Image source={require('../../assets/icon.png')} style={styles.bgDisclosureLogo} />
+              <Text style={styles.bgDisclosureTitle}>Tu ubicación en CORRR</Text>
+            </View>
+
+            <Text style={styles.bgDisclosureLead}>
+              CORRR recoge datos de ubicación para mostrar tu posición en el
+              mapa, el territorio a tu alrededor y registrar tus carreras.
+            </Text>
+
+            <View style={styles.bgDisclosureSection}>
+              <Text style={styles.bgDisclosureSectionTitle}>¿Qué datos recogemos?</Text>
+              <Text style={styles.bgDisclosureSectionBody}>
+                Tu posición GPS mientras usas la app: para centrar el mapa,
+                enseñarte las celdas conquistadas cerca de ti y, durante una
+                carrera, calcular distancia, ritmo y territorio.
+              </Text>
+            </View>
+
+            <View style={styles.bgDisclosureSection}>
+              <Text style={styles.bgDisclosureSectionTitle}>¿A dónde van tus datos?</Text>
+              <Text style={styles.bgDisclosureSectionBody}>
+                A tu cuenta de CORRR en nuestro servidor (EU, GDPR). No se
+                ceden a terceros y puedes borrarlos cuando quieras desde
+                Perfil → Eliminar cuenta.
+              </Text>
+            </View>
+
+            <Text style={styles.bgDisclosureFootnote}>
+              Tras pulsar "Aceptar y continuar", Android te pedirá
+              confirmación del permiso de ubicación.
+            </Text>
+
+            <TouchableOpacity
+              style={styles.bgDisclosureAcceptBtn}
+              onPress={handleFgDisclosureAccept}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.bgDisclosureAcceptText}>Aceptar y continuar</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.bgDisclosureDeclineBtn}
+              onPress={handleFgDisclosureDecline}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.bgDisclosureDeclineText}>Ahora no</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
       {/* Aviso destacado de ubicación en background. OBLIGATORIO antes de
           invocar el diálogo de permiso del sistema (política de Google Play
           para ACCESS_BACKGROUND_LOCATION). Sin esto la app no pasa revisión.
@@ -2981,9 +3091,9 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
             </View>
 
             <Text style={styles.bgDisclosureLead}>
-              Para registrar tu carrera correctamente, CORRR necesita acceso
-              a tu ubicación incluso cuando bloqueas la pantalla o cambias
-              de aplicación.
+              CORRR recoge datos de ubicación para registrar tu carrera y el
+              territorio que conquistas, incluso cuando la app está cerrada o
+              no está en uso (pantalla bloqueada u otra app en primer plano).
             </Text>
 
             <View style={styles.bgDisclosureSection}>
