@@ -176,6 +176,11 @@ async function initDB() {
   await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token_expires TIMESTAMPTZ`).catch(() => {});
   await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN DEFAULT FALSE`).catch(() => {});
   await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS verify_token TEXT`).catch(() => {});
+  // Fecha de alta para /admin/panel (la tabla users es anterior a este archivo
+  // y nunca la tuvo). Postgres rellena las filas existentes con NOW() al hacer
+  // el ALTER: aceptable — la BD se vació el 21-jul-2026, así que ninguna alta
+  // real es anterior a la columna.
+  await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()`).catch(() => {});
 
   // ── Profile fields (v1.9 — formulario "Editar perfil" del usuario) ─────────
   // Datos del corredor que rellena en su perfil. Al completarse todos los
@@ -953,6 +958,104 @@ app.delete('/admin/challenges/:id', { preHandler: requireAdmin }, async (req: an
 app.get('/admin/challenges', { preHandler: requireAdmin }, async (req: any, reply) => {
   const { rows } = await db.query('SELECT * FROM challenges ORDER BY created_at DESC');
   return reply.send(rows);
+});
+
+/** GET /admin/panel — panel de administración en HTML. Abrir en el navegador:
+ *  https://<api>/admin/panel?key=ADMIN_KEY
+ *  Server-rendered a propósito: mismo origen (sin CORS), nada que desplegar
+ *  aparte del backend, y desde el móvil va igual de bien. Todo texto que
+ *  origina el usuario (nombre, email, ciudad) se escapa SIEMPRE — un
+ *  display_name malicioso no puede inyectar HTML en el panel del admin. */
+app.get('/admin/panel', { preHandler: requireAdmin }, async (req: any, reply) => {
+  const esc = (s: any) =>
+    String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
+  const fmtDate = (d: any) =>
+    d ? new Date(d).toLocaleString('es-ES', { timeZone: 'Europe/Madrid', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—';
+  const fmtDur = (secs: number) => `${Math.floor(secs / 60)}'${String(Math.round(secs % 60)).padStart(2, '0')}"`;
+
+  const [totals, signups, lastUsers, lastRuns] = await Promise.all([
+    db.query(`SELECT
+      (SELECT COUNT(*)::int FROM users)                                                    AS users,
+      (SELECT COUNT(*)::int FROM users WHERE email_verified)                               AS verified,
+      (SELECT COUNT(*)::int FROM users WHERE created_at >= NOW() - INTERVAL '24 hours')    AS users_24h,
+      (SELECT COUNT(*)::int FROM users WHERE created_at >= NOW() - INTERVAL '7 days')      AS users_7d,
+      (SELECT COUNT(*)::int FROM runs)                                                     AS runs,
+      (SELECT COUNT(*)::int FROM runs WHERE created_at >= NOW() - INTERVAL '24 hours')     AS runs_24h,
+      (SELECT COALESCE(ROUND(SUM(distance_km)::numeric, 1), 0) FROM runs)                  AS km,
+      (SELECT COUNT(*)::int FROM cells)                                                    AS cells`),
+    db.query(`SELECT DATE(created_at AT TIME ZONE 'Europe/Madrid') AS d, COUNT(*)::int AS n
+              FROM users WHERE created_at >= NOW() - INTERVAL '14 days'
+              GROUP BY d ORDER BY d DESC`),
+    db.query(`SELECT u.display_name, u.email, u.city, u.email_verified, u.created_at,
+                     COALESCE(s.total_runs, 0) AS total_runs,
+                     COALESCE(s.total_km, 0)   AS total_km,
+                     COALESCE(s.total_cells, 0) AS total_cells
+              FROM users u LEFT JOIN user_stats s ON s.user_id = u.id
+              ORDER BY u.created_at DESC NULLS LAST LIMIT 50`),
+    db.query(`SELECT u.display_name, r.distance_km, r.duration_secs, r.points, r.created_at
+              FROM runs r JOIN users u ON u.id = r.user_id
+              ORDER BY r.created_at DESC LIMIT 20`),
+  ]);
+  const t = totals.rows[0];
+  const maxSignups = Math.max(1, ...signups.rows.map((r: any) => r.n));
+
+  const kpi = (label: string, value: any, sub = '') =>
+    `<div class="kpi"><div class="v">${value}</div><div class="l">${label}</div>${sub ? `<div class="s">${sub}</div>` : ''}</div>`;
+
+  const html = `<!doctype html><html lang="es"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="refresh" content="300">
+<title>CORRR — Panel</title>
+<style>
+  body{margin:0;background:#0A0A0A;color:#eee;font-family:-apple-system,Roboto,sans-serif;padding:16px;}
+  h1{color:#FF6600;font-size:22px;margin:0 0 4px;} .sub{color:#888;font-size:12px;margin-bottom:16px;}
+  h2{font-size:15px;color:#FF6600;margin:24px 0 8px;text-transform:uppercase;letter-spacing:1px;}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;}
+  .kpi{background:#161616;border:1px solid #262626;border-radius:12px;padding:12px;}
+  .kpi .v{font-size:26px;font-weight:800;color:#fff;} .kpi .l{font-size:11px;color:#999;margin-top:2px;}
+  .kpi .s{font-size:11px;color:#FF6600;margin-top:2px;}
+  table{width:100%;border-collapse:collapse;font-size:13px;} .wrap{overflow-x:auto;}
+  th{color:#888;text-align:left;font-weight:600;padding:6px 8px;border-bottom:1px solid #262626;font-size:11px;text-transform:uppercase;}
+  td{padding:7px 8px;border-bottom:1px solid #1c1c1c;white-space:nowrap;}
+  .ok{color:#4caf50;} .no{color:#f44336;}
+  .bar{background:#FF6600;height:10px;border-radius:5px;display:inline-block;vertical-align:middle;margin-right:8px;}
+  .day{color:#999;font-size:12px;padding:3px 0;}
+  .btn{background:#FF6600;color:#fff;border:none;border-radius:20px;padding:8px 20px;font-weight:700;cursor:pointer;font-size:13px;}
+</style></head><body>
+<h1>CORRR — Panel de control</h1>
+<div class="sub">Generado ${new Date().toLocaleString('es-ES', { timeZone: 'Europe/Madrid' })} (hora Madrid) · se auto-refresca cada 5 min · <button class="btn" onclick="location.reload()">Actualizar</button></div>
+
+<div class="kpis">
+  ${kpi('Usuarios', t.users, `${t.verified} verificados`)}
+  ${kpi('Altas 24h', t.users_24h, `${t.users_7d} esta semana`)}
+  ${kpi('Carreras', t.runs, `${t.runs_24h} en 24h`)}
+  ${kpi('Km totales', t.km)}
+  ${kpi('Celdas conquistadas', t.cells)}
+</div>
+
+<h2>Altas por día (14 días)</h2>
+${signups.rows.length === 0 ? '<div class="day">Sin altas todavía</div>' : signups.rows.map((r: any) =>
+  `<div class="day">${esc(new Date(r.d).toLocaleDateString('es-ES', { day: '2-digit', month: 'short' }))} <span class="bar" style="width:${Math.round((r.n / maxSignups) * 200)}px"></span>${r.n}</div>`).join('')}
+
+<h2>Últimos usuarios (50)</h2>
+<div class="wrap"><table>
+<tr><th>Nombre</th><th>Email</th><th>Ciudad</th><th>Verif.</th><th>Alta</th><th>Carreras</th><th>Km</th><th>Celdas</th></tr>
+${lastUsers.rows.map((u: any) =>
+  `<tr><td><b>${esc(u.display_name)}</b></td><td>${esc(u.email)}</td><td>${esc(u.city)}</td>
+   <td class="${u.email_verified ? 'ok' : 'no'}">${u.email_verified ? '✓' : '✗'}</td>
+   <td>${fmtDate(u.created_at)}</td><td>${u.total_runs}</td><td>${Number(u.total_km).toFixed(1)}</td><td>${u.total_cells}</td></tr>`).join('')}
+</table></div>
+
+<h2>Últimas carreras (20)</h2>
+<div class="wrap"><table>
+<tr><th>Corredor</th><th>Km</th><th>Tiempo</th><th>Puntos</th><th>Cuándo</th></tr>
+${lastRuns.rows.length === 0 ? '<tr><td colspan="5" style="color:#666">Sin carreras todavía</td></tr>' : lastRuns.rows.map((r: any) =>
+  `<tr><td><b>${esc(r.display_name)}</b></td><td>${Number(r.distance_km).toFixed(2)}</td>
+   <td>${fmtDur(r.duration_secs)}</td><td>${r.points}</td><td>${fmtDate(r.created_at)}</td></tr>`).join('')}
+</table></div>
+</body></html>`;
+
+  return reply.type('text/html; charset=utf-8').send(html);
 });
 
 /** DELETE /admin/wipe-users — vacía TODAS las tablas con datos de usuarios.
