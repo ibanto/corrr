@@ -7,6 +7,7 @@ import {
   Modal,
   Animated,
   Image,
+  useWindowDimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, radius } from '../theme';
@@ -31,6 +32,11 @@ const IMAGES: Record<PopupType, any> = {
 
 export default function ZonePopup({ visible, type, onClose, onRespond }: Props) {
   const opacity = useRef(new Animated.Value(0)).current;
+  // Medidas explícitas y reactivas. NO usar position:absolute + insets 0 para
+  // dimensionar la imagen: sin un marco explícito el <Image> cae a su tamaño
+  // INTRÍNSECO (720x1556 pt) sobre una pantalla de ~393pt, y se veía ampliada
+  // mostrando solo un trozo.
+  const { width, height } = useWindowDimensions();
 
   useEffect(() => {
     if (visible) {
@@ -52,7 +58,7 @@ export default function ZonePopup({ visible, type, onClose, onRespond }: Props) 
             posteriores pintan encima, y la imagen ahora es absoluta. */}
         <Image
           source={IMAGES[type]}
-          style={styles.image}
+          style={{ width, height }}
           resizeMode="contain"
         />
 
@@ -88,14 +94,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.15)',
     alignItems: 'center', justifyContent: 'center',
   },
-  image: {
-    // Pantalla completa con 'contain', NO 'cover'. Con 'cover' la imagen salía
-    // ampliadísima en el iPhone (solo se veía un trozo), así que no dependemos
-    // de que el contenedor se mida bien: 'contain' garantiza que se ve el arte
-    // ENTERO pase lo que pase. Como el arte tiene fondo negro puro y el
-    // contenedor también, las bandas son invisibles y se ve edge-to-edge.
-    ...StyleSheet.absoluteFillObject,
-  },
+  // (la imagen se dimensiona inline con useWindowDimensions — ver arriba)
   bottomBar: {
     position: 'absolute',
     bottom: 50,

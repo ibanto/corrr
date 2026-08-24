@@ -14,6 +14,7 @@ import {
   NativeModules,
   Platform,
   ActivityIndicator,
+  Dimensions,
 } from 'react-native';
 import MapView, { Polygon, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import * as Location from 'expo-location';
@@ -2553,8 +2554,13 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
           mientras saveRun + loadCells están en vuelo (savingRun = true). */}
       <LoadingScreen visible={savingRun} />
 
-      {/* Resumen post-carrera */}
-      {runSummary?.visible && (
+      {/* Resumen post-carrera. Espera a que se cierre la cartela de zona: iOS
+          no presenta bien dos <Modal> a la vez — el segundo se quedaba en el
+          limbo y solo aparecía cuando algo forzaba un re-render (cambiar de
+          pestaña a Perfil/Stats/Ranking). Encadenándolos, primero se ve la
+          cartela y al cerrarla aparece el resumen, que es además el orden
+          narrativo correcto. Si no hubo cartela, sale directo. */}
+      {runSummary?.visible && !popup.visible && (
         <Modal transparent visible animationType="fade" statusBarTranslucent>
           <View style={styles.summaryOverlay}>
             <View style={styles.summaryCard}>
@@ -3470,10 +3476,13 @@ const styles = StyleSheet.create({
     textShadowColor: '#000', textShadowRadius: 6,
   },
   tauntReceivedImage: {
-    // Pantalla completa con 'contain' (no 'cover'): los taunts tienen
-    // proporciones distintas entre sí y el texto llega al borde — recortar
-    // se comería palabras. Sobre negro puro las bandas no se ven.
-    ...StyleSheet.absoluteFillObject,
+    // Pantalla completa con medidas EXPLÍCITAS (sin position:absolute: sin
+    // marco el <Image> cae a su tamaño intrínseco y sale ampliadísimo) y con
+    // 'contain', porque los taunts tienen proporciones distintas entre sí y el
+    // texto llega al borde. Sobre negro puro las bandas no se ven.
+    position: 'absolute',
+    width: Dimensions.get('window').width,
+    height: Dimensions.get('window').height,
   },
   tauntReceivedRespond: {
     position: 'absolute', bottom: 50, left: spacing.md, right: spacing.md,
