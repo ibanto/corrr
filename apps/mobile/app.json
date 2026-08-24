@@ -18,9 +18,19 @@
       "bundleIdentifier": "app.corrr",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
-        "UIBackgroundModes": ["location"],
+        "UIBackgroundModes": [
+          "location"
+        ],
         "NSCameraUsageDescription": "CORRR usa la cámara para que te hagas una foto de perfil.",
-        "NSPhotoLibraryUsageDescription": "CORRR accede a tus fotos para que elijas tu foto de perfil."
+        "NSPhotoLibraryUsageDescription": "CORRR accede a tus fotos para que elijas tu foto de perfil.",
+        "NSAppTransportSecurity": {
+          "NSExceptionDomains": {
+            "exp.direct": {
+              "NSIncludesSubdomains": true,
+              "NSExceptionAllowsInsecureHTTPLoads": true
+            }
+          }
+        }
       },
       "config": {
         "googleMapsApiKey": "AIzaSyC_1Y2Fo6S9X6GJU5Upx4EZxrw4JFf_xNU"
@@ -68,7 +78,9 @@
           "color": "#FF6600"
         }
       ],
-      "@react-native-google-signin/google-signin"
+      "@react-native-google-signin/google-signin",
+      "expo-build-properties",
+      "./plugins/withModularHeaders.js"
     ],
     "extra": {
       "eas": {

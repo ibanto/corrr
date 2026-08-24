@@ -307,6 +307,23 @@ const DOPPLER_CALIBRATION = 0.72;
 const MAX_ACCURACY_M = 18;       // Ignore GPS points with accuracy worse than 18m
 const WARMUP_ACCURACY_M = 12;    // First 5 points need accuracy < 12m (GPS warming up)
 const WARMUP_POINTS = 5;         // Number of initial points with strict accuracy
+// Techo de lecturas para el warmup estricto. Sin esto el warmup se podía
+// DEADLOCKEAR: el contador de warmup mira puntos ACEPTADOS, pero si la
+// accuracy se queda estancada en la banda 12-18m (típico entre edificios
+// altos), ningún punto pasa el filtro estricto → el contador nunca sube →
+// el warmup no termina JAMÁS y la carrera entera no acepta un solo punto
+// (sin celdas, sin distancia posicional, y auto-pause a los 20s andando).
+// Pasado este número de lecturas nos conformamos con MAX_ACCURACY_M, que
+// sigue siendo el filtro de siempre — el anti-cheat no se relaja.
+const WARMUP_MAX_READINGS = 15;
+
+// ── Cierre de circuito (loop) ─────────────────────────────────────────────
+// Se cierra un loop cuando el corredor vuelve a menos de LOOP_CLOSE_DIST_M de
+// un punto por el que ya pasó, habiendo recorrido al menos
+// LOOP_MIN_PERIMETER_M desde entonces. Ese mínimo evita que un ida y vuelta
+// corto, o estar dando vueltas en el sitio, cuente como circuito.
+const LOOP_CLOSE_DIST_M = 30;
+const LOOP_MIN_PERIMETER_M = 200;
 // Suelo de ruido FIJO: si te has "movido" menos que esto entre dos lecturas, es
 // jitter del GPS, no movimiento real. El punto saltado MANTIENE el ancla (no se
 // actualiza prevCoord), así que el desplazamiento real se acaba contando cuando
@@ -346,6 +363,23 @@ const MAX_BRIDGE_CELLS = 15;
 // tiene tiempo de ver 15 km/h por un spike de drift.
 const STATIONARY_WINDOW = 6;
 const STATIONARY_RADIUS_M = 15;
+
+// Segunda opinión al detector de "quieto", vía velocidad Doppler del chip.
+// El detector posicional de arriba es marginal para caminantes: con puntos a
+// MIN_POINT_DIST_M (6m), 6 lecturas caminando en línea recta dan una diagonal
+// de ~36m, apenas por encima del umbral de 30m — y en cuanto hay una curva,
+// una acera estrecha o un semáforo, cae por debajo y marca "quieto" a alguien
+// que está andando de verdad. Cuando eso pasa se descarta el punto entero
+// (no celdas, no distancia posicional, no refresco de lastMovementTime), así
+// que el auto-pause salta a los 20s en plena caminata.
+// El chip GPS ya reporta velocidad por Doppler, que el código de distancia
+// oficial usa precisamente por ser "inmune al zigzag de drift": parado en una
+// silla el chip da ~0 m/s aunque la posición baile. Así que si el Doppler dice
+// que hay movimiento sostenido, NO estamos quietos, diga lo que diga el
+// bounding box. Pedimos varias lecturas (no una) para que un spike aislado no
+// desactive el anti-drift.
+const DOPPLER_MOVING_WINDOW = 4;
+const DOPPLER_MOVING_MIN_HITS = 2;
 
 /** ¿Las últimas N coordenadas caen todas dentro de un círculo de radius m?
  *  Si sí, el usuario está parado y el GPS está bailando — no movimiento real.
@@ -723,7 +757,7 @@ function filterGpsPoint(
   prevTimestamp: number,
   accuracy: number,
   speed: number,
-  pointCount: number = 999, // how many good points we already have (for warmup)
+  inWarmup: boolean = false, // ¿seguimos en el warmup estricto de accuracy?
 ): { action: 'accept' | 'skip' | 'teleport'; distKm: number; speedKmh: number } {
   // Filter 0: sanity — coords inválidas (NaN/Infinity) o fuera del planeta.
   // Sin esto, un punto GPS corrupto se propaga a coordToCell → cells con
@@ -738,7 +772,7 @@ function filterGpsPoint(
     return { action: 'skip', distKm: 0, speedKmh: 0 };
   }
   // Filter 1: accuracy — stricter during warmup (first N points)
-  const maxAcc = pointCount < WARMUP_POINTS ? WARMUP_ACCURACY_M : MAX_ACCURACY_M;
+  const maxAcc = inWarmup ? WARMUP_ACCURACY_M : MAX_ACCURACY_M;
   if (accuracy > maxAcc) {
     return { action: 'skip', distKm: 0, speedKmh: 0 };
   }
@@ -903,6 +937,13 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
   // "estás en realidad quieto". Si todas caen dentro de un círculo pequeño
   // → GPS drift, no real movement → no claim cells. Ver STATIONARY_*.
   const recentCoordsRef = useRef<Coord[]>([]);
+  // Últimas velocidades Doppler crudas (m/s) para decidir si hay movimiento
+  // real aunque el detector posicional diga "quieto". Ver DOPPLER_MOVING_*.
+  const recentDopplerSpeedsRef = useRef<number[]>([]);
+  // Lecturas GPS crudas vistas en esta carrera (aceptadas o no). Solo sirve
+  // para que el warmup estricto de accuracy no se quede bloqueado para
+  // siempre. Ver WARMUP_MAX_READINGS.
+  const rawReadingsRef = useRef(0);
   const [remoteCells, setRemoteCells] = useState<RemoteCell[]>([]);
   const [selectedZone, setSelectedZone] = useState<RemoteZone | null>(null);
   // Modal de "aviso destacado" (prominent disclosure) que Google Play exige
@@ -1054,7 +1095,10 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
             for (const point of bufferToProcess) {
               const newCoord = { latitude: point.latitude, longitude: point.longitude };
               const prev = pathRef.current.length > 0 ? pathRef.current[pathRef.current.length - 1] : null;
-              const result = filterGpsPoint(newCoord, prev, point.timestamp, lastLocationTimestamp.current, point.accuracy, point.speed, pathRef.current.length);
+              rawReadingsRef.current += 1;
+              const inWarmupBuf =
+                pathRef.current.length < WARMUP_POINTS && rawReadingsRef.current <= WARMUP_MAX_READINGS;
+              const result = filterGpsPoint(newCoord, prev, point.timestamp, lastLocationTimestamp.current, point.accuracy, point.speed, inWarmupBuf);
 
               if (result.action === 'skip') continue;
 
@@ -1495,15 +1539,24 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     // Unir todos los segmentos + path actual
     const allPoints = [...pathSegments.flat(), ...path];
     if (allPoints.length < 10) return false;
-    const start = allPoints[0];
     const current = allPoints[allPoints.length - 1];
-    const dist = getDistance(start, current);
-    // Si volvemos a menos de 30m del inicio y hemos recorrido más de 200m
-    const totalDist = allPoints.reduce((acc, p, i) => {
-      if (i === 0) return 0;
-      return acc + getDistance(allPoints[i-1], p);
-    }, 0);
-    return dist < 30 && totalDist > 200;
+    // Antes esto solo miraba el punto de INICIO: "¿he vuelto a menos de 30m de
+    // donde arranqué?". Eso deja fuera el caso más común de todos — sales de
+    // casa, das una vuelta cerrada y sigues (o paras) en otro sitio: el
+    // circuito está cerrado de verdad, pero como acabas lejos del inicio no se
+    // marcaba como loop y el interior nunca se rellenaba (solo el perímetro).
+    // Ahora el cierre se detecta contra CUALQUIER punto anterior del recorrido,
+    // exigiendo los mismos 200m de recorrido entre ambos para que un ida y
+    // vuelta corto o estar parado no cuenten como circuito. El comportamiento
+    // viejo es un subconjunto de éste (el inicio es un punto anterior más), así
+    // que no se pierde ninguna detección que ya funcionase.
+    let travelled = 0;
+    for (let i = allPoints.length - 1; i > 0; i--) {
+      travelled += getDistance(allPoints[i - 1], allPoints[i]);
+      if (travelled < LOOP_MIN_PERIMETER_M) continue;
+      if (getDistance(allPoints[i - 1], current) < LOOP_CLOSE_DIST_M) return true;
+    }
+    return false;
   };
 
   const closeLoop = async (path: Coord[]) => {
@@ -1723,6 +1776,8 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     // distorsionar la detección de "estás quieto" en los primeros segundos
     // de la nueva carrera.
     recentCoordsRef.current = [];
+    recentDopplerSpeedsRef.current = [];
+    rawReadingsRef.current = 0;
     setClaimedCellsTick(t => t + 1);
     setSplits([]);
     splitsTrackingRef.current = { lastKm: 0, lastTime: 0 };
@@ -1820,10 +1875,19 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         if (rawDt > 0 && rawDt <= MAX_DOPPLER_DT_S && speed >= 0 && accuracy <= MAX_ACCURACY_M) {
           const spd = Math.min(speed, MAX_SPEED_MPS);
           if (spd >= MIN_MOVING_MPS) setDistance(d => d + (spd * rawDt) / 1000 * DOPPLER_CALIBRATION);
+          // Alimentamos la ventana de velocidades SOLO con lecturas de accuracy
+          // buena: una lectura mala no debe poder "desbloquear" el anti-drift.
+          recentDopplerSpeedsRef.current.push(spd);
+          if (recentDopplerSpeedsRef.current.length > DOPPLER_MOVING_WINDOW) {
+            recentDopplerSpeedsRef.current.shift();
+          }
         }
       }
 
-      const result = filterGpsPoint(newCoord, prev, now, lastLocationTimestamp.current, accuracy, speed, pathRef.current.length);
+      rawReadingsRef.current += 1;
+      const inWarmup =
+        pathRef.current.length < WARMUP_POINTS && rawReadingsRef.current <= WARMUP_MAX_READINGS;
+      const result = filterGpsPoint(newCoord, prev, now, lastLocationTimestamp.current, accuracy, speed, inWarmup);
 
       if (result.action === 'skip') {
         // Bad point — don't update timestamp so next point measures from last good one
@@ -1875,7 +1939,11 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       if (recentCoordsRef.current.length > STATIONARY_WINDOW * 2) {
         recentCoordsRef.current.shift();
       }
-      if (isStationary(recentCoordsRef.current)) {
+      // El chip dice que hay movimiento sostenido → no estamos quietos aunque
+      // el bounding box sea pequeño (caminante lento, curva, acera estrecha).
+      const dopplerMoving =
+        recentDopplerSpeedsRef.current.filter(s => s >= MIN_MOVING_MPS).length >= DOPPLER_MOVING_MIN_HITS;
+      if (isStationary(recentCoordsRef.current) && !dopplerMoving) {
         return;
       }
 
@@ -2246,6 +2314,20 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
             points: stolenPoints,
             rivalName: Array.from(names).join(', '),
           });
+        } else {
+          // Territorio virgen (sin owner previo): mostrar "ZONA CONQUISTADA".
+          // Antes esta rama no existía y el popup de conquista solo se disparaba
+          // desde el sistema legacy de loops-polígono (closeLoop), nunca desde el
+          // flujo real de saveRun con celdas — así que conquistar territorio
+          // nuevo sin robar a nadie nunca mostraba nada.
+          const newCells = res.newCellCount ?? res.breakdown?.newCells ?? claimedCells.length;
+          if (newCells > 0) {
+            setPopup({
+              visible: true,
+              type: 'conquered',
+              points: newCells,
+            });
+          }
         }
       }).catch((err) => {
         // Si el backend falla, igualmente mostramos resumen con valores
@@ -2357,6 +2439,20 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       {(currentTaunt?.mode === 'taunt' || currentTaunt?.mode === 'response') && currentTaunt.taunt_id && (
         <Modal transparent visible animationType="fade" statusBarTranslucent>
           <View style={styles.tauntReceivedContainer}>
+            {/* La imagen va la PRIMERA: ahora es absoluta y a pantalla
+                completa, así que los hermanos posteriores (X, remitente,
+                botón) pintan por encima de ella. */}
+            {(() => {
+              const img = tauntImageById(currentTaunt.mode, currentTaunt.taunt_id);
+              if (!img) return null;
+              return (
+                <Image
+                  source={img}
+                  style={styles.tauntReceivedImage}
+                  resizeMode="contain"
+                />
+              );
+            })()}
             <TouchableOpacity
               style={styles.tauntReceivedClose}
               onPress={async () => {
@@ -2369,17 +2465,6 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
             <Text style={styles.tauntReceivedFrom}>
               {currentTaunt.from_user_name ?? 'Rival'} te ha enviado un mensaje
             </Text>
-            {(() => {
-              const img = tauntImageById(currentTaunt.mode, currentTaunt.taunt_id);
-              if (!img) return null;
-              return (
-                <Image
-                  source={img}
-                  style={styles.tauntReceivedImage}
-                  resizeMode="contain"
-                />
-              );
-            })()}
             {currentTaunt.mode === 'taunt' ? (
               <TouchableOpacity
                 style={styles.tauntReceivedRespond}
@@ -3365,9 +3450,10 @@ const styles = StyleSheet.create({
   },
   // Inbox display for received taunts/responses (sister to ZonePopup).
   tauntReceivedContainer: {
-    flex: 1, backgroundColor: colors.bg,
+    // Negro puro (no colors.bg): el arte de los taunts tiene fondo negro y
+    // cualquier diferencia de tono delataba el recuadro de la imagen.
+    flex: 1, backgroundColor: '#000',
     alignItems: 'center', justifyContent: 'center',
-    paddingHorizontal: spacing.md,
   },
   tauntReceivedClose: {
     position: 'absolute', top: 50, right: spacing.md, zIndex: 10,
@@ -3376,11 +3462,18 @@ const styles = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
   },
   tauntReceivedFrom: {
+    // Flota SOBRE la imagen a pantalla completa (antes empujaba la imagen
+    // hacia abajo dentro del flujo). Sombra para que se lea sobre el arte.
+    position: 'absolute', top: 58, left: 70, right: 70, zIndex: 10,
     color: colors.textPrimary, fontSize: 16, fontWeight: '700',
-    marginBottom: spacing.md, textAlign: 'center',
+    textAlign: 'center',
+    textShadowColor: '#000', textShadowRadius: 6,
   },
   tauntReceivedImage: {
-    width: '100%', flex: 1, maxHeight: '70%',
+    // Pantalla completa con 'contain' (no 'cover'): los taunts tienen
+    // proporciones distintas entre sí y el texto llega al borde — recortar
+    // se comería palabras. Sobre negro puro las bandas no se ven.
+    ...StyleSheet.absoluteFillObject,
   },
   tauntReceivedRespond: {
     position: 'absolute', bottom: 50, left: spacing.md, right: spacing.md,

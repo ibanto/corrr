@@ -15,7 +15,6 @@ import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, radius } from '../theme';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
-const SCREEN_HEIGHT = Dimensions.get('window').height;
 const THUMB_WIDTH = (SCREEN_WIDTH - spacing.md * 3) / 2;
 
 interface TauntMessage {
@@ -298,8 +297,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   previewImage: {
-    width: SCREEN_WIDTH,
-    height: SCREEN_HEIGHT * 0.75,
+    // Pantalla completa. Aquí va 'contain' y NO 'cover' (a diferencia de
+    // ZonePopup): las cartelas de taunt tienen proporciones distintas entre sí
+    // (720x1279, 592x1280...) y el texto llega casi al borde, así que recortar
+    // se comería palabras. Como el arte tiene fondo negro puro y el contenedor
+    // también, las bandas del 'contain' son invisibles y se ve edge-to-edge.
+    ...StyleSheet.absoluteFillObject,
   },
   previewClose: {
     position: 'absolute',

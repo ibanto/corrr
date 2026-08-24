@@ -7,13 +7,9 @@ import {
   Modal,
   Animated,
   Image,
-  Dimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, radius } from '../theme';
-
-const SCREEN_WIDTH = Dimensions.get('window').width;
-const SCREEN_HEIGHT = Dimensions.get('window').height;
 
 export type PopupType = 'conquered' | 'stolen_by_you' | 'stolen_from_you';
 
@@ -51,17 +47,19 @@ export default function ZonePopup({ visible, type, onClose, onRespond }: Props) 
   return (
     <Modal transparent visible={visible} animationType="none" statusBarTranslucent>
       <Animated.View style={[styles.container, { opacity }]}>
-        {/* X arriba a la derecha */}
-        <TouchableOpacity style={styles.closeBtn} onPress={handleClose} activeOpacity={0.7}>
-          <Ionicons name="close" size={28} color="#fff" />
-        </TouchableOpacity>
-
-        {/* Imagen a pantalla completa */}
+        {/* Imagen a pantalla completa REAL (edge-to-edge). Va la PRIMERA en el
+            JSX para que la X y el botón queden por encima: en RN los hermanos
+            posteriores pintan encima, y la imagen ahora es absoluta. */}
         <Image
           source={IMAGES[type]}
           style={styles.image}
           resizeMode="contain"
         />
+
+        {/* X arriba a la derecha */}
+        <TouchableOpacity style={styles.closeBtn} onPress={handleClose} activeOpacity={0.7}>
+          <Ionicons name="close" size={28} color="#fff" />
+        </TouchableOpacity>
 
         {/* Botón RESPONDER solo cuando te roban */}
         {type === 'stolen_from_you' && onRespond && (
@@ -79,7 +77,9 @@ export default function ZonePopup({ visible, type, onClose, onRespond }: Props) 
 
 const styles = StyleSheet.create({
   container: {
-    flex: 1, backgroundColor: colors.bg,
+    // Negro puro (no colors.bg): el arte de estas cartelas tiene fondo negro y
+    // cualquier diferencia de tono se notaba como un "pegote" recortado.
+    flex: 1, backgroundColor: '#000',
     alignItems: 'center', justifyContent: 'center',
   },
   closeBtn: {
@@ -89,8 +89,12 @@ const styles = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
   },
   image: {
-    width: SCREEN_WIDTH,
-    height: SCREEN_HEIGHT * 0.8,
+    // Pantalla completa con 'contain', NO 'cover'. Con 'cover' la imagen salía
+    // ampliadísima en el iPhone (solo se veía un trozo), así que no dependemos
+    // de que el contenedor se mida bien: 'contain' garantiza que se ve el arte
+    // ENTERO pase lo que pase. Como el arte tiene fondo negro puro y el
+    // contenedor también, las bandas son invisibles y se ve edge-to-edge.
+    ...StyleSheet.absoluteFillObject,
   },
   bottomBar: {
     position: 'absolute',
