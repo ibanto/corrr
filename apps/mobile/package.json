@@ -23,6 +23,7 @@
     "expo-location": "~19.0.8",
     "expo-notifications": "~0.32.17",
     "expo-secure-store": "~15.0.8",
+    "expo-sharing": "~14.0.8",
     "expo-status-bar": "~3.0.9",
     "expo-task-manager": "~14.0.9",
     "polygon-clipping": "^0.15.7",
@@ -30,6 +31,7 @@
     "react-dom": "19.1.0",
     "react-native": "0.81.5",
     "react-native-maps": "1.20.1",
+    "react-native-view-shot": "4.0.3",
     "react-native-web": "^0.21.0",
     "sharp": "^0.34.5"
   },

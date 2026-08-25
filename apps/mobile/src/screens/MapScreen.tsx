@@ -25,6 +25,8 @@ import polygonClipping from 'polygon-clipping';
 import { colors, spacing, radius } from '../theme';
 import { api, RemoteZone, RemoteCell, TauntInbox } from '../services/api';
 import ZonePopup, { PopupType } from '../components/ZonePopup';
+import ShareRunCard, { ShareRunData, ShareSteal } from '../components/ShareRunCard';
+import { randomSharePhrase } from '../data/sharePhrases';
 import TauntSelector, { getTauntFullImage } from '../components/TauntSelector';
 import LoadingScreen from '../components/LoadingScreen';
 import { randomPhrase } from '../data/motivationalPhrases';
@@ -933,6 +935,10 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
   // instancias Polygon viejas. Luego el `true` las monta limpias. Esto pasa
   // detrás del LoadingScreen (`savingRun`), así que el usuario no ve flicker.
   const [polygonsVisible, setPolygonsVisible] = useState(true);
+  // Tarjeta para compartir en redes. Se rellena al terminar la carrera (con la
+  // captura del mapa y los robos) y se abre desde el botón del resumen.
+  const [shareCard, setShareCard] = useState<ShareRunData | null>(null);
+  const [shareVisible, setShareVisible] = useState(false);
   // True mientras el botón de refrescar el mapa está recargando. Deshabilita el
   // botón y muestra spinner para evitar dobles toques.
   const [refreshingMap, setRefreshingMap] = useState(false);
@@ -943,6 +949,11 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
   // "estás en realidad quieto". Si todas caen dentro de un círculo pequeño
   // → GPS drift, no real movement → no claim cells. Ver STATIONARY_*.
   const recentCoordsRef = useRef<Coord[]>([]);
+  // Recorrido COMPLETO de la carrera. Necesario aparte de pathRef porque
+  // closeLoop trunca pathRef a un único punto al cerrar un círculo (para
+  // empezar la siguiente zona del sistema legacy), y para rellenar el interior
+  // hace falta el trazado entero. Solo se vacía en startRun.
+  const fullPathRef = useRef<Coord[]>([]);
   // Últimas velocidades Doppler crudas (m/s) para decidir si hay movimiento
   // real aunque el detector posicional diga "quieto". Ver DOPPLER_MOVING_*.
   const recentDopplerSpeedsRef = useRef<number[]>([]);
@@ -1437,6 +1448,41 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     }
   }, [tauntQueue, currentTaunt]);
 
+  // Presentación DIFERIDA de los avisos de robo/mensaje. En iOS un <Modal> no
+  // llega a presentarse si se monta mientras otro se está cerrando, ni si vive
+  // en un subárbol con display:'none' (MapScreen se oculta así al cambiar de
+  // pestaña, ver App.tsx). El resultado era que el aviso "te han robado" no
+  // salía al abrir la app y solo aparecía cuando el usuario toqueteaba el menú
+  // inferior y algo forzaba un re-render. Aquí esperamos a que no haya ningún
+  // otro modal en pantalla y damos un respiro antes de presentar.
+  const [tauntReady, setTauntReady] = useState(false);
+  useEffect(() => {
+    const blocked = mapLoading || savingRun || !!runSummary?.visible || popup.visible || showTaunts;
+    if (!currentTaunt || blocked) { setTauntReady(false); return; }
+    const t = setTimeout(() => setTauntReady(true), 350);
+    return () => clearTimeout(t);
+  }, [currentTaunt, mapLoading, savingRun, runSummary?.visible, popup.visible, showTaunts]);
+
+  /** Abrir el selector de mensajes DESPUÉS de cerrar el aviso actual. Abrirlo
+   *  con el aviso todavía visible dejaba el selector sin presentar ("el botón
+   *  de responder no hace nada"): son dos modales solapados. */
+  const respondToTaunt = (t: TauntInbox, mode: 'taunt' | 'response') => {
+    if (!t.from_user_id) return;
+    const target = {
+      toUserId: t.from_user_id,
+      toName: t.from_user_name ?? 'Rival',
+      runId: t.run_id,
+      mode,
+    };
+    api.markTauntsRead([t.id]).catch(() => {});
+    setCurrentTaunt(null);
+    setTauntReady(false);
+    setTimeout(() => {
+      setTauntTarget(target);
+      setShowTaunts(true);
+    }, 320);
+  };
+
   // Sondeo periódico del inbox mientras la app está abierta. Antes solo se
   // consultaba al montar y al volver a foreground → si la app ya estaba abierta,
   // un mensaje/respuesta entrante NO aparecía hasta minimizar y reabrir (de ahí
@@ -1801,6 +1847,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     recentCoordsRef.current = [];
     recentDopplerSpeedsRef.current = [];
     rawReadingsRef.current = 0;
+    fullPathRef.current = [];
     setClaimedCellsTick(t => t + 1);
     setSplits([]);
     splitsTrackingRef.current = { lastKm: 0, lastTime: 0 };
@@ -1944,6 +1991,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
 
       // 'accept' — good point
       lastLocationTimestamp.current = now;
+      fullPathRef.current.push(newCoord);
       pathRef.current = [...pathRef.current, newCoord];
       setCurrentPath([...pathRef.current]);
 
@@ -2222,24 +2270,46 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       // pintado. Puenteamos del último punto al primero con cellLine (lo mismo
       // que ya se hace entre lecturas consecutivas), con un tope corto para no
       // inventar territorio si el "cierre" no era real.
-      const ringPts = [...pathSegments.flat(), ...pathRef.current];
-      if (ringPts.length >= 2) {
-        const first = coordToCell(ringPts[0].latitude, ringPts[0].longitude);
-        const last = coordToCell(ringPts[ringPts.length - 1].latitude, ringPts[ringPts.length - 1].longitude);
-        const closing = cellLine(last.x, last.y, first.x, first.y);
-        // 8 celdas = 80m. Los umbrales de cierre son 30m (mid-run) y 50m (al
-        // parar), así que esto cubre ambos con margen sin abrir la puerta a
-        // puentes largos inventados.
-        const MAX_RING_CLOSE_CELLS = 8;
-        if (closing.length <= MAX_RING_CLOSE_CELLS) {
-          for (const bc of closing) claimedCellsRef.current.add(cellKey(bc.x, bc.y));
+      // Rellenamos por GEOMETRÍA del recorrido, no por topología del rastro de
+      // celdas. fillEnclosedCells necesita un anillo de celdas perfectamente
+      // cerrado: basta un hueco de una celda —y los hay, porque el GPS pierde
+      // lecturas a mitad de recorrido— para que el relleno se escape al
+      // exterior y no reclame NADA. Medido en circuitos reales cerrados de
+      // verdad: solo quedaba pintado el perímetro.
+      // Con el polígono del trazado real no hay ese problema: probamos cada
+      // celda de la caja con point-in-polygon. No infla como el viejo
+      // convexHull (que sí inventaba territorio): el límite es exactamente por
+      // donde pasaste. Después seguimos pasando el flood-fill topológico, que
+      // remata huecos interiores.
+      const poly = fullPathRef.current;
+      if (poly.length >= 8) {
+        let minCX = Infinity, maxCX = -Infinity, minCY = Infinity, maxCY = -Infinity;
+        for (const p of poly) {
+          const c = coordToCell(p.latitude, p.longitude);
+          if (c.x < minCX) minCX = c.x; if (c.x > maxCX) maxCX = c.x;
+          if (c.y < minCY) minCY = c.y; if (c.y > maxCY) maxCY = c.y;
+        }
+        // Tope de seguridad: un GPS enloquecido no puede hacernos recorrer un
+        // área absurda (200x200 celdas = 2x2 km ya es una carrera enorme).
+        const w = maxCX - minCX + 1, h = maxCY - minCY + 1;
+        if (w * h <= 40000) {
+          for (let cy = minCY; cy <= maxCY; cy++) {
+            for (let cx = minCX; cx <= maxCX; cx++) {
+              const k = cellKey(cx, cy);
+              if (claimedCellsRef.current.has(k)) continue;
+              // Centro de la celda
+              const lat = (cy + 0.5) * CELL_LAT_DEG;
+              const lng = (cx + 0.5) * CELL_LNG_DEG;
+              if (pointInPolygon(lat, lng, poly)) claimedCellsRef.current.add(k);
+            }
+          }
         }
       }
       const filledCells = fillEnclosedCells(claimedCellsRef.current);
       if (filledCells.size !== claimedCellsRef.current.size) {
         claimedCellsRef.current = filledCells;
-        setClaimedCellsTick(t => t + 1);
       }
+      setClaimedCellsTick(t => t + 1);
     }
 
     // 10 pts/km (v1.7 economy). The final total here is a client-side ESTIMATE
@@ -2344,6 +2414,26 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
           breakdown: res.breakdown ?? null,
         });
         setTotalXP(authXP);
+
+        // ── Tarjeta para compartir ──────────────────────────────────────────
+        // Agrupamos las celdas robadas por víctima para el bloque rojo. El
+        // La tarjeta NO lleva mapa a propósito: publicar el recorrido revela
+        // dónde vive el usuario (las carreras salen y vuelven de casa).
+        const stealsByName = new Map<string, number>();
+        for (const sc of res.stolenCells ?? []) {
+          if (!sc.prevOwnerName) continue;
+          stealsByName.set(sc.prevOwnerName, (stealsByName.get(sc.prevOwnerName) ?? 0) + 1);
+        }
+        const steals: ShareSteal[] = [...stealsByName].map(([name, count]) => ({ name, count }));
+        // La frase se elige UNA vez aquí, no en cada render: si no, cambiaría
+        // sola mientras el usuario mira la tarjeta.
+        setShareCard({
+          distance, time: runTime, points: authPoints,
+          cells: cellCount,
+          runnerName: user?.username ?? 'Corredor',
+          phrase: randomSharePhrase(steals.length > 0),
+          city: cityName, steals,
+        });
         // Show the "ZONA ROBADA" popup for either system: polygon zones (v1.5)
         // or grid cells (v1.6+). Most runs from v1.6+ will only have stolenCells.
         const hasStolen = (res.stolenZones && res.stolenZones.length > 0) ||
@@ -2465,7 +2555,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       {/* Robo notif arriving via the inbox (someone stole from us): render the
           existing "te han robado" image with a "Devolver" button. Marks as read
           on dismissal. On Respond opens TauntSelector mode='taunt'. */}
-      {currentTaunt?.mode === 'robo_notif' && (
+      {currentTaunt?.mode === 'robo_notif' && tauntReady && (
         <ZonePopup
           visible
           type="stolen_from_you"
@@ -2474,17 +2564,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
             try { await api.markTauntsRead([currentTaunt.id]); } catch {}
             setCurrentTaunt(null);
           }}
-          onRespond={() => {
-            if (currentTaunt.from_user_id) {
-              setTauntTarget({
-                toUserId: currentTaunt.from_user_id,
-                toName: currentTaunt.from_user_name ?? 'Rival',
-                runId: currentTaunt.run_id,
-                mode: 'taunt',
-              });
-              setShowTaunts(true);
-            }
-          }}
+          onRespond={() => respondToTaunt(currentTaunt, 'taunt')}
         />
       )}
 
@@ -2498,7 +2578,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
        *                      NO se muestra botón DEVOLVER para evitar el bucle
        *                      infinito (response → response → response...).
        *                      Solo se puede cerrar el modal. */}
-      {(currentTaunt?.mode === 'taunt' || currentTaunt?.mode === 'response') && currentTaunt.taunt_id && (
+      {(currentTaunt?.mode === 'taunt' || currentTaunt?.mode === 'response') && currentTaunt.taunt_id && tauntReady && (
         <Modal transparent visible animationType="fade" statusBarTranslucent>
           <View style={styles.tauntReceivedContainer}>
             {/* La imagen va la PRIMERA: ahora es absoluta y a pantalla
@@ -2530,17 +2610,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
             {currentTaunt.mode === 'taunt' ? (
               <TouchableOpacity
                 style={styles.tauntReceivedRespond}
-                onPress={() => {
-                  if (currentTaunt.from_user_id) {
-                    setTauntTarget({
-                      toUserId: currentTaunt.from_user_id,
-                      toName: currentTaunt.from_user_name ?? 'Rival',
-                      runId: currentTaunt.run_id,
-                      mode: 'response',
-                    });
-                    setShowTaunts(true);
-                  }
-                }}
+                onPress={() => respondToTaunt(currentTaunt, 'response')}
               >
                 <Ionicons name="flame" size={18} color="#000" />
                 <Text style={styles.tauntReceivedRespondText}>DEVOLVER</Text>
@@ -2680,6 +2750,19 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
                 </View>
               )}
 
+              {/* Compartir. Cierra el resumen antes de abrir la tarjeta: iOS no
+                  presenta bien dos <Modal> a la vez (mismo motivo por el que el
+                  resumen espera a la cartela de zona). */}
+              {shareCard && (
+                <TouchableOpacity
+                  style={styles.summaryShareBtn}
+                  onPress={() => { setRunSummary(null); setShareVisible(true); }}
+                >
+                  <Ionicons name="share-social" size={17} color={colors.orange} />
+                  <Text style={styles.summaryShareBtnText}>COMPARTIR</Text>
+                </TouchableOpacity>
+              )}
+
               <TouchableOpacity
                 style={styles.summaryBtn}
                 onPress={() => setRunSummary(null)}
@@ -2690,6 +2773,13 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
           </View>
         </Modal>
       )}
+
+      {/* Tarjeta para compartir en redes (Instagram, WhatsApp…) */}
+      <ShareRunCard
+        visible={shareVisible}
+        data={shareCard}
+        onClose={() => setShareVisible(false)}
+      />
 
       {/* Popup zona propia — centinela */}
       {selectedZone && (
@@ -3658,6 +3748,14 @@ const styles = StyleSheet.create({
     borderRadius: radius.full,
   },
   summaryBtnText: { fontSize: 16, fontWeight: '800', color: '#000', letterSpacing: 1 },
+  // Compartir: secundario (contorno) para que CERRAR siga siendo la acción
+  // principal y no compitan dos botones naranjas macizos.
+  summaryShareBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.sm,
+    borderWidth: 1.5, borderColor: colors.orange, borderRadius: radius.full,
+    paddingVertical: 13, paddingHorizontal: 36, marginBottom: spacing.sm,
+  },
+  summaryShareBtnText: { fontSize: 15, fontWeight: '800', color: colors.orange, letterSpacing: 1 },
   // Zona popup — centinela
   zoneCard: {
     backgroundColor: colors.bgCard, borderRadius: radius.lg,
