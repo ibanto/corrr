@@ -419,6 +419,13 @@ export default function PerfilScreen({ user, onLogout }: Props) {
         </View>
       )}
 
+      {/* Premium OCULTO en iOS. La directriz 3.1.1 de Apple obliga a vender
+          cualquier bien digital mediante compra integrada (IAP). Esta tarjeta
+          anuncia una suscripción con precio pero no hay IAP montado, así que
+          en revisión es un rechazo casi seguro: el revisor ve el precio y
+          pregunta cómo se paga. En Android se mantiene igual. Cuando se
+          monetice de verdad, se implementa con StoreKit y se quita este guard. */}
+      {Platform.OS !== 'ios' && (
       <View style={styles.premiumCard}>
         <View style={styles.premiumTop}>
           <View>
@@ -446,6 +453,7 @@ export default function PerfilScreen({ user, onLogout }: Props) {
           <Text style={styles.premiumBtnText}>Próximamente</Text>
         </View>
       </View>
+      )}
 
       <View style={styles.section}>
         {[

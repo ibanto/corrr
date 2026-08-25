@@ -24,6 +24,27 @@ Objetivo: portar a iPhone / App Store. Este doc lista lo que ya está, los gaps 
 | 7 | **StatusBar / notch** | 🟢 Baja | `StatusBar backgroundColor` se ignora en iOS. Probar notch / isla dinámica / home indicator (hoy se usa `SafeAreaView` básico de RN). |
 | 8 | **Maps SDK iOS** | 🟢 Baja | Verificar en Google Cloud que la API key tiene habilitado **"Maps SDK for iOS"** (además del de Android). |
 
+## ✅ Actualización — ago 2026: primer build iOS funcionando
+
+Se hizo el primer `expo prebuild -p ios` + build real en simulador (iPhone 17 Pro, iOS 26.5, Xcode 26.6):
+
+- **Gaps 1a, 5, 6, 7 confirmados YA resueltos** en un pase anterior (estaban en `app.json`/`MapScreen.tsx` antes de esta sesión).
+- **CocoaPods instalado** (`brew install cocoapods`). Nota: el `pod install` falla con `Encoding::CompatibilityError` si el shell no tiene `LANG`/`LC_ALL` en UTF-8 (Mac trae el shell en `C` por defecto) → siempre exportar `LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8` antes de `pod install` / `expo prebuild`.
+- **Fix nuevo**: `AppCheckCore` (dependencia transitiva de `@react-native-google-signin/google-signin` → Firebase) es un pod Swift que no compila como librería estática sin `use_modular_headers!`. `expo-build-properties` NO tiene esa opción en RN 0.81/SDK 54 → se creó un config plugin local `apps/mobile/plugins/withModularHeaders.js` (usa `withPodfile` de `@expo/config-plugins` para inyectar la directiva) y se registró en `app.json` → sobrevive a `expo prebuild --clean`.
+- **`ios/` NO se commitea** (ya estaba en `.gitignore` desde antes, a diferencia de `android/` que sí está trackeado por herencia histórica). Regenerar con `npx expo prebuild -p ios` cuando haga falta.
+- **Build headless con xcodebuild → BUILD SUCCEEDED** a la primera tras el fix de modular headers.
+- **Probado en simulador**: splash, los 4 slides de onboarding, pantalla bienvenida (Empezar/Ya tengo cuenta) y formulario de login — todo renderiza perfecto, fuente `AvenirNextCondensed-Heavy` aplicada correctamente, sin errores en Metro. Conectado a Metro vía dev-client (`corrr://expo-development-client/?url=...`).
+- **Sin tocar todavía**: GPS foreground/background real (simulador no sirve para esto — hace falta iPhone físico), push APNs, Google Sign-In iOS (necesita OAuth client ID iOS propio), cuenta Apple Developer.
+
+### Cómo levantar el simulador desde cero
+```bash
+cd apps/mobile
+LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 npx expo prebuild -p ios   # regenera ios/ (o --clean)
+xcrun simctl boot "iPhone 17 Pro"                               # o el UDID que prefieras
+npx expo start --dev-client                                     # Metro
+# build con xcodebuild apuntando a ios/CORRR.xcworkspace, scheme CORRR, o `npx expo run:ios`
+```
+
 ## 🔮 Futuro (cuando se active Premium)
 Pagos de bienes digitales en iOS → **Apple IAP obligatorio (comisión 30%)**, no Stripe. Planificar StoreKit/RevenueCat antes de activar premium en iOS.
 

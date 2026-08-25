@@ -14,6 +14,7 @@ import {
   NativeModules,
   Platform,
   ActivityIndicator,
+  Dimensions,
 } from 'react-native';
 import MapView, { Polygon, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import * as Location from 'expo-location';
@@ -24,6 +25,8 @@ import polygonClipping from 'polygon-clipping';
 import { colors, spacing, radius } from '../theme';
 import { api, RemoteZone, RemoteCell, TauntInbox } from '../services/api';
 import ZonePopup, { PopupType } from '../components/ZonePopup';
+import ShareRunCard, { ShareRunData, ShareSteal } from '../components/ShareRunCard';
+import { randomSharePhrase } from '../data/sharePhrases';
 import TauntSelector, { getTauntFullImage } from '../components/TauntSelector';
 import LoadingScreen from '../components/LoadingScreen';
 import { randomPhrase } from '../data/motivationalPhrases';
@@ -307,6 +310,28 @@ const DOPPLER_CALIBRATION = 0.72;
 const MAX_ACCURACY_M = 18;       // Ignore GPS points with accuracy worse than 18m
 const WARMUP_ACCURACY_M = 12;    // First 5 points need accuracy < 12m (GPS warming up)
 const WARMUP_POINTS = 5;         // Number of initial points with strict accuracy
+// Techo de lecturas para el warmup estricto. Sin esto el warmup se podía
+// DEADLOCKEAR: el contador de warmup mira puntos ACEPTADOS, pero si la
+// accuracy se queda estancada en la banda 12-18m (típico entre edificios
+// altos), ningún punto pasa el filtro estricto → el contador nunca sube →
+// el warmup no termina JAMÁS y la carrera entera no acepta un solo punto
+// (sin celdas, sin distancia posicional, y auto-pause a los 20s andando).
+// Pasado este número de lecturas nos conformamos con MAX_ACCURACY_M, que
+// sigue siendo el filtro de siempre — el anti-cheat no se relaja.
+// Ojo con subirlo: las lecturas llegan cada ~3s, así que 15 eran ~45s en los
+// que, con accuracy estancada en 12-18m, no se aceptaba NADA — y como
+// lastMovementTime solo se refresca con puntos aceptados, la auto-pausa
+// saltaba a los 20s en plena caminata al empezar. 5 lecturas ≈ 15s, que es
+// de sobra para lo que el warmup pretende (dar margen al primer fix del chip).
+const WARMUP_MAX_READINGS = 5;
+
+// ── Cierre de circuito (loop) ─────────────────────────────────────────────
+// Se cierra un loop cuando el corredor vuelve a menos de LOOP_CLOSE_DIST_M de
+// un punto por el que ya pasó, habiendo recorrido al menos
+// LOOP_MIN_PERIMETER_M desde entonces. Ese mínimo evita que un ida y vuelta
+// corto, o estar dando vueltas en el sitio, cuente como circuito.
+const LOOP_CLOSE_DIST_M = 30;
+const LOOP_MIN_PERIMETER_M = 200;
 // Suelo de ruido FIJO: si te has "movido" menos que esto entre dos lecturas, es
 // jitter del GPS, no movimiento real. El punto saltado MANTIENE el ancla (no se
 // actualiza prevCoord), así que el desplazamiento real se acaba contando cuando
@@ -346,6 +371,23 @@ const MAX_BRIDGE_CELLS = 15;
 // tiene tiempo de ver 15 km/h por un spike de drift.
 const STATIONARY_WINDOW = 6;
 const STATIONARY_RADIUS_M = 15;
+
+// Segunda opinión al detector de "quieto", vía velocidad Doppler del chip.
+// El detector posicional de arriba es marginal para caminantes: con puntos a
+// MIN_POINT_DIST_M (6m), 6 lecturas caminando en línea recta dan una diagonal
+// de ~36m, apenas por encima del umbral de 30m — y en cuanto hay una curva,
+// una acera estrecha o un semáforo, cae por debajo y marca "quieto" a alguien
+// que está andando de verdad. Cuando eso pasa se descarta el punto entero
+// (no celdas, no distancia posicional, no refresco de lastMovementTime), así
+// que el auto-pause salta a los 20s en plena caminata.
+// El chip GPS ya reporta velocidad por Doppler, que el código de distancia
+// oficial usa precisamente por ser "inmune al zigzag de drift": parado en una
+// silla el chip da ~0 m/s aunque la posición baile. Así que si el Doppler dice
+// que hay movimiento sostenido, NO estamos quietos, diga lo que diga el
+// bounding box. Pedimos varias lecturas (no una) para que un spike aislado no
+// desactive el anti-drift.
+const DOPPLER_MOVING_WINDOW = 4;
+const DOPPLER_MOVING_MIN_HITS = 2;
 
 /** ¿Las últimas N coordenadas caen todas dentro de un círculo de radius m?
  *  Si sí, el usuario está parado y el GPS está bailando — no movimiento real.
@@ -723,7 +765,7 @@ function filterGpsPoint(
   prevTimestamp: number,
   accuracy: number,
   speed: number,
-  pointCount: number = 999, // how many good points we already have (for warmup)
+  inWarmup: boolean = false, // ¿seguimos en el warmup estricto de accuracy?
 ): { action: 'accept' | 'skip' | 'teleport'; distKm: number; speedKmh: number } {
   // Filter 0: sanity — coords inválidas (NaN/Infinity) o fuera del planeta.
   // Sin esto, un punto GPS corrupto se propaga a coordToCell → cells con
@@ -738,7 +780,7 @@ function filterGpsPoint(
     return { action: 'skip', distKm: 0, speedKmh: 0 };
   }
   // Filter 1: accuracy — stricter during warmup (first N points)
-  const maxAcc = pointCount < WARMUP_POINTS ? WARMUP_ACCURACY_M : MAX_ACCURACY_M;
+  const maxAcc = inWarmup ? WARMUP_ACCURACY_M : MAX_ACCURACY_M;
   if (accuracy > maxAcc) {
     return { action: 'skip', distKm: 0, speedKmh: 0 };
   }
@@ -893,6 +935,10 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
   // instancias Polygon viejas. Luego el `true` las monta limpias. Esto pasa
   // detrás del LoadingScreen (`savingRun`), así que el usuario no ve flicker.
   const [polygonsVisible, setPolygonsVisible] = useState(true);
+  // Tarjeta para compartir en redes. Se rellena al terminar la carrera (con la
+  // captura del mapa y los robos) y se abre desde el botón del resumen.
+  const [shareCard, setShareCard] = useState<ShareRunData | null>(null);
+  const [shareVisible, setShareVisible] = useState(false);
   // True mientras el botón de refrescar el mapa está recargando. Deshabilita el
   // botón y muestra spinner para evitar dobles toques.
   const [refreshingMap, setRefreshingMap] = useState(false);
@@ -903,6 +949,18 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
   // "estás en realidad quieto". Si todas caen dentro de un círculo pequeño
   // → GPS drift, no real movement → no claim cells. Ver STATIONARY_*.
   const recentCoordsRef = useRef<Coord[]>([]);
+  // Recorrido COMPLETO de la carrera. Necesario aparte de pathRef porque
+  // closeLoop trunca pathRef a un único punto al cerrar un círculo (para
+  // empezar la siguiente zona del sistema legacy), y para rellenar el interior
+  // hace falta el trazado entero. Solo se vacía en startRun.
+  const fullPathRef = useRef<Coord[]>([]);
+  // Últimas velocidades Doppler crudas (m/s) para decidir si hay movimiento
+  // real aunque el detector posicional diga "quieto". Ver DOPPLER_MOVING_*.
+  const recentDopplerSpeedsRef = useRef<number[]>([]);
+  // Lecturas GPS crudas vistas en esta carrera (aceptadas o no). Solo sirve
+  // para que el warmup estricto de accuracy no se quede bloqueado para
+  // siempre. Ver WARMUP_MAX_READINGS.
+  const rawReadingsRef = useRef(0);
   const [remoteCells, setRemoteCells] = useState<RemoteCell[]>([]);
   const [selectedZone, setSelectedZone] = useState<RemoteZone | null>(null);
   // Modal de "aviso destacado" (prominent disclosure) que Google Play exige
@@ -1054,7 +1112,10 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
             for (const point of bufferToProcess) {
               const newCoord = { latitude: point.latitude, longitude: point.longitude };
               const prev = pathRef.current.length > 0 ? pathRef.current[pathRef.current.length - 1] : null;
-              const result = filterGpsPoint(newCoord, prev, point.timestamp, lastLocationTimestamp.current, point.accuracy, point.speed, pathRef.current.length);
+              rawReadingsRef.current += 1;
+              const inWarmupBuf =
+                pathRef.current.length < WARMUP_POINTS && rawReadingsRef.current <= WARMUP_MAX_READINGS;
+              const result = filterGpsPoint(newCoord, prev, point.timestamp, lastLocationTimestamp.current, point.accuracy, point.speed, inWarmupBuf);
 
               if (result.action === 'skip') continue;
 
@@ -1307,12 +1368,29 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         if (y < minY) minY = y; if (y > maxY) maxY = y;
       });
       const pad = 2; // celdas de margen alrededor del run
-      const { cells } = await api.getCellsInViewport(
-        (maxY + 1 + pad) * CELL_LAT_DEG, // north
-        (minY - pad) * CELL_LAT_DEG,     // south
-        (maxX + 1 + pad) * CELL_LNG_DEG, // east
-        (minX - pad) * CELL_LNG_DEG,     // west
-      );
+      let north = (maxY + 1 + pad) * CELL_LAT_DEG;
+      let south = (minY - pad) * CELL_LAT_DEG;
+      let east  = (maxX + 1 + pad) * CELL_LNG_DEG;
+      let west  = (minX - pad) * CELL_LNG_DEG;
+      // Radio mínimo ~1km, MISMO criterio que loadCells. Sin esto, la caja era
+      // solo la de la carrera recién terminada (una vuelta de 200m ≈ 130m de
+      // caja) y como abajo hacemos setRemoteCells(cells) —que REEMPLAZA, no
+      // fusiona— todo el territorio conquistado antes que cayera fuera de esa
+      // caja desaparecía del mapa al terminar de correr. Los datos seguían en
+      // el servidor: era solo que dejábamos de pedirlos.
+      const MIN_HALF_LAT = 0.01;
+      const MIN_HALF_LNG = 0.01;
+      const centerLat = (north + south) / 2;
+      const centerLng = (east + west) / 2;
+      if ((north - south) / 2 < MIN_HALF_LAT) {
+        north = centerLat + MIN_HALF_LAT;
+        south = centerLat - MIN_HALF_LAT;
+      }
+      if ((east - west) / 2 < MIN_HALF_LNG) {
+        east = centerLng + MIN_HALF_LNG;
+        west = centerLng - MIN_HALF_LNG;
+      }
+      const { cells } = await api.getCellsInViewport(north, south, east, west);
       setRemoteCells(cells);
     } catch {
       await loadCells().catch(() => {});
@@ -1369,6 +1447,41 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       setTauntQueue(rest);
     }
   }, [tauntQueue, currentTaunt]);
+
+  // Presentación DIFERIDA de los avisos de robo/mensaje. En iOS un <Modal> no
+  // llega a presentarse si se monta mientras otro se está cerrando, ni si vive
+  // en un subárbol con display:'none' (MapScreen se oculta así al cambiar de
+  // pestaña, ver App.tsx). El resultado era que el aviso "te han robado" no
+  // salía al abrir la app y solo aparecía cuando el usuario toqueteaba el menú
+  // inferior y algo forzaba un re-render. Aquí esperamos a que no haya ningún
+  // otro modal en pantalla y damos un respiro antes de presentar.
+  const [tauntReady, setTauntReady] = useState(false);
+  useEffect(() => {
+    const blocked = mapLoading || savingRun || !!runSummary?.visible || popup.visible || showTaunts;
+    if (!currentTaunt || blocked) { setTauntReady(false); return; }
+    const t = setTimeout(() => setTauntReady(true), 350);
+    return () => clearTimeout(t);
+  }, [currentTaunt, mapLoading, savingRun, runSummary?.visible, popup.visible, showTaunts]);
+
+  /** Abrir el selector de mensajes DESPUÉS de cerrar el aviso actual. Abrirlo
+   *  con el aviso todavía visible dejaba el selector sin presentar ("el botón
+   *  de responder no hace nada"): son dos modales solapados. */
+  const respondToTaunt = (t: TauntInbox, mode: 'taunt' | 'response') => {
+    if (!t.from_user_id) return;
+    const target = {
+      toUserId: t.from_user_id,
+      toName: t.from_user_name ?? 'Rival',
+      runId: t.run_id,
+      mode,
+    };
+    api.markTauntsRead([t.id]).catch(() => {});
+    setCurrentTaunt(null);
+    setTauntReady(false);
+    setTimeout(() => {
+      setTauntTarget(target);
+      setShowTaunts(true);
+    }, 320);
+  };
 
   // Sondeo periódico del inbox mientras la app está abierta. Antes solo se
   // consultaba al montar y al volver a foreground → si la app ya estaba abierta,
@@ -1495,15 +1608,24 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     // Unir todos los segmentos + path actual
     const allPoints = [...pathSegments.flat(), ...path];
     if (allPoints.length < 10) return false;
-    const start = allPoints[0];
     const current = allPoints[allPoints.length - 1];
-    const dist = getDistance(start, current);
-    // Si volvemos a menos de 30m del inicio y hemos recorrido más de 200m
-    const totalDist = allPoints.reduce((acc, p, i) => {
-      if (i === 0) return 0;
-      return acc + getDistance(allPoints[i-1], p);
-    }, 0);
-    return dist < 30 && totalDist > 200;
+    // Antes esto solo miraba el punto de INICIO: "¿he vuelto a menos de 30m de
+    // donde arranqué?". Eso deja fuera el caso más común de todos — sales de
+    // casa, das una vuelta cerrada y sigues (o paras) en otro sitio: el
+    // circuito está cerrado de verdad, pero como acabas lejos del inicio no se
+    // marcaba como loop y el interior nunca se rellenaba (solo el perímetro).
+    // Ahora el cierre se detecta contra CUALQUIER punto anterior del recorrido,
+    // exigiendo los mismos 200m de recorrido entre ambos para que un ida y
+    // vuelta corto o estar parado no cuenten como circuito. El comportamiento
+    // viejo es un subconjunto de éste (el inicio es un punto anterior más), así
+    // que no se pierde ninguna detección que ya funcionase.
+    let travelled = 0;
+    for (let i = allPoints.length - 1; i > 0; i--) {
+      travelled += getDistance(allPoints[i - 1], allPoints[i]);
+      if (travelled < LOOP_MIN_PERIMETER_M) continue;
+      if (getDistance(allPoints[i - 1], current) < LOOP_CLOSE_DIST_M) return true;
+    }
+    return false;
   };
 
   const closeLoop = async (path: Coord[]) => {
@@ -1723,6 +1845,9 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     // distorsionar la detección de "estás quieto" en los primeros segundos
     // de la nueva carrera.
     recentCoordsRef.current = [];
+    recentDopplerSpeedsRef.current = [];
+    rawReadingsRef.current = 0;
+    fullPathRef.current = [];
     setClaimedCellsTick(t => t + 1);
     setSplits([]);
     splitsTrackingRef.current = { lastKm: 0, lastTime: 0 };
@@ -1741,6 +1866,11 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     autoPauseTimer.current = setInterval(() => {
       if (!isRunningRef.current) return;
       if (isAutoPausedRef.current) return;
+      // Mientras no se haya aceptado NINGÚN punto todavía, el GPS sigue
+      // fijando: no estás quieto, es que aún no hay señal lo bastante buena.
+      // Sin este guard la carrera se auto-pausaba a los 20s nada más arrancar,
+      // porque lastMovementTime solo se refresca con puntos aceptados.
+      if (pathRef.current.length === 0) return;
       const stillFor = (Date.now() - lastMovementTime.current) / 1000;
       if (stillFor >= 20) {
         isAutoPausedRef.current = true;
@@ -1819,11 +1949,26 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         lastRawTimestampRef.current = now;
         if (rawDt > 0 && rawDt <= MAX_DOPPLER_DT_S && speed >= 0 && accuracy <= MAX_ACCURACY_M) {
           const spd = Math.min(speed, MAX_SPEED_MPS);
-          if (spd >= MIN_MOVING_MPS) setDistance(d => d + (spd * rawDt) / 1000 * DOPPLER_CALIBRATION);
+          // Con la carrera auto-pausada NO se acumula distancia. Este bloque va
+          // antes del chequeo de auto-pausa (a propósito: alimenta la ventana de
+          // velocidades), así que sin este guard los km seguían subiendo con la
+          // carrera "parada" — el usuario veía el contador avanzar en pausa.
+          if (spd >= MIN_MOVING_MPS && !isAutoPausedRef.current) {
+            setDistance(d => d + (spd * rawDt) / 1000 * DOPPLER_CALIBRATION);
+          }
+          // Alimentamos la ventana de velocidades SOLO con lecturas de accuracy
+          // buena: una lectura mala no debe poder "desbloquear" el anti-drift.
+          recentDopplerSpeedsRef.current.push(spd);
+          if (recentDopplerSpeedsRef.current.length > DOPPLER_MOVING_WINDOW) {
+            recentDopplerSpeedsRef.current.shift();
+          }
         }
       }
 
-      const result = filterGpsPoint(newCoord, prev, now, lastLocationTimestamp.current, accuracy, speed, pathRef.current.length);
+      rawReadingsRef.current += 1;
+      const inWarmup =
+        pathRef.current.length < WARMUP_POINTS && rawReadingsRef.current <= WARMUP_MAX_READINGS;
+      const result = filterGpsPoint(newCoord, prev, now, lastLocationTimestamp.current, accuracy, speed, inWarmup);
 
       if (result.action === 'skip') {
         // Bad point — don't update timestamp so next point measures from last good one
@@ -1846,6 +1991,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
 
       // 'accept' — good point
       lastLocationTimestamp.current = now;
+      fullPathRef.current.push(newCoord);
       pathRef.current = [...pathRef.current, newCoord];
       setCurrentPath([...pathRef.current]);
 
@@ -1875,7 +2021,11 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       if (recentCoordsRef.current.length > STATIONARY_WINDOW * 2) {
         recentCoordsRef.current.shift();
       }
-      if (isStationary(recentCoordsRef.current)) {
+      // El chip dice que hay movimiento sostenido → no estamos quietos aunque
+      // el bounding box sea pequeño (caminante lento, curva, acera estrecha).
+      const dopplerMoving =
+        recentDopplerSpeedsRef.current.filter(s => s >= MIN_MOVING_MPS).length >= DOPPLER_MOVING_MIN_HITS;
+      if (isStationary(recentCoordsRef.current) && !dopplerMoving) {
         return;
       }
 
@@ -1989,6 +2139,11 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     autoPauseTimer.current = setInterval(() => {
       if (!isRunningRef.current) return;
       if (isAutoPausedRef.current) return;
+      // Mientras no se haya aceptado NINGÚN punto todavía, el GPS sigue
+      // fijando: no estás quieto, es que aún no hay señal lo bastante buena.
+      // Sin este guard la carrera se auto-pausaba a los 20s nada más arrancar,
+      // porque lastMovementTime solo se refresca con puntos aceptados.
+      if (pathRef.current.length === 0) return;
       const stillFor = (Date.now() - lastMovementTime.current) / 1000;
       if (stillFor >= 20) {
         isAutoPausedRef.current = true;
@@ -2105,11 +2260,56 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     // convexHull, que era el verdadero fantasma y ya no se usa). Estas celdas
     // se mandan al backend → al reabrir el interior sigue cerrado (consistente).
     if (loopClosedRef.current) {
+      // Cerrar el ANILLO antes de rellenar. El loop se detecta por geometría
+      // (has vuelto a <30m de un punto anterior), pero eso no garantiza que el
+      // rastro de CELDAS cierre: el GPS muestrea cada ~8m, así que esos últimos
+      // metros suelen quedar sin muestrear y el anillo queda abierto por 2-3
+      // celdas. fillEnclosedCells es topológico: por un hueco de una sola celda
+      // el relleno se escapa al exterior y no reclama NADA. Medido en carreras
+      // reales: circuitos cerrados de verdad acababan con solo el perímetro
+      // pintado. Puenteamos del último punto al primero con cellLine (lo mismo
+      // que ya se hace entre lecturas consecutivas), con un tope corto para no
+      // inventar territorio si el "cierre" no era real.
+      // Rellenamos por GEOMETRÍA del recorrido, no por topología del rastro de
+      // celdas. fillEnclosedCells necesita un anillo de celdas perfectamente
+      // cerrado: basta un hueco de una celda —y los hay, porque el GPS pierde
+      // lecturas a mitad de recorrido— para que el relleno se escape al
+      // exterior y no reclame NADA. Medido en circuitos reales cerrados de
+      // verdad: solo quedaba pintado el perímetro.
+      // Con el polígono del trazado real no hay ese problema: probamos cada
+      // celda de la caja con point-in-polygon. No infla como el viejo
+      // convexHull (que sí inventaba territorio): el límite es exactamente por
+      // donde pasaste. Después seguimos pasando el flood-fill topológico, que
+      // remata huecos interiores.
+      const poly = fullPathRef.current;
+      if (poly.length >= 8) {
+        let minCX = Infinity, maxCX = -Infinity, minCY = Infinity, maxCY = -Infinity;
+        for (const p of poly) {
+          const c = coordToCell(p.latitude, p.longitude);
+          if (c.x < minCX) minCX = c.x; if (c.x > maxCX) maxCX = c.x;
+          if (c.y < minCY) minCY = c.y; if (c.y > maxCY) maxCY = c.y;
+        }
+        // Tope de seguridad: un GPS enloquecido no puede hacernos recorrer un
+        // área absurda (200x200 celdas = 2x2 km ya es una carrera enorme).
+        const w = maxCX - minCX + 1, h = maxCY - minCY + 1;
+        if (w * h <= 40000) {
+          for (let cy = minCY; cy <= maxCY; cy++) {
+            for (let cx = minCX; cx <= maxCX; cx++) {
+              const k = cellKey(cx, cy);
+              if (claimedCellsRef.current.has(k)) continue;
+              // Centro de la celda
+              const lat = (cy + 0.5) * CELL_LAT_DEG;
+              const lng = (cx + 0.5) * CELL_LNG_DEG;
+              if (pointInPolygon(lat, lng, poly)) claimedCellsRef.current.add(k);
+            }
+          }
+        }
+      }
       const filledCells = fillEnclosedCells(claimedCellsRef.current);
       if (filledCells.size !== claimedCellsRef.current.size) {
         claimedCellsRef.current = filledCells;
-        setClaimedCellsTick(t => t + 1);
       }
+      setClaimedCellsTick(t => t + 1);
     }
 
     // 10 pts/km (v1.7 economy). The final total here is a client-side ESTIMATE
@@ -2214,6 +2414,26 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
           breakdown: res.breakdown ?? null,
         });
         setTotalXP(authXP);
+
+        // ── Tarjeta para compartir ──────────────────────────────────────────
+        // Agrupamos las celdas robadas por víctima para el bloque rojo. El
+        // La tarjeta NO lleva mapa a propósito: publicar el recorrido revela
+        // dónde vive el usuario (las carreras salen y vuelven de casa).
+        const stealsByName = new Map<string, number>();
+        for (const sc of res.stolenCells ?? []) {
+          if (!sc.prevOwnerName) continue;
+          stealsByName.set(sc.prevOwnerName, (stealsByName.get(sc.prevOwnerName) ?? 0) + 1);
+        }
+        const steals: ShareSteal[] = [...stealsByName].map(([name, count]) => ({ name, count }));
+        // La frase se elige UNA vez aquí, no en cada render: si no, cambiaría
+        // sola mientras el usuario mira la tarjeta.
+        setShareCard({
+          distance, time: runTime, points: authPoints,
+          cells: cellCount,
+          runnerName: user?.username ?? 'Corredor',
+          phrase: randomSharePhrase(steals.length > 0),
+          city: cityName, steals,
+        });
         // Show the "ZONA ROBADA" popup for either system: polygon zones (v1.5)
         // or grid cells (v1.6+). Most runs from v1.6+ will only have stolenCells.
         const hasStolen = (res.stolenZones && res.stolenZones.length > 0) ||
@@ -2246,6 +2466,20 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
             points: stolenPoints,
             rivalName: Array.from(names).join(', '),
           });
+        } else {
+          // Territorio virgen (sin owner previo): mostrar "ZONA CONQUISTADA".
+          // Antes esta rama no existía y el popup de conquista solo se disparaba
+          // desde el sistema legacy de loops-polígono (closeLoop), nunca desde el
+          // flujo real de saveRun con celdas — así que conquistar territorio
+          // nuevo sin robar a nadie nunca mostraba nada.
+          const newCells = res.newCellCount ?? res.breakdown?.newCells ?? claimedCells.length;
+          if (newCells > 0) {
+            setPopup({
+              visible: true,
+              type: 'conquered',
+              points: newCells,
+            });
+          }
         }
       }).catch((err) => {
         // Si el backend falla, igualmente mostramos resumen con valores
@@ -2321,7 +2555,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       {/* Robo notif arriving via the inbox (someone stole from us): render the
           existing "te han robado" image with a "Devolver" button. Marks as read
           on dismissal. On Respond opens TauntSelector mode='taunt'. */}
-      {currentTaunt?.mode === 'robo_notif' && (
+      {currentTaunt?.mode === 'robo_notif' && tauntReady && (
         <ZonePopup
           visible
           type="stolen_from_you"
@@ -2330,17 +2564,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
             try { await api.markTauntsRead([currentTaunt.id]); } catch {}
             setCurrentTaunt(null);
           }}
-          onRespond={() => {
-            if (currentTaunt.from_user_id) {
-              setTauntTarget({
-                toUserId: currentTaunt.from_user_id,
-                toName: currentTaunt.from_user_name ?? 'Rival',
-                runId: currentTaunt.run_id,
-                mode: 'taunt',
-              });
-              setShowTaunts(true);
-            }
-          }}
+          onRespond={() => respondToTaunt(currentTaunt, 'taunt')}
         />
       )}
 
@@ -2354,9 +2578,23 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
        *                      NO se muestra botón DEVOLVER para evitar el bucle
        *                      infinito (response → response → response...).
        *                      Solo se puede cerrar el modal. */}
-      {(currentTaunt?.mode === 'taunt' || currentTaunt?.mode === 'response') && currentTaunt.taunt_id && (
+      {(currentTaunt?.mode === 'taunt' || currentTaunt?.mode === 'response') && currentTaunt.taunt_id && tauntReady && (
         <Modal transparent visible animationType="fade" statusBarTranslucent>
           <View style={styles.tauntReceivedContainer}>
+            {/* La imagen va la PRIMERA: ahora es absoluta y a pantalla
+                completa, así que los hermanos posteriores (X, remitente,
+                botón) pintan por encima de ella. */}
+            {(() => {
+              const img = tauntImageById(currentTaunt.mode, currentTaunt.taunt_id);
+              if (!img) return null;
+              return (
+                <Image
+                  source={img}
+                  style={styles.tauntReceivedImage}
+                  resizeMode="contain"
+                />
+              );
+            })()}
             <TouchableOpacity
               style={styles.tauntReceivedClose}
               onPress={async () => {
@@ -2369,31 +2607,10 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
             <Text style={styles.tauntReceivedFrom}>
               {currentTaunt.from_user_name ?? 'Rival'} te ha enviado un mensaje
             </Text>
-            {(() => {
-              const img = tauntImageById(currentTaunt.mode, currentTaunt.taunt_id);
-              if (!img) return null;
-              return (
-                <Image
-                  source={img}
-                  style={styles.tauntReceivedImage}
-                  resizeMode="contain"
-                />
-              );
-            })()}
             {currentTaunt.mode === 'taunt' ? (
               <TouchableOpacity
                 style={styles.tauntReceivedRespond}
-                onPress={() => {
-                  if (currentTaunt.from_user_id) {
-                    setTauntTarget({
-                      toUserId: currentTaunt.from_user_id,
-                      toName: currentTaunt.from_user_name ?? 'Rival',
-                      runId: currentTaunt.run_id,
-                      mode: 'response',
-                    });
-                    setShowTaunts(true);
-                  }
-                }}
+                onPress={() => respondToTaunt(currentTaunt, 'response')}
               >
                 <Ionicons name="flame" size={18} color="#000" />
                 <Text style={styles.tauntReceivedRespondText}>DEVOLVER</Text>
@@ -2468,8 +2685,13 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
           mientras saveRun + loadCells están en vuelo (savingRun = true). */}
       <LoadingScreen visible={savingRun} />
 
-      {/* Resumen post-carrera */}
-      {runSummary?.visible && (
+      {/* Resumen post-carrera. Espera a que se cierre la cartela de zona: iOS
+          no presenta bien dos <Modal> a la vez — el segundo se quedaba en el
+          limbo y solo aparecía cuando algo forzaba un re-render (cambiar de
+          pestaña a Perfil/Stats/Ranking). Encadenándolos, primero se ve la
+          cartela y al cerrarla aparece el resumen, que es además el orden
+          narrativo correcto. Si no hubo cartela, sale directo. */}
+      {runSummary?.visible && !popup.visible && (
         <Modal transparent visible animationType="fade" statusBarTranslucent>
           <View style={styles.summaryOverlay}>
             <View style={styles.summaryCard}>
@@ -2528,6 +2750,19 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
                 </View>
               )}
 
+              {/* Compartir. Cierra el resumen antes de abrir la tarjeta: iOS no
+                  presenta bien dos <Modal> a la vez (mismo motivo por el que el
+                  resumen espera a la cartela de zona). */}
+              {shareCard && (
+                <TouchableOpacity
+                  style={styles.summaryShareBtn}
+                  onPress={() => { setRunSummary(null); setShareVisible(true); }}
+                >
+                  <Ionicons name="share-social" size={17} color={colors.orange} />
+                  <Text style={styles.summaryShareBtnText}>COMPARTIR</Text>
+                </TouchableOpacity>
+              )}
+
               <TouchableOpacity
                 style={styles.summaryBtn}
                 onPress={() => setRunSummary(null)}
@@ -2538,6 +2773,13 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
           </View>
         </Modal>
       )}
+
+      {/* Tarjeta para compartir en redes (Instagram, WhatsApp…) */}
+      <ShareRunCard
+        visible={shareVisible}
+        data={shareCard}
+        onClose={() => setShareVisible(false)}
+      />
 
       {/* Popup zona propia — centinela */}
       {selectedZone && (
@@ -3365,9 +3607,10 @@ const styles = StyleSheet.create({
   },
   // Inbox display for received taunts/responses (sister to ZonePopup).
   tauntReceivedContainer: {
-    flex: 1, backgroundColor: colors.bg,
+    // Negro puro (no colors.bg): el arte de los taunts tiene fondo negro y
+    // cualquier diferencia de tono delataba el recuadro de la imagen.
+    flex: 1, backgroundColor: '#000',
     alignItems: 'center', justifyContent: 'center',
-    paddingHorizontal: spacing.md,
   },
   tauntReceivedClose: {
     position: 'absolute', top: 50, right: spacing.md, zIndex: 10,
@@ -3376,11 +3619,21 @@ const styles = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
   },
   tauntReceivedFrom: {
+    // Flota SOBRE la imagen a pantalla completa (antes empujaba la imagen
+    // hacia abajo dentro del flujo). Sombra para que se lea sobre el arte.
+    position: 'absolute', top: 58, left: 70, right: 70, zIndex: 10,
     color: colors.textPrimary, fontSize: 16, fontWeight: '700',
-    marginBottom: spacing.md, textAlign: 'center',
+    textAlign: 'center',
+    textShadowColor: '#000', textShadowRadius: 6,
   },
   tauntReceivedImage: {
-    width: '100%', flex: 1, maxHeight: '70%',
+    // Pantalla completa con medidas EXPLÍCITAS (sin position:absolute: sin
+    // marco el <Image> cae a su tamaño intrínseco y sale ampliadísimo) y con
+    // 'contain', porque los taunts tienen proporciones distintas entre sí y el
+    // texto llega al borde. Sobre negro puro las bandas no se ven.
+    position: 'absolute',
+    width: Dimensions.get('window').width,
+    height: Dimensions.get('window').height,
   },
   tauntReceivedRespond: {
     position: 'absolute', bottom: 50, left: spacing.md, right: spacing.md,
@@ -3495,6 +3748,14 @@ const styles = StyleSheet.create({
     borderRadius: radius.full,
   },
   summaryBtnText: { fontSize: 16, fontWeight: '800', color: '#000', letterSpacing: 1 },
+  // Compartir: secundario (contorno) para que CERRAR siga siendo la acción
+  // principal y no compitan dos botones naranjas macizos.
+  summaryShareBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.sm,
+    borderWidth: 1.5, borderColor: colors.orange, borderRadius: radius.full,
+    paddingVertical: 13, paddingHorizontal: 36, marginBottom: spacing.sm,
+  },
+  summaryShareBtnText: { fontSize: 15, fontWeight: '800', color: colors.orange, letterSpacing: 1 },
   // Zona popup — centinela
   zoneCard: {
     backgroundColor: colors.bgCard, borderRadius: radius.lg,

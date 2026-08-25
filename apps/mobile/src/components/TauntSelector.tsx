@@ -298,8 +298,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   previewImage: {
+    // Pantalla completa con medidas EXPLÍCITAS. Nada de position:absolute con
+    // insets: sin marco explícito el <Image> cae a su tamaño intrínseco y sale
+    // ampliadísimo. Y 'contain' (no 'cover'): los taunts tienen proporciones
+    // distintas entre sí y el texto llega al borde, así que recortar se comería
+    // palabras. Sobre negro puro las bandas del contain no se ven.
     width: SCREEN_WIDTH,
-    height: SCREEN_HEIGHT * 0.75,
+    height: SCREEN_HEIGHT,
   },
   previewClose: {
     position: 'absolute',

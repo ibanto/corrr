@@ -3,7 +3,7 @@
     "name": "CORRR",
     "slug": "mobile",
     "scheme": "corrr",
-    "version": "1.10.21",
+    "version": "1.11.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -18,9 +18,19 @@
       "bundleIdentifier": "app.corrr",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
-        "UIBackgroundModes": ["location"],
+        "UIBackgroundModes": [
+          "location"
+        ],
         "NSCameraUsageDescription": "CORRR usa la cámara para que te hagas una foto de perfil.",
-        "NSPhotoLibraryUsageDescription": "CORRR accede a tus fotos para que elijas tu foto de perfil."
+        "NSPhotoLibraryUsageDescription": "CORRR accede a tus fotos para que elijas tu foto de perfil.",
+        "NSAppTransportSecurity": {
+          "NSExceptionDomains": {
+            "exp.direct": {
+              "NSIncludesSubdomains": true,
+              "NSExceptionAllowsInsecureHTTPLoads": true
+            }
+          }
+        }
       },
       "config": {
         "googleMapsApiKey": "AIzaSyC_1Y2Fo6S9X6GJU5Upx4EZxrw4JFf_xNU"
@@ -28,7 +38,7 @@
     },
     "android": {
       "package": "app.corrr",
-      "versionCode": 57,
+      "versionCode": 58,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#0A0A0A"
@@ -68,7 +78,9 @@
           "color": "#FF6600"
         }
       ],
-      "@react-native-google-signin/google-signin"
+      "@react-native-google-signin/google-signin",
+      "expo-build-properties",
+      "./plugins/withModularHeaders.js"
     ],
     "extra": {
       "eas": {

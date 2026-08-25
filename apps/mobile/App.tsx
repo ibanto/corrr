@@ -227,10 +227,22 @@ export default function App() {
       />
       <SafeAreaView style={styles.safeArea}>
         <View style={styles.screen}>
-          <View style={[StyleSheet.absoluteFill, { display: activeTab === 'Mapa' ? 'flex' : 'none' }]}>
+          {/* MapScreen NO se oculta con display:'none'. En iOS un <Modal> que
+              vive dentro de un subárbol con display:'none' no llega a
+              presentarse, y los avisos de "te han robado" / mensaje recibido
+              se quedaban esperando hasta que el usuario toqueteaba el menú y
+              algo forzaba un re-render. En su lugar lo tapamos con la pantalla
+              de la pestaña activa, que es opaca y ocupa todo. (display:'none'
+              sobre el mapa ya dio problemas antes con los polígonos — ver
+              CLAUDE.md, bugs históricos.) */}
+          <View style={StyleSheet.absoluteFill} pointerEvents={activeTab === 'Mapa' ? 'auto' : 'none'}>
             <MapScreen user={user} onNavigateToShop={() => setActiveTab('Retos')} />
           </View>
-          {activeTab !== 'Mapa' && renderOverlayScreen()}
+          {activeTab !== 'Mapa' && (
+            <View style={[StyleSheet.absoluteFill, styles.overlayScreen]}>
+              {renderOverlayScreen()}
+            </View>
+          )}
         </View>
       </SafeAreaView>
       <SafeAreaView style={styles.tabBarSafe}>
@@ -278,6 +290,9 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bg },
   safeArea: { flex: 1, backgroundColor: colors.bg, paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight ?? 32) + 12 : 0 },
   screen: { flex: 1 },
+  // Opaca: tapa por completo el mapa, que ahora sigue montado y "visible"
+  // detrás para que sus modales puedan presentarse.
+  overlayScreen: { backgroundColor: colors.bg },
   tabBarSafe: { backgroundColor: colors.bgCard },
   tabBar: {
     flexDirection: 'row', backgroundColor: colors.bgCard,

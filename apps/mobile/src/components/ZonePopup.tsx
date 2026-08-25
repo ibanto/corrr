@@ -7,13 +7,10 @@ import {
   Modal,
   Animated,
   Image,
-  Dimensions,
+  useWindowDimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, radius } from '../theme';
-
-const SCREEN_WIDTH = Dimensions.get('window').width;
-const SCREEN_HEIGHT = Dimensions.get('window').height;
 
 export type PopupType = 'conquered' | 'stolen_by_you' | 'stolen_from_you';
 
@@ -35,6 +32,11 @@ const IMAGES: Record<PopupType, any> = {
 
 export default function ZonePopup({ visible, type, onClose, onRespond }: Props) {
   const opacity = useRef(new Animated.Value(0)).current;
+  // Medidas explícitas y reactivas. NO usar position:absolute + insets 0 para
+  // dimensionar la imagen: sin un marco explícito el <Image> cae a su tamaño
+  // INTRÍNSECO (720x1556 pt) sobre una pantalla de ~393pt, y se veía ampliada
+  // mostrando solo un trozo.
+  const { width, height } = useWindowDimensions();
 
   useEffect(() => {
     if (visible) {
@@ -51,17 +53,19 @@ export default function ZonePopup({ visible, type, onClose, onRespond }: Props) 
   return (
     <Modal transparent visible={visible} animationType="none" statusBarTranslucent>
       <Animated.View style={[styles.container, { opacity }]}>
+        {/* Imagen a pantalla completa REAL (edge-to-edge). Va la PRIMERA en el
+            JSX para que la X y el botón queden por encima: en RN los hermanos
+            posteriores pintan encima, y la imagen ahora es absoluta. */}
+        <Image
+          source={IMAGES[type]}
+          style={{ width, height }}
+          resizeMode="contain"
+        />
+
         {/* X arriba a la derecha */}
         <TouchableOpacity style={styles.closeBtn} onPress={handleClose} activeOpacity={0.7}>
           <Ionicons name="close" size={28} color="#fff" />
         </TouchableOpacity>
-
-        {/* Imagen a pantalla completa */}
-        <Image
-          source={IMAGES[type]}
-          style={styles.image}
-          resizeMode="contain"
-        />
 
         {/* Botón RESPONDER solo cuando te roban */}
         {type === 'stolen_from_you' && onRespond && (
@@ -79,7 +83,9 @@ export default function ZonePopup({ visible, type, onClose, onRespond }: Props) 
 
 const styles = StyleSheet.create({
   container: {
-    flex: 1, backgroundColor: colors.bg,
+    // Negro puro (no colors.bg): el arte de estas cartelas tiene fondo negro y
+    // cualquier diferencia de tono se notaba como un "pegote" recortado.
+    flex: 1, backgroundColor: '#000',
     alignItems: 'center', justifyContent: 'center',
   },
   closeBtn: {
@@ -88,10 +94,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.15)',
     alignItems: 'center', justifyContent: 'center',
   },
-  image: {
-    width: SCREEN_WIDTH,
-    height: SCREEN_HEIGHT * 0.8,
-  },
+  // (la imagen se dimensiona inline con useWindowDimensions — ver arriba)
   bottomBar: {
     position: 'absolute',
     bottom: 50,
