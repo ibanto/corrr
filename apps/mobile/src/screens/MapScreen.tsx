@@ -316,7 +316,12 @@ const WARMUP_POINTS = 5;         // Number of initial points with strict accurac
 // (sin celdas, sin distancia posicional, y auto-pause a los 20s andando).
 // Pasado este número de lecturas nos conformamos con MAX_ACCURACY_M, que
 // sigue siendo el filtro de siempre — el anti-cheat no se relaja.
-const WARMUP_MAX_READINGS = 15;
+// Ojo con subirlo: las lecturas llegan cada ~3s, así que 15 eran ~45s en los
+// que, con accuracy estancada en 12-18m, no se aceptaba NADA — y como
+// lastMovementTime solo se refresca con puntos aceptados, la auto-pausa
+// saltaba a los 20s en plena caminata al empezar. 5 lecturas ≈ 15s, que es
+// de sobra para lo que el warmup pretende (dar margen al primer fix del chip).
+const WARMUP_MAX_READINGS = 5;
 
 // ── Cierre de circuito (loop) ─────────────────────────────────────────────
 // Se cierra un loop cuando el corredor vuelve a menos de LOOP_CLOSE_DIST_M de
@@ -1352,12 +1357,29 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         if (y < minY) minY = y; if (y > maxY) maxY = y;
       });
       const pad = 2; // celdas de margen alrededor del run
-      const { cells } = await api.getCellsInViewport(
-        (maxY + 1 + pad) * CELL_LAT_DEG, // north
-        (minY - pad) * CELL_LAT_DEG,     // south
-        (maxX + 1 + pad) * CELL_LNG_DEG, // east
-        (minX - pad) * CELL_LNG_DEG,     // west
-      );
+      let north = (maxY + 1 + pad) * CELL_LAT_DEG;
+      let south = (minY - pad) * CELL_LAT_DEG;
+      let east  = (maxX + 1 + pad) * CELL_LNG_DEG;
+      let west  = (minX - pad) * CELL_LNG_DEG;
+      // Radio mínimo ~1km, MISMO criterio que loadCells. Sin esto, la caja era
+      // solo la de la carrera recién terminada (una vuelta de 200m ≈ 130m de
+      // caja) y como abajo hacemos setRemoteCells(cells) —que REEMPLAZA, no
+      // fusiona— todo el territorio conquistado antes que cayera fuera de esa
+      // caja desaparecía del mapa al terminar de correr. Los datos seguían en
+      // el servidor: era solo que dejábamos de pedirlos.
+      const MIN_HALF_LAT = 0.01;
+      const MIN_HALF_LNG = 0.01;
+      const centerLat = (north + south) / 2;
+      const centerLng = (east + west) / 2;
+      if ((north - south) / 2 < MIN_HALF_LAT) {
+        north = centerLat + MIN_HALF_LAT;
+        south = centerLat - MIN_HALF_LAT;
+      }
+      if ((east - west) / 2 < MIN_HALF_LNG) {
+        east = centerLng + MIN_HALF_LNG;
+        west = centerLng - MIN_HALF_LNG;
+      }
+      const { cells } = await api.getCellsInViewport(north, south, east, west);
       setRemoteCells(cells);
     } catch {
       await loadCells().catch(() => {});
@@ -1797,6 +1819,11 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     autoPauseTimer.current = setInterval(() => {
       if (!isRunningRef.current) return;
       if (isAutoPausedRef.current) return;
+      // Mientras no se haya aceptado NINGÚN punto todavía, el GPS sigue
+      // fijando: no estás quieto, es que aún no hay señal lo bastante buena.
+      // Sin este guard la carrera se auto-pausaba a los 20s nada más arrancar,
+      // porque lastMovementTime solo se refresca con puntos aceptados.
+      if (pathRef.current.length === 0) return;
       const stillFor = (Date.now() - lastMovementTime.current) / 1000;
       if (stillFor >= 20) {
         isAutoPausedRef.current = true;
@@ -1875,7 +1902,13 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         lastRawTimestampRef.current = now;
         if (rawDt > 0 && rawDt <= MAX_DOPPLER_DT_S && speed >= 0 && accuracy <= MAX_ACCURACY_M) {
           const spd = Math.min(speed, MAX_SPEED_MPS);
-          if (spd >= MIN_MOVING_MPS) setDistance(d => d + (spd * rawDt) / 1000 * DOPPLER_CALIBRATION);
+          // Con la carrera auto-pausada NO se acumula distancia. Este bloque va
+          // antes del chequeo de auto-pausa (a propósito: alimenta la ventana de
+          // velocidades), así que sin este guard los km seguían subiendo con la
+          // carrera "parada" — el usuario veía el contador avanzar en pausa.
+          if (spd >= MIN_MOVING_MPS && !isAutoPausedRef.current) {
+            setDistance(d => d + (spd * rawDt) / 1000 * DOPPLER_CALIBRATION);
+          }
           // Alimentamos la ventana de velocidades SOLO con lecturas de accuracy
           // buena: una lectura mala no debe poder "desbloquear" el anti-drift.
           recentDopplerSpeedsRef.current.push(spd);
@@ -2058,6 +2091,11 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     autoPauseTimer.current = setInterval(() => {
       if (!isRunningRef.current) return;
       if (isAutoPausedRef.current) return;
+      // Mientras no se haya aceptado NINGÚN punto todavía, el GPS sigue
+      // fijando: no estás quieto, es que aún no hay señal lo bastante buena.
+      // Sin este guard la carrera se auto-pausaba a los 20s nada más arrancar,
+      // porque lastMovementTime solo se refresca con puntos aceptados.
+      if (pathRef.current.length === 0) return;
       const stillFor = (Date.now() - lastMovementTime.current) / 1000;
       if (stillFor >= 20) {
         isAutoPausedRef.current = true;
@@ -2174,6 +2212,29 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     // convexHull, que era el verdadero fantasma y ya no se usa). Estas celdas
     // se mandan al backend → al reabrir el interior sigue cerrado (consistente).
     if (loopClosedRef.current) {
+      // Cerrar el ANILLO antes de rellenar. El loop se detecta por geometría
+      // (has vuelto a <30m de un punto anterior), pero eso no garantiza que el
+      // rastro de CELDAS cierre: el GPS muestrea cada ~8m, así que esos últimos
+      // metros suelen quedar sin muestrear y el anillo queda abierto por 2-3
+      // celdas. fillEnclosedCells es topológico: por un hueco de una sola celda
+      // el relleno se escapa al exterior y no reclama NADA. Medido en carreras
+      // reales: circuitos cerrados de verdad acababan con solo el perímetro
+      // pintado. Puenteamos del último punto al primero con cellLine (lo mismo
+      // que ya se hace entre lecturas consecutivas), con un tope corto para no
+      // inventar territorio si el "cierre" no era real.
+      const ringPts = [...pathSegments.flat(), ...pathRef.current];
+      if (ringPts.length >= 2) {
+        const first = coordToCell(ringPts[0].latitude, ringPts[0].longitude);
+        const last = coordToCell(ringPts[ringPts.length - 1].latitude, ringPts[ringPts.length - 1].longitude);
+        const closing = cellLine(last.x, last.y, first.x, first.y);
+        // 8 celdas = 80m. Los umbrales de cierre son 30m (mid-run) y 50m (al
+        // parar), así que esto cubre ambos con margen sin abrir la puerta a
+        // puentes largos inventados.
+        const MAX_RING_CLOSE_CELLS = 8;
+        if (closing.length <= MAX_RING_CLOSE_CELLS) {
+          for (const bc of closing) claimedCellsRef.current.add(cellKey(bc.x, bc.y));
+        }
+      }
       const filledCells = fillEnclosedCells(claimedCellsRef.current);
       if (filledCells.size !== claimedCellsRef.current.size) {
         claimedCellsRef.current = filledCells;
