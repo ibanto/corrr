@@ -17,6 +17,7 @@ import {
 } from 'react-native';
 import { checkForUpdates, CURRENT_VERSION } from './src/utils/checkForUpdates';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as SecureStore from 'expo-secure-store';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from './src/theme';
 import { api } from './src/services/api';
@@ -48,7 +49,20 @@ const TABS: { key: Tab; label: string }[] = [
   { key: 'Perfil',  label: 'Perfil' },
 ];
 
-const SESSION_KEY = '@corrr_session';
+// Sesión partida en dos a propósito:
+//
+//   · El TOKEN va en SecureStore, que lo cifra usando el Llavero de iOS y el
+//     Keystore de Android. Antes vivía en AsyncStorage, que NO cifra nada: es
+//     un fichero legible en un móvil con root o jailbreak, o desde una copia
+//     de seguridad sin cifrar. Y como el token dura 90 días y no se puede
+//     revocar, quien lo sacara tenía la cuenta durante tres meses.
+//
+//   · El PERFIL sigue en AsyncStorage porque SecureStore tiene un tope de
+//     ~2 KB por valor en Android, y el avatar en base64 lo revienta. No es
+//     dato sensible: es lo que la propia app ya muestra en pantalla.
+const TOKEN_KEY = 'corrr.session.token';   // SecureStore (cifrado)
+const USER_KEY = '@corrr_user';            // AsyncStorage (no sensible)
+const LEGACY_SESSION_KEY = '@corrr_session'; // formato antiguo, solo para migrar
 // CURRENT_VERSION ahora vive en src/utils/checkForUpdates.ts — no aquí —
 // para romper la dependencia circular App ↔ PerfilScreen que rompía el
 // botón "Buscar actualizaciones".
@@ -81,12 +95,28 @@ export default function App() {
   useEffect(() => {
     (async () => {
       try {
-        const raw = await AsyncStorage.getItem(SESSION_KEY);
-        if (raw) {
-          const session: Session = JSON.parse(raw);
-          api.setToken(session.token);
-          api.setUserId(session.user.id);
-          setUser(session.user);
+        let token = await SecureStore.getItemAsync(TOKEN_KEY);
+        let rawUser = await AsyncStorage.getItem(USER_KEY);
+
+        // Migración desde el formato antiguo (todo junto y sin cifrar). Se
+        // hace en silencio para no cerrarle la sesión a quien ya la tenía.
+        if (!token) {
+          const legacy = await AsyncStorage.getItem(LEGACY_SESSION_KEY);
+          if (legacy) {
+            const old: Session = JSON.parse(legacy);
+            token = old.token;
+            rawUser = JSON.stringify(old.user);
+            await SecureStore.setItemAsync(TOKEN_KEY, old.token);
+            await AsyncStorage.setItem(USER_KEY, rawUser);
+            await AsyncStorage.removeItem(LEGACY_SESSION_KEY);
+          }
+        }
+
+        if (token && rawUser) {
+          const savedUser: User = JSON.parse(rawUser);
+          api.setToken(token);
+          api.setUserId(savedUser.id);
+          setUser(savedUser);
           registerForPushNotifications().catch(() => {});
           // Cargar solicitudes de amistad pendientes
           api.getPendingFriendRequests().then(r => setPendingFriends(r.length)).catch(() => {});
@@ -111,7 +141,8 @@ export default function App() {
   }, []);
 
   const handleAuthenticated = async (token: string, userData: User) => {
-    await AsyncStorage.setItem(SESSION_KEY, JSON.stringify({ token, user: userData }));
+    await SecureStore.setItemAsync(TOKEN_KEY, token);
+    await AsyncStorage.setItem(USER_KEY, JSON.stringify(userData));
     setUser(userData);
     registerForPushNotifications().catch(() => {});
     api.getPendingFriendRequests().then(r => setPendingFriends(r.length)).catch(() => {});
@@ -161,7 +192,8 @@ export default function App() {
   }, [handleDeepLink]);
 
   const handleLogout = async () => {
-    await AsyncStorage.removeItem(SESSION_KEY);
+    await SecureStore.deleteItemAsync(TOKEN_KEY).catch(() => {});
+    await AsyncStorage.multiRemove([USER_KEY, LEGACY_SESSION_KEY]);
     api.setToken('');
     api.setUserId('');
     setUser(null);

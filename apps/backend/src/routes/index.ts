@@ -201,6 +201,12 @@ async function initDB() {
   await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS usual_distance TEXT`).catch(() => {}); // '1-3' | '3-5' | '5-10' | '10+'
   await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS weekly_frequency TEXT`).catch(() => {}); // '1-2' | '3-4' | '5+'
   await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_bonus_claimed BOOLEAN DEFAULT FALSE`).catch(() => {});
+  // Cuándo declaró el usuario tener la edad mínima. Guardamos la marca de
+  // tiempo, no la fecha de nacimiento: para acreditar el cumplimiento basta
+  // con poder demostrar que se le preguntó y cuándo (RGPD art. 8 y principio
+  // de minimización). Nulo en las cuentas anteriores a esta comprobación.
+  await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS age_confirmed_at TIMESTAMPTZ`).catch(() => {});
+  await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS sessions_valid_from TIMESTAMPTZ`).catch(() => {});
 
   // Track stolen zones in user_stats
   await db.query(`ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS total_steals INT DEFAULT 0`).catch(() => {});
@@ -293,6 +299,10 @@ async function initDB() {
   for (const table of ['users', 'user_stats', 'runs', 'zones']) {
     await db.query(`ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY`).catch(() => {});
   }
+
+  // Lista de sesiones revocadas: se carga ya y se refresca cada minuto.
+  await refreshRevokedSessions();
+  setInterval(refreshRevokedSessions, 60_000).unref();
 }
 
 /** Envía una push notification via Expo Push Service. */
@@ -327,12 +337,44 @@ function sendEmail(payload: { from: string; to: string; subject: string; html: s
   });
 }
 
+// ── Revocación de sesiones ───────────────────────────────────────────────────
+// Un JWT vale hasta que caduca, así que cambiar la contraseña no echaba a nadie:
+// si alguien te robaba el móvil o el token, cambiar la clave no servía de nada.
+// Ahora, al restablecer la contraseña, se marca la hora en la que dejan de valer
+// los tokens anteriores y los que se emitieron antes se rechazan.
+//
+// Lo guardamos en memoria en vez de consultarlo en cada petición: sería una
+// consulta extra en TODAS las peticiones autenticadas para un caso rarísimo.
+// Solo se listan los usuarios que alguna vez han restablecido la contraseña
+// (un puñado), la lista se carga al arrancar y se refresca cada minuto — así
+// otra réplica se entera igual, con un minuto de margen como mucho.
+const revokedBefore = new Map<string, number>();
+
+async function refreshRevokedSessions() {
+  try {
+    const { rows } = await db.query(
+      `SELECT id, sessions_valid_from FROM users WHERE sessions_valid_from IS NOT NULL`
+    );
+    revokedBefore.clear();
+    for (const r of rows) revokedBefore.set(r.id, new Date(r.sessions_valid_from).getTime());
+  } catch {
+    // Si la consulta falla mantenemos la lista anterior: preferimos seguir
+    // aplicando revocaciones conocidas a quedarnos sin ninguna.
+  }
+}
+
 const requireAuth = async (req: any, reply: any) => {
   const auth = req.headers.authorization;
   if (!auth?.startsWith('Bearer ')) return reply.status(401).send({ error: 'No autorizado' });
   try {
     const { payload } = await jwtVerify(auth.slice(7), SECRET);
-    req.userId = payload.sub as string;
+    const userId = payload.sub as string;
+    const cutoff = revokedBefore.get(userId);
+    // "iat" va en segundos; damos 5s de margen por el redondeo al firmar.
+    if (cutoff !== undefined && payload.iat !== undefined && payload.iat * 1000 + 5000 < cutoff) {
+      return reply.status(401).send({ error: 'Sesión caducada, vuelve a entrar' });
+    }
+    req.userId = userId;
   } catch {
     return reply.status(401).send({ error: 'Token inválido' });
   }
@@ -349,7 +391,7 @@ app.post('/auth/register', {
   // 5 registros/hora por IP — evita spam de signups (que mandan email).
   config: { rateLimit: { max: 5, timeWindow: '1 hour' } },
 }, async (req: any, reply) => {
-  const { email, password, displayName, city, birthYear } = req.body ?? {};
+  const { email, password, displayName, city, ageConfirmed } = req.body ?? {};
   // Validación de inputs (defense in depth — el frontend también valida).
   // Antes no había checks → email vacío, password '' o displayName null
   // podían crear cuentas inválidas.
@@ -372,15 +414,30 @@ app.post('/auth/register', {
   // que no prometerlo, porque ante una reclamación el propio documento te
   // señala. Esto es lo que hace cierta esa promesa.
   //
-  // Es una declaración del usuario, no una verificación real (no las hay sin
-  // pedir documentación, que sería desproporcionado). Basta para cumplir.
-  const currentYear = new Date().getFullYear();
-  if (!Number.isInteger(birthYear) || birthYear < 1900 || birthYear > currentYear) {
-    return reply.status(400).send({ error: 'Indica tu año de nacimiento' });
-  }
-  if (currentYear - birthYear < MIN_AGE_YEARS) {
+  // Es una DECLARACIÓN del usuario, no una verificación: comprobarlo de verdad
+  // exigiría documentación, desproporcionado para este servicio. Y se pide
+  // como booleano en vez de la fecha de nacimiento a propósito — el principio
+  // de minimización del RGPD dice recoger solo lo necesario, y para saber si
+  // alguien supera una edad basta un sí, no su fecha exacta.
+  //
+  // TRANSICIÓN: la app que hay ahora mismo en las tiendas se compiló antes de
+  // que existiera esta casilla, así que no manda el campo. Exigirlo a secas
+  // dejó el registro roto para todo el mundo (nadie podía crear cuenta). Por
+  // eso el criterio es la PRESENCIA del campo, que es lo que distingue a un
+  // cliente nuevo de uno viejo:
+  //
+  //   · lo manda en false → app nueva y el usuario no marcó la casilla: se rechaza.
+  //   · lo manda en true  → app nueva y sí la marcó: adelante, y se anota cuándo.
+  //   · no lo manda       → app antigua: se le deja pasar, sin anotar nada.
+  //
+  // El tercer caso se cierra en cuanto la versión con la casilla esté en las
+  // dos tiendas y la comprobación de versión obligue a actualizar: entonces
+  // esto vuelve a ser un `ageConfirmed !== true` a secas. Mientras tanto no se
+  // pierde gran cosa: es una declaración, no una verificación, y quien quiera
+  // mentir sobre su edad puede hacerlo igual marcando la casilla.
+  if (ageConfirmed !== undefined && ageConfirmed !== true) {
     return reply.status(403).send({
-      error: `Tienes que tener al menos ${MIN_AGE_YEARS} años para usar CORRR`,
+      error: `Tienes que declarar que tienes al menos ${MIN_AGE_YEARS} años para usar CORRR`,
       underage: true,
     });
   }
@@ -392,8 +449,13 @@ app.post('/auth/register', {
     if (nameCheck.rows.length) return reply.status(400).send({ error: 'Ese nombre de usuario ya está en uso' });
     const ph = await hash(password);
     const { rows } = await db.query(
-      'INSERT INTO users (email, password_hash, display_name, city, birth_year) VALUES ($1,$2,$3,$4,$5) RETURNING id',
-      [email, ph, displayName, city, birthYear]
+      // La marca de tiempo solo se pone si el usuario declaró de verdad su
+      // edad. Sellarla siempre dejaría constancia de un consentimiento que
+      // nadie dio (los clientes antiguos ni siquiera preguntan), que es
+      // justo lo contrario de lo que sirve para acreditar cumplimiento.
+      `INSERT INTO users (email, password_hash, display_name, city, age_confirmed_at)
+       VALUES ($1,$2,$3,$4,$5) RETURNING id`,
+      [email, ph, displayName, city, ageConfirmed === true ? new Date() : null]
     );
     const uid = rows[0].id;
     await db.query('INSERT INTO user_stats (user_id) VALUES ($1)', [uid]);
@@ -586,7 +648,14 @@ app.post('/auth/reset-password', {
     const { rows } = await db.query('SELECT id FROM users WHERE reset_token = $1 AND reset_token_expires > NOW()', [token]);
     if (!rows.length) return reply.status(400).send({ error: 'Enlace inválido o expirado' });
     const ph = await hash(password);
-    await db.query('UPDATE users SET password_hash = $1, reset_token = NULL, reset_token_expires = NULL WHERE id = $2', [ph, rows[0].id]);
+    await db.query(
+      `UPDATE users SET password_hash = $1, reset_token = NULL, reset_token_expires = NULL,
+              sessions_valid_from = NOW()
+       WHERE id = $2`,
+      [ph, rows[0].id]
+    );
+    // Efecto inmediato en esta réplica; las demás lo cogen en el refresco.
+    revokedBefore.set(rows[0].id, Date.now());
     return reply.send({ ok: true });
   } catch (err) { return reply.status(500).send({ error: String(err) }); }
 });
@@ -810,6 +879,7 @@ app.post('/users/push-token', { preHandler: requireAuth }, async (req: any, repl
 // 30s de leaderboard "viejo" es aceptable y evita acoplar /runs con el ranking.
 const RANKING_TTL_MS = 30_000;
 const rankingCache = new Map<string, { data: any; expires: number }>();
+const RANKING_CACHE_MAX = 500;
 function getRankingCache(key: string): any | null {
   const hit = rankingCache.get(key);
   if (hit && hit.expires > Date.now()) return hit.data;
@@ -817,10 +887,25 @@ function getRankingCache(key: string): any | null {
   return null;
 }
 function setRankingCache(key: string, data: any) {
+  // Tope de entradas: el caché guarda una por ciudad consultada y solo se
+  // limpiaba al volver a pedir esa misma ciudad, así que con muchas ciudades
+  // la memoria subía y no bajaba nunca. Al llegar al tope tiramos las
+  // caducadas y, si aun así no cabe, la más antigua (los Map de JS conservan
+  // el orden de inserción, así que la primera clave es la más vieja).
+  if (rankingCache.size >= RANKING_CACHE_MAX) {
+    const now = Date.now();
+    for (const [k, v] of rankingCache) if (v.expires <= now) rankingCache.delete(k);
+    if (rankingCache.size >= RANKING_CACHE_MAX) {
+      const oldest = rankingCache.keys().next().value;
+      if (oldest !== undefined) rankingCache.delete(oldest);
+    }
+  }
   rankingCache.set(key, { data, expires: Date.now() + RANKING_TTL_MS });
 }
 
-app.get('/ranking/global', async (req, reply) => {
+// Requiere auth como el resto: devuelve nombre y ciudad de usuarios reales, y
+// sin autenticación cualquiera podía recopilarlos en bucle sin tener cuenta.
+app.get('/ranking/global', { preHandler: requireAuth }, async (req, reply) => {
   const cached = getRankingCache('global');
   if (cached) return reply.send(cached);
   const { rows } = await db.query(`
@@ -973,8 +1058,18 @@ if (process.env.ADMIN_KEY) {
   console.warn('[WARN] /admin/* endpoints inaccesibles hasta que se defina la env var.');
 }
 
+/** La clave SOLO viaja por cabecera.
+ *
+ *  Antes también se aceptaba por query string (`?key=…`), que era cómodo para
+ *  abrir el panel desde el navegador pero dejaba la clave escrita en todas
+ *  partes: los registros de Railway (el logger de Fastify guarda la ruta
+ *  completa), el historial del navegador y cualquier proxy intermedio. Y
+ *  detrás de esa clave está /admin/wipe-users, que vacía la base entera.
+ *
+ *  El panel HTML sigue siendo accesible: pide la clave una vez y la guarda en
+ *  el navegador (sessionStorage), mandándola por cabecera en cada petición. */
 const requireAdmin = async (req: any, reply: any) => {
-  const key = req.headers['x-admin-key'] || (req.query as any)?.key;
+  const key = req.headers['x-admin-key'];
   if (key !== ADMIN_KEY) return reply.status(403).send({ error: 'Acceso denegado' });
 };
 
@@ -1042,6 +1137,54 @@ app.get('/admin/challenges', { preHandler: requireAdmin }, async (req: any, repl
  *  aparte del backend, y desde el móvil va igual de bien. Todo texto que
  *  origina el usuario (nombre, email, ciudad) se escapa SIEMPRE — un
  *  display_name malicioso no puede inyectar HTML en el panel del admin. */
+/** GET /admin — puerta de entrada al panel, sin auth.
+ *
+ *  Existe porque la clave ya no viaja por la URL: este cascarón la pide una
+ *  vez, la guarda en sessionStorage (se borra al cerrar la pestaña) y pide el
+ *  panel real mandándola por cabecera. Así nunca queda escrita en registros,
+ *  historial ni proxies. No expone nada por sí mismo: sin clave válida, el
+ *  /admin/panel de debajo responde 403. */
+app.get('/admin', async (_req, reply) => {
+  return reply.type('text/html; charset=utf-8').send(`<!doctype html><html lang="es"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CORRR — Panel</title>
+<style>
+  body{margin:0;background:#0A0A0A;color:#eee;font-family:-apple-system,Roboto,sans-serif}
+  .gate{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+  .card{background:#161616;border:1px solid #262626;border-radius:14px;padding:28px;max-width:340px;width:100%}
+  h1{color:#FF6600;font-size:20px;margin:0 0 6px}
+  p{color:#888;font-size:13px;margin:0 0 18px}
+  input{width:100%;background:#0A0A0A;border:1px solid #333;border-radius:8px;padding:12px;
+    color:#fff;font-size:15px;box-sizing:border-box}
+  button{width:100%;margin-top:12px;background:#FF6600;color:#fff;border:0;border-radius:8px;
+    padding:12px;font-weight:700;font-size:15px;cursor:pointer}
+  .err{color:#f44336;font-size:13px;margin-top:10px;min-height:18px}
+</style></head><body>
+<div id="app"><div class="gate"><form class="card" id="f">
+  <h1>Panel de CORRR</h1>
+  <p>Introduce la clave de administración.</p>
+  <input type="password" id="k" autocomplete="current-password" autofocus>
+  <button type="submit">Entrar</button>
+  <div class="err" id="e"></div>
+</form></div></div>
+<script>
+  async function load(key){
+    const r = await fetch('/admin/panel', { headers: { 'x-admin-key': key } });
+    if (!r.ok) throw new Error('Clave incorrecta');
+    sessionStorage.setItem('corrr_admin_key', key);
+    document.open(); document.write(await r.text()); document.close();
+  }
+  const saved = sessionStorage.getItem('corrr_admin_key');
+  if (saved) load(saved).catch(() => sessionStorage.removeItem('corrr_admin_key'));
+  document.getElementById('f').addEventListener('submit', async ev => {
+    ev.preventDefault();
+    const e = document.getElementById('e'); e.textContent = '';
+    try { await load(document.getElementById('k').value); }
+    catch (err) { e.textContent = err.message; }
+  });
+</script></body></html>`);
+});
+
 app.get('/admin/panel', { preHandler: requireAdmin }, async (req: any, reply) => {
   const esc = (s: any) =>
     String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
@@ -1726,6 +1869,9 @@ app.post('/runs', {
          SET owner_id = EXCLUDED.owner_id, run_id = EXCLUDED.run_id, claimed_at = NOW()`,
         [xArr, yArr, userId, runId]
       );
+      // El mapa de esta zona acaba de cambiar de dueño: tira su caché para que
+      // el robo se vea al instante y no dentro de 30 segundos.
+      invalidateViewportCache(claimedCells.map((c: any) => ({ x: c.x, y: c.y })));
 
       // Decrement total_cells for each robbed user and notify them.
       for (const [prevOwnerId, robosList] of robosByPrevOwner.entries()) {
@@ -2024,6 +2170,34 @@ app.get('/zones/nearby', { preHandler: requireAuth }, async (req: any, reply) =>
 // ── Cells (grid territory, v2) ───────────────────────────────────────────────
 
 /** Return all claimed cells inside a lat/lng viewport. Used by the mobile map. */
+// ── Caché del mapa ───────────────────────────────────────────────────────────
+// /cells/viewport es la consulta caliente: se dispara cada vez que alguien
+// mueve el mapa e iba directa a la base de datos. Es lo primero que se
+// atascará al crecer, así que la cacheamos.
+//
+// Dos decisiones que la hacen realmente útil:
+//
+//   · CUADRÍCULA. Si la clave fuese el viewport exacto, cada pixel de
+//     desplazamiento generaría una clave distinta y el caché no acertaría
+//     jamás. Redondeamos la caja hacia fuera a múltiplos de VIEWPORT_TILE
+//     celdas: los encuadres parecidos caen en la misma casilla y comparten
+//     resultado.
+//
+//   · SIN "is_mine". La consulta marcaba qué celdas son tuyas, lo que haría
+//     el caché privado de cada usuario y por tanto casi inservible. Ahora
+//     guardamos los dueños en crudo —iguales para todos— y el "es mía" se
+//     calcula al responder. Así un barrio se consulta una vez y sirve a
+//     todos los que lo miren.
+//
+// En memoria del proceso, no en Redis: con una sola réplica en Railway es más
+// rápido (sin salto de red) y no añade otra pieza que pueda fallar. Si algún
+// día hay varias réplicas, cada una tendrá su copia — sigue funcionando, solo
+// que con menos aciertos, y ahí sí compensaría Redis.
+const VIEWPORT_TILE = 128;              // celdas por lado (≈1,3 km)
+const VIEWPORT_TTL_MS = 30_000;
+const VIEWPORT_CACHE_MAX = 300;
+const viewportCache = new Map<string, { rows: any[]; expires: number }>();
+
 app.get('/cells/viewport', { preHandler: requireAuth }, async (req: any, reply) => {
   const { north, south, east, west } = req.query as any;
   const n = parseFloat(north), s = parseFloat(south);
@@ -2035,20 +2209,63 @@ app.get('/cells/viewport', { preHandler: requireAuth }, async (req: any, reply) 
   const swCell = coordToCell(s, w);
   const neCell = coordToCell(n, e);
 
-  // The PK on (cell_x, cell_y) supports the range scan. LIMIT prevents catastrophe
-  // when the user zooms way out — clients should detect that and skip the call.
-  const { rows } = await db.query(
-    `SELECT c.cell_x, c.cell_y, c.owner_id, c.claimed_at,
-            u.display_name AS owner_name, u.war_cry AS owner_war_cry,
-            (c.owner_id = $1) AS is_mine
-     FROM cells c
-     JOIN users u ON u.id = c.owner_id
-     WHERE c.cell_x BETWEEN $2 AND $3 AND c.cell_y BETWEEN $4 AND $5
-     LIMIT 5000`,
-    [req.userId, swCell.x, neCell.x, swCell.y, neCell.y]
-  );
-  return reply.send({ cells: rows });
+  // Redondeo hacia fuera: nunca devolvemos menos de lo pedido.
+  const x0 = Math.floor(swCell.x / VIEWPORT_TILE) * VIEWPORT_TILE;
+  const x1 = Math.ceil((neCell.x + 1) / VIEWPORT_TILE) * VIEWPORT_TILE;
+  const y0 = Math.floor(swCell.y / VIEWPORT_TILE) * VIEWPORT_TILE;
+  const y1 = Math.ceil((neCell.y + 1) / VIEWPORT_TILE) * VIEWPORT_TILE;
+  const cacheKey = `${x0}:${x1}:${y0}:${y1}`;
+
+  let rows: any[];
+  const hit = viewportCache.get(cacheKey);
+  if (hit && hit.expires > Date.now()) {
+    rows = hit.rows;
+  } else {
+    // The PK on (cell_x, cell_y) supports the range scan. LIMIT prevents catastrophe
+    // when the user zooms way out — clients should detect that and skip the call.
+    const q = await db.query(
+      `SELECT c.cell_x, c.cell_y, c.owner_id, c.claimed_at,
+              u.display_name AS owner_name, u.war_cry AS owner_war_cry
+       FROM cells c
+       JOIN users u ON u.id = c.owner_id
+       WHERE c.cell_x BETWEEN $1 AND $2 AND c.cell_y BETWEEN $3 AND $4
+       LIMIT 5000`,
+      [x0, x1, y0, y1]
+    );
+    rows = q.rows;
+    if (viewportCache.size >= VIEWPORT_CACHE_MAX) {
+      const now = Date.now();
+      for (const [k, v] of viewportCache) if (v.expires <= now) viewportCache.delete(k);
+      if (viewportCache.size >= VIEWPORT_CACHE_MAX) {
+        const oldest = viewportCache.keys().next().value;
+        if (oldest !== undefined) viewportCache.delete(oldest);
+      }
+    }
+    viewportCache.set(cacheKey, { rows, expires: Date.now() + VIEWPORT_TTL_MS });
+  }
+
+  // "Es mía" se calcula aquí, no en SQL: así el caché sirve a todos.
+  return reply.send({
+    cells: rows.map(r => ({ ...r, is_mine: r.owner_id === req.userId })),
+  });
 });
+
+/** Invalida el caché del mapa alrededor de unas celdas recién conquistadas.
+ *  Sin esto, quien acabara de robar territorio seguiría viéndolo del dueño
+ *  anterior hasta 30 segundos, que en un juego de robos se nota. */
+function invalidateViewportCache(cells: { x: number; y: number }[]) {
+  if (cells.length === 0) return;
+  const tiles = new Set<string>();
+  for (const c of cells) {
+    tiles.add(`${Math.floor(c.x / VIEWPORT_TILE)}:${Math.floor(c.y / VIEWPORT_TILE)}`);
+  }
+  for (const key of [...viewportCache.keys()]) {
+    const [x0, , y0] = key.split(':').map(Number);
+    if (tiles.has(`${Math.floor(x0 / VIEWPORT_TILE)}:${Math.floor(y0 / VIEWPORT_TILE)}`)) {
+      viewportCache.delete(key);
+    }
+  }
+}
 
 // ── Taunts (emote chat) ──────────────────────────────────────────────────────
 
@@ -2781,6 +2998,7 @@ async function importStravaActivity(userId: string, activityId: number, accessTo
          SET owner_id = EXCLUDED.owner_id, run_id = EXCLUDED.run_id, claimed_at = NOW()`,
         [xs, ys, userId, runId]
       );
+      invalidateViewportCache(xs.map((x: number, i: number) => ({ x, y: ys[i] })));
 
       // Robos: decrement victim total_cells + push notification
       const thiefName = (await client.query('SELECT display_name FROM users WHERE id = $1', [userId])).rows[0]?.display_name ?? 'Alguien';

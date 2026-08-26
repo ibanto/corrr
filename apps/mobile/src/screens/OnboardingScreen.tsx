@@ -80,9 +80,10 @@ export default function OnboardingScreen({ onAuthenticated, pendingStravaSignup,
   const [showPassword, setShowPassword] = useState(false);
   const [username, setUsername] = useState('');
   const [city, setCity] = useState('');
-  // Año de nacimiento: obligatorio al registrarse. Solo sirve para comprobar
-  // la edad mínima legal (14 años en España); no se muestra a otros usuarios.
-  const [birthYear, setBirthYear] = useState('');
+  // Declaración de edad mínima: obligatoria al registrarse (14 años, edad de
+  // consentimiento digital en España). Booleano y no fecha de nacimiento, por
+  // minimización de datos.
+  const [ageConfirmed, setAgeConfirmed] = useState(false);
   const [loading, setLoading] = useState(false);
   const [usernameStatus, setUsernameStatus] = useState<'idle' | 'checking' | 'available' | 'taken' | 'invalid'>('idle');
   const [usernameMsg, setUsernameMsg] = useState('');
@@ -176,20 +177,13 @@ export default function OnboardingScreen({ onAuthenticated, pendingStravaSignup,
         onAuthenticated(res.accessToken, res.user);
       } else {
         if (!username) { Alert.alert('Falta el nombre de usuario'); setLoading(false); return; }
-        const year = parseInt(birthYear, 10);
-        const currentYear = new Date().getFullYear();
-        if (!Number.isInteger(year) || year < 1900 || year > currentYear) {
-          Alert.alert('Año de nacimiento', 'Escribe tu año de nacimiento con 4 cifras.');
+        // Se comprueba también aquí para avisar en el momento, pero quien
+        // manda es el backend: esto es cortesía, no seguridad.
+        if (!ageConfirmed) {
+          Alert.alert('Edad mínima', 'Tienes que confirmar que tienes 14 años o más para registrarte.');
           setLoading(false); return;
         }
-        // Se valida también aquí para dar un mensaje claro en el momento, pero
-        // quien manda es el backend: esta comprobación es de cortesía, no de
-        // seguridad (cualquiera puede saltarse el cliente).
-        if (currentYear - year < 14) {
-          Alert.alert('Edad mínima', 'Tienes que tener al menos 14 años para usar CORRR.');
-          setLoading(false); return;
-        }
-        const res = await api.register(username, email, password, year, city || undefined);
+        const res = await api.register(username, email, password, true, city || undefined);
         if (res.pendingVerification) {
           setResendDone(false);
           setMode('verify');
@@ -550,23 +544,23 @@ export default function OnboardingScreen({ onAuthenticated, pendingStravaSignup,
                 />
               </View>
               {/* Obligatorio por ley: 14 años es la edad de consentimiento
-                  digital en España. Se explica para qué es, que si no parece
-                  que pedimos datos porque sí. */}
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Año de nacimiento</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="1990"
-                  placeholderTextColor={colors.textMuted}
-                  value={birthYear}
-                  onChangeText={t => setBirthYear(t.replace(/[^0-9]/g, '').slice(0, 4))}
-                  keyboardType="number-pad"
-                  maxLength={4}
-                />
-                <Text style={styles.inputHint}>
-                  Solo para comprobar que tienes 14 años o más. No se muestra a nadie.
+                  digital en España. Casilla y no fecha de nacimiento, porque
+                  para comprobar una edad mínima basta la declaración y el
+                  RGPD pide recoger lo mínimo imprescindible. */}
+              <TouchableOpacity
+                style={styles.ageRow}
+                onPress={() => setAgeConfirmed(v => !v)}
+                activeOpacity={0.7}
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: ageConfirmed }}
+              >
+                <View style={[styles.checkbox, ageConfirmed && styles.checkboxOn]}>
+                  {ageConfirmed && <Ionicons name="checkmark" size={16} color="#000" />}
+                </View>
+                <Text style={styles.ageText}>
+                  Confirmo que tengo <Text style={styles.ageStrong}>14 años o más</Text>
                 </Text>
-              </View>
+              </TouchableOpacity>
             </>
           )}
           <View style={styles.inputGroup}>
@@ -779,7 +773,15 @@ const styles = StyleSheet.create({
   form: { gap: spacing.md },
   inputGroup: { gap: spacing.xs },
   inputLabel: { fontSize: 13, fontWeight: '600', color: colors.textSecondary, textTransform: 'uppercase', letterSpacing: 0.5 },
-  inputHint: { fontSize: 12, color: colors.textMuted, marginTop: 6, lineHeight: 16 },
+  ageRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingVertical: spacing.xs },
+  checkbox: {
+    width: 24, height: 24, borderRadius: radius.sm,
+    borderWidth: 2, borderColor: colors.border,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  checkboxOn: { backgroundColor: colors.orange, borderColor: colors.orange },
+  ageText: { flex: 1, fontSize: 14, color: colors.textSecondary, lineHeight: 19 },
+  ageStrong: { color: colors.textPrimary, fontWeight: '700' },
   input: {
     backgroundColor: colors.bgCard, borderWidth: 1, borderColor: colors.border,
     borderRadius: radius.md, paddingHorizontal: spacing.md, paddingVertical: 14,

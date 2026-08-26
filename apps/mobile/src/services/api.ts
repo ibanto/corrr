@@ -282,12 +282,14 @@ class ApiService {
     return { accessToken: res.accessToken, user: res.user };
   }
 
-  /** birthYear es OBLIGATORIO: el backend rechaza el registro sin él y a los
-   *  menores de 14 (edad de consentimiento digital en España). */
-  async register(username: string, email: string, password: string, birthYear: number, city?: string): Promise<{ accessToken?: string; pendingVerification?: boolean; user?: { id: string; username: string; email: string; city?: string } }> {
+  /** ageConfirmed es OBLIGATORIO: el backend rechaza el registro si no se
+   *  declara tener al menos 14 años (edad de consentimiento digital en
+   *  España). Se manda un booleano, no la fecha de nacimiento: para saber si
+   *  alguien supera una edad basta un sí, y el RGPD pide recoger lo mínimo. */
+  async register(username: string, email: string, password: string, ageConfirmed: boolean, city?: string): Promise<{ accessToken?: string; pendingVerification?: boolean; user?: { id: string; username: string; email: string; city?: string } }> {
     const res = await this.request<any>('/auth/register', {
       method: 'POST',
-      body: JSON.stringify({ email, password, displayName: username, city, birthYear }),
+      body: JSON.stringify({ email, password, displayName: username, city, ageConfirmed }),
     });
     return res;
   }
