@@ -80,6 +80,9 @@ export default function OnboardingScreen({ onAuthenticated, pendingStravaSignup,
   const [showPassword, setShowPassword] = useState(false);
   const [username, setUsername] = useState('');
   const [city, setCity] = useState('');
+  // Año de nacimiento: obligatorio al registrarse. Solo sirve para comprobar
+  // la edad mínima legal (14 años en España); no se muestra a otros usuarios.
+  const [birthYear, setBirthYear] = useState('');
   const [loading, setLoading] = useState(false);
   const [usernameStatus, setUsernameStatus] = useState<'idle' | 'checking' | 'available' | 'taken' | 'invalid'>('idle');
   const [usernameMsg, setUsernameMsg] = useState('');
@@ -173,7 +176,20 @@ export default function OnboardingScreen({ onAuthenticated, pendingStravaSignup,
         onAuthenticated(res.accessToken, res.user);
       } else {
         if (!username) { Alert.alert('Falta el nombre de usuario'); setLoading(false); return; }
-        const res = await api.register(username, email, password, city || undefined);
+        const year = parseInt(birthYear, 10);
+        const currentYear = new Date().getFullYear();
+        if (!Number.isInteger(year) || year < 1900 || year > currentYear) {
+          Alert.alert('Año de nacimiento', 'Escribe tu año de nacimiento con 4 cifras.');
+          setLoading(false); return;
+        }
+        // Se valida también aquí para dar un mensaje claro en el momento, pero
+        // quien manda es el backend: esta comprobación es de cortesía, no de
+        // seguridad (cualquiera puede saltarse el cliente).
+        if (currentYear - year < 14) {
+          Alert.alert('Edad mínima', 'Tienes que tener al menos 14 años para usar CORRR.');
+          setLoading(false); return;
+        }
+        const res = await api.register(username, email, password, year, city || undefined);
         if (res.pendingVerification) {
           setResendDone(false);
           setMode('verify');
@@ -533,6 +549,24 @@ export default function OnboardingScreen({ onAuthenticated, pendingStravaSignup,
                   autoCapitalize="words"
                 />
               </View>
+              {/* Obligatorio por ley: 14 años es la edad de consentimiento
+                  digital en España. Se explica para qué es, que si no parece
+                  que pedimos datos porque sí. */}
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>Año de nacimiento</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="1990"
+                  placeholderTextColor={colors.textMuted}
+                  value={birthYear}
+                  onChangeText={t => setBirthYear(t.replace(/[^0-9]/g, '').slice(0, 4))}
+                  keyboardType="number-pad"
+                  maxLength={4}
+                />
+                <Text style={styles.inputHint}>
+                  Solo para comprobar que tienes 14 años o más. No se muestra a nadie.
+                </Text>
+              </View>
             </>
           )}
           <View style={styles.inputGroup}>
@@ -745,6 +779,7 @@ const styles = StyleSheet.create({
   form: { gap: spacing.md },
   inputGroup: { gap: spacing.xs },
   inputLabel: { fontSize: 13, fontWeight: '600', color: colors.textSecondary, textTransform: 'uppercase', letterSpacing: 0.5 },
+  inputHint: { fontSize: 12, color: colors.textMuted, marginTop: 6, lineHeight: 16 },
   input: {
     backgroundColor: colors.bgCard, borderWidth: 1, borderColor: colors.border,
     borderRadius: radius.md, paddingHorizontal: spacing.md, paddingVertical: 14,

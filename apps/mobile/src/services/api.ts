@@ -282,10 +282,12 @@ class ApiService {
     return { accessToken: res.accessToken, user: res.user };
   }
 
-  async register(username: string, email: string, password: string, city?: string): Promise<{ accessToken?: string; pendingVerification?: boolean; user?: { id: string; username: string; email: string; city?: string } }> {
+  /** birthYear es OBLIGATORIO: el backend rechaza el registro sin él y a los
+   *  menores de 14 (edad de consentimiento digital en España). */
+  async register(username: string, email: string, password: string, birthYear: number, city?: string): Promise<{ accessToken?: string; pendingVerification?: boolean; user?: { id: string; username: string; email: string; city?: string } }> {
     const res = await this.request<any>('/auth/register', {
       method: 'POST',
-      body: JSON.stringify({ email, password, displayName: username, city }),
+      body: JSON.stringify({ email, password, displayName: username, city, birthYear }),
     });
     return res;
   }

@@ -57,6 +57,12 @@ const SECRET = new TextEncoder().encode(process.env.JWT_ACCESS_SECRET);
 // app (vc52+) maneja el 401 al caducar mandando a login, así que es indoloro.
 // (Futuro: refresh tokens de verdad si hace falta acortar el access token.)
 const SESSION_TOKEN_TTL = '90d';
+
+/** Edad mínima para registrarse. 14 es la edad de consentimiento digital en
+ *  España (LOPDGDD art. 7). El RGPD permite fijarla entre 13 y 16 y cada
+ *  estado elige; si algún día se abre a otros países habrá que revisarlo,
+ *  porque en varios son 16. */
+const MIN_AGE_YEARS = 14;
 const resend = new Resend(process.env.RESEND_API_KEY || '');
 
 app.register(cors, { origin: '*' });
@@ -343,7 +349,7 @@ app.post('/auth/register', {
   // 5 registros/hora por IP — evita spam de signups (que mandan email).
   config: { rateLimit: { max: 5, timeWindow: '1 hour' } },
 }, async (req: any, reply) => {
-  const { email, password, displayName, city } = req.body ?? {};
+  const { email, password, displayName, city, birthYear } = req.body ?? {};
   // Validación de inputs (defense in depth — el frontend también valida).
   // Antes no había checks → email vacío, password '' o displayName null
   // podían crear cuentas inválidas.
@@ -356,6 +362,28 @@ app.post('/auth/register', {
   if (typeof displayName !== 'string' || displayName.trim().length < 2 || displayName.length > 32) {
     return reply.status(400).send({ error: 'El nombre de usuario debe tener entre 2 y 32 caracteres' });
   }
+  // Edad mínima. En España la edad de consentimiento digital son 14 años
+  // (LOPDGDD art. 7, que concreta el art. 8 del RGPD): por debajo hace falta
+  // consentimiento de los padres, que no tenemos forma de recabar.
+  //
+  // Hasta ahora la política de privacidad prometía que no se admiten menores
+  // y que "si detectamos que un menor se ha registrado, eliminaremos su
+  // cuenta", pero NADA lo comprobaba — prometer algo que no se cumple es peor
+  // que no prometerlo, porque ante una reclamación el propio documento te
+  // señala. Esto es lo que hace cierta esa promesa.
+  //
+  // Es una declaración del usuario, no una verificación real (no las hay sin
+  // pedir documentación, que sería desproporcionado). Basta para cumplir.
+  const currentYear = new Date().getFullYear();
+  if (!Number.isInteger(birthYear) || birthYear < 1900 || birthYear > currentYear) {
+    return reply.status(400).send({ error: 'Indica tu año de nacimiento' });
+  }
+  if (currentYear - birthYear < MIN_AGE_YEARS) {
+    return reply.status(403).send({
+      error: `Tienes que tener al menos ${MIN_AGE_YEARS} años para usar CORRR`,
+      underage: true,
+    });
+  }
   try {
     const ex = await db.query('SELECT id FROM users WHERE email = $1', [email]);
     if (ex.rows.length) return reply.status(400).send({ error: 'Email ya registrado' });
@@ -364,8 +392,8 @@ app.post('/auth/register', {
     if (nameCheck.rows.length) return reply.status(400).send({ error: 'Ese nombre de usuario ya está en uso' });
     const ph = await hash(password);
     const { rows } = await db.query(
-      'INSERT INTO users (email, password_hash, display_name, city) VALUES ($1,$2,$3,$4) RETURNING id',
-      [email, ph, displayName, city]
+      'INSERT INTO users (email, password_hash, display_name, city, birth_year) VALUES ($1,$2,$3,$4,$5) RETURNING id',
+      [email, ph, displayName, city, birthYear]
     );
     const uid = rows[0].id;
     await db.query('INSERT INTO user_stats (user_id) VALUES ($1)', [uid]);
@@ -631,6 +659,54 @@ app.get('/auth/verify-email', async (req: any, reply) => {
 });
 
 // ── Cuenta ───────────────────────────────────────────────────────────────────
+
+/** GET /users/me/export — todos los datos del usuario en JSON.
+ *
+ *  Derechos de acceso y portabilidad (RGPD art. 15 y 20). La política de
+ *  privacidad ya los ofrece por email con respuesta en 30 días, que cumple;
+ *  esto lo hace instantáneo y deja de requerir que alguien entre a la base de
+ *  datos a mano por cada solicitud. Con pocos usuarios da igual; en cuanto
+ *  crezca, no.
+ *
+ *  Devuelve JSON plano —"formato estructurado, de uso común y lectura
+ *  mecánica", que es lo que exige el art. 20— y NO incluye password_hash ni
+ *  los tokens de Strava: son credenciales, no datos personales del usuario, y
+ *  exponerlos sería un problema de seguridad, no una mejora de transparencia. */
+app.get('/users/me/export', {
+  preHandler: requireAuth,
+  config: { rateLimit: { max: 5, timeWindow: '1 hour' } },
+}, async (req: any, reply) => {
+  const uid = req.userId;
+  const [perfil, stats, carreras, celdas, mensajes, amigos, logros] = await Promise.all([
+    db.query(`SELECT id, email, display_name, city, first_name, surname, war_cry,
+                     shoe_brand, shoe_brand_other, birth_year, gender, usual_distance,
+                     weekly_frequency, email_verified, strava_athlete_id, created_at
+              FROM users WHERE id = $1`, [uid]),
+    db.query('SELECT * FROM user_stats WHERE user_id = $1', [uid]),
+    db.query(`SELECT id, distance_km, duration_secs, points, zones_count, created_at
+              FROM runs WHERE user_id = $1 ORDER BY created_at`, [uid]),
+    db.query(`SELECT cell_x, cell_y, run_id, claimed_at
+              FROM cells WHERE owner_id = $1 ORDER BY claimed_at`, [uid]),
+    db.query(`SELECT id, mode, taunt_id, from_user_id, to_user_id, run_id, created_at, read_at
+              FROM taunts WHERE from_user_id = $1 OR to_user_id = $1 ORDER BY created_at`, [uid]),
+    db.query(`SELECT id, sender_id, receiver_id, status, created_at
+              FROM friendships WHERE sender_id = $1 OR receiver_id = $1`, [uid]),
+    db.query('SELECT * FROM user_achievements WHERE user_id = $1', [uid]).catch(() => ({ rows: [] })),
+  ]);
+
+  reply.header('Content-Disposition', `attachment; filename="corrr-mis-datos.json"`);
+  return reply.send({
+    exportadoEl: new Date().toISOString(),
+    aviso: 'Copia de todos los datos que CORRR guarda sobre tu cuenta. No incluye tu contraseña (guardada cifrada y no recuperable) ni los tokens de Strava (credenciales de acceso).',
+    perfil: perfil.rows[0] ?? null,
+    estadisticas: stats.rows[0] ?? null,
+    carreras: carreras.rows,
+    celdasConquistadas: celdas.rows,
+    mensajes: mensajes.rows,
+    amistades: amigos.rows,
+    logros: logros.rows,
+  });
+});
 
 app.delete('/users/me', { preHandler: requireAuth }, async (req: any, reply) => {
   const userId = req.userId;
