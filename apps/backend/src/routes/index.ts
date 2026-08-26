@@ -1425,7 +1425,131 @@ async function checkAchievements(client: any, userId: string) {
 
 // ── Runs ──────────────────────────────────────────────────────────────────────
 
-app.post('/runs', { preHandler: requireAuth }, async (req: any, reply) => {
+/** Coordenada de celda máxima admisible. El planeta entero cabe de sobra:
+ *  ±180° / CELL_LNG_DEG ≈ 1,53M. Fuera de esto son coords corruptas o
+ *  fabricadas, y meterlas en la BD ensucia el grid global. */
+const MAX_CELL_COORD = 1_600_000;
+
+/** Holgura del tope de SUPERFICIE. Es un máximo matemático que una carrera
+ *  real nunca alcanza, así que un 15% cubre el ruido del GPS de sobra. */
+const RUN_AREA_TOLERANCE = 1.15;
+
+/** Holgura del tope de EXTENSIÓN, mucho mayor. Contrastado con carreras
+ *  reales: el GPS dispersa las celdas bastante más de lo que sugiere la
+ *  distancia contabilizada (saltos de señal, distancia infracontada por el
+ *  Doppler), y con un 15% se rechazaban carreras legítimas. El trabajo duro lo
+ *  hace el tope de superficie, que sí es exacto; este solo caza dispersiones
+ *  descaradas del tipo "celdas por toda la ciudad". */
+const RUN_SPAN_TOLERANCE = 2.0;
+const RUN_SPAN_FLOOR_M = 300;
+
+/** Techo absoluto de celdas por carrera, independiente de lo que se declare.
+ *  El tope isoperimétrico se dispara con distancias grandes (un supuesto
+ *  ultramaratón de 100 km lo dejaría en millones), así que sin este techo
+ *  bastaba con declarar una carrera larga para saltárselo. 25.000 celdas son
+ *  2,5 km² — veinte veces la mayor conquista real registrada. */
+const MAX_CELLS_PER_RUN = 25_000;
+
+/** Velocidad máxima sostenida creíble. El récord de maratón ronda los 21 km/h;
+ *  30 deja margen para ciclistas ocasionales y errores del GPS sin permitir
+ *  "100 km en diez minutos". */
+const MAX_AVG_SPEED_KMH = 30;
+
+/** ¿Son las celdas reclamadas compatibles con la carrera declarada?
+ *
+ *  Sin esto, /runs se limitaba a comprobar que la distancia fuese < 100 km y
+ *  que el array no pasara de 50.000 celdas — pero NO que las celdas tuvieran
+ *  nada que ver con la carrera. Cualquiera con una cuenta podía mandar una
+ *  petición con 50.000 celdas de toda la ciudad y quedarse con el territorio
+ *  de todos los usuarios de una sentada, porque el UPSERT de más abajo
+ *  reasigna owner_id sin preguntar.
+ *
+ *  Dos límites, ambos derivados de la física del recorrido:
+ *
+ *  1. EXTENSIÓN. Un recorrido de D metros no puede separarse más de D metros
+ *     de su punto de partida (el caso extremo es la línea recta), así que la
+ *     diagonal de la caja que contiene las celdas no puede superar D.
+ *
+ *  2. SUPERFICIE. Por la desigualdad isoperimétrica, la mayor área que puede
+ *     encerrar una curva cerrada de perímetro P es la del círculo: P²/4π. Como
+ *     el flood-fill solo rellena lo que el corredor encierra, y su perímetro
+ *     no puede exceder la distancia recorrida, el área total reclamable está
+ *     acotada. Le sumamos el propio rastro (D/10 celdas) porque una carrera en
+ *     línea recta pinta celdas sin encerrar nada.
+ *
+ *  Devuelve null si todo correcto, o el motivo del rechazo. */
+function validateClaimedCellsGeometry(
+  cells: { x: number; y: number }[],
+  distanceKm: number,
+  durationSecs: number,
+): string | null {
+  if (cells.length === 0) return null;
+
+  if (cells.length > MAX_CELLS_PER_RUN) {
+    return 'demasiadas celdas para una sola carrera';
+  }
+
+  // Velocidad media creíble. Sin esto bastaba con declarar una distancia
+  // enorme para ensanchar todos los límites de abajo.
+  if (durationSecs > 0) {
+    const speedKmh = distanceKm / (durationSecs / 3600);
+    if (speedKmh > MAX_AVG_SPEED_KMH) {
+      return 'la velocidad media declarada no es creíble';
+    }
+  }
+
+  for (const c of cells) {
+    if (!Number.isInteger(c?.x) || !Number.isInteger(c?.y)) {
+      return 'claimedCells contiene coordenadas no enteras';
+    }
+    if (Math.abs(c.x) > MAX_CELL_COORD || Math.abs(c.y) > MAX_CELL_COORD) {
+      return 'claimedCells contiene coordenadas fuera del planeta';
+    }
+  }
+
+  const distanceM = distanceKm * 1000;
+
+  // 1. Extensión: la caja envolvente no puede ser mayor que el recorrido.
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const c of cells) {
+    if (c.x < minX) minX = c.x; if (c.x > maxX) maxX = c.x;
+    if (c.y < minY) minY = c.y; if (c.y > maxY) maxY = c.y;
+  }
+  const widthM  = (maxX - minX + 1) * CELL_SIZE_M;
+  const heightM = (maxY - minY + 1) * CELL_SIZE_M;
+  const diagonalM = Math.hypot(widthM, heightM);
+  // Suelo: en carreras muy cortas el redondeo a celdas domina sobre la
+  // distancia y un corredor legítimo daría falso positivo.
+  const maxSpanM = Math.max(distanceM * RUN_SPAN_TOLERANCE, RUN_SPAN_FLOOR_M);
+  if (diagonalM > maxSpanM) {
+    return 'las celdas cubren un área mayor que la distancia recorrida';
+  }
+
+  // 2. Superficie: tope isoperimétrico + el propio rastro.
+  const maxEnclosedCells = (distanceM * distanceM) / (4 * Math.PI * CELL_SIZE_M * CELL_SIZE_M);
+  const trailCells = distanceM / CELL_SIZE_M;
+  const maxCells = Math.ceil((maxEnclosedCells + trailCells) * RUN_AREA_TOLERANCE) + 20;
+  if (cells.length > maxCells) {
+    return 'demasiadas celdas para la distancia recorrida';
+  }
+
+  return null;
+}
+
+app.post('/runs', {
+  preHandler: requireAuth,
+  // Nadie corre 20 veces en una hora. Sin este límite, el endpoint solo tenía
+  // el global de 500/min, suficiente para automatizar la conquista del mapa.
+  // Va por USUARIO, no por IP: el endpoint está autenticado, y con la clave
+  // por IP bastaría con cambiar de red (o salir por CGNAT) para esquivarlo.
+  config: {
+    rateLimit: {
+      max: 20,
+      timeWindow: '1 hour',
+      keyGenerator: (req: any) => req.userId ?? req.ip,
+    },
+  },
+}, async (req: any, reply) => {
   // `points` (legacy) is the client's estimate. We recompute authoritatively
   // server-side below using loopBonus + cellPoints + kmPoints * multipliers.
   const { distanceKm, durationSecs, points: clientPointsEstimate, loopBonus, loopClosed, zonesCount, zones, claimedCells } = req.body ?? {};
@@ -1450,6 +1574,20 @@ app.post('/runs', { preHandler: requireAuth }, async (req: any, reply) => {
   }
   if (zones != null && (!Array.isArray(zones) || zones.length > 200)) {
     return reply.status(400).send({ error: 'zones inválido o demasiado grande' });
+  }
+
+  // Coherencia geométrica: las celdas tienen que ser compatibles con la
+  // carrera declarada. Ver validateClaimedCellsGeometry — es lo que impide
+  // reclamar territorio arbitrario con una petición fabricada.
+  if (Array.isArray(claimedCells) && claimedCells.length > 0) {
+    const geometryError = validateClaimedCellsGeometry(claimedCells, distanceKm, durationSecs);
+    if (geometryError) {
+      req.log.warn(
+        { userId: req.userId, cells: claimedCells.length, distanceKm, reason: geometryError },
+        '[anti-cheat] carrera rechazada por geometría incoherente',
+      );
+      return reply.status(400).send({ error: geometryError });
+    }
   }
 
   const userId = req.userId;
