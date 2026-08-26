@@ -81,6 +81,16 @@ def enableMinifyInReleaseBuilds = (findProperty('android.enableMinifyInReleaseBu
  */
 def jscFlavor = 'io.github.react-native-community:jsc-android:2026004.+'
 
+def keystoreProps = new Properties()
+def keystorePropsFile = rootProject.file('keystore.properties')
+if (keystorePropsFile.exists()) {
+    keystorePropsFile.withInputStream { keystoreProps.load(it) }
+} else if (gradle.startParameter.taskNames.any { it.toLowerCase().contains('release') }) {
+    throw new GradleException(
+        "Falta android/keystore.properties, necesario para firmar la release.\n" +
+        "Copia keystore.properties.example a keystore.properties y pon las claves reales.")
+}
+
 android {
     ndkVersion rootProject.ext.ndkVersion
 
@@ -105,10 +115,19 @@ android {
             keyPassword 'android'
         }
         release {
-            storeFile file('corrr-release.keystore')
-            storePassword 'corrr2026'
-            keyAlias 'corrr'
-            keyPassword 'corrr2026'
+            // Las credenciales salen de keystore.properties, que NO está en
+            // git. Antes iban escritas aquí, y este archivo sí se sube: la
+            // contraseña quedó publicada en el historial de un repositorio
+            // público. El keystore en sí nunca se subió — que es lo único
+            // que evitó que cualquiera pudiera firmar como CORRR.
+            //
+            // Si falta el archivo, el build de release falla con un mensaje
+            // claro en vez de generar un paquete sin firmar que Play Console
+            // rechazaría sin explicar por qué.
+            storeFile file(keystoreProps.getProperty('storeFile'))
+            storePassword keystoreProps.getProperty('storePassword')
+            keyAlias keystoreProps.getProperty('keyAlias')
+            keyPassword keystoreProps.getProperty('keyPassword')
         }
     }
     buildTypes {

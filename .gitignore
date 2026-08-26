@@ -5,3 +5,11 @@ dist/
 *.p8
 GoogleService-Info.plist
 google-services.json
+
+# Credenciales de firma de Android. El archivo real nunca se sube: quien tenga
+# el keystore Y su contraseña puede publicar actualizaciones que Android
+# aceptará como tuyas. La plantilla .example sí se sube.
+apps/mobile/android/keystore.properties
+*.keystore
+*.jks
+!apps/mobile/android/app/debug.keystore
