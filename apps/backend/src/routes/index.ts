@@ -1063,8 +1063,8 @@ if (process.env.ADMIN_KEY) {
  *  Antes también se aceptaba por query string (`?key=…`), que era cómodo para
  *  abrir el panel desde el navegador pero dejaba la clave escrita en todas
  *  partes: los registros de Railway (el logger de Fastify guarda la ruta
- *  completa), el historial del navegador y cualquier proxy intermedio. Y
- *  detrás de esa clave está /admin/wipe-users, que vacía la base entera.
+ *  completa), el historial del navegador y cualquier proxy intermedio. Detrás
+ *  de esa clave están los datos de todos los usuarios.
  *
  *  El panel HTML sigue siendo accesible: pide la clave una vez y la guarda en
  *  el navegador (sessionStorage), mandándola por cabecera en cada petición. */
@@ -1277,38 +1277,16 @@ ${lastRuns.rows.length === 0 ? '<tr><td colspan="5" style="color:#666">Sin carre
   return reply.type('text/html; charset=utf-8').send(html);
 });
 
-/** DELETE /admin/wipe-users — vacía TODAS las tablas con datos de usuarios.
- *  Operación destructiva, solo accesible con la admin key. Mantiene intactas
- *  las tablas de definiciones (challenges, etc.) que son configuración. */
-app.delete('/admin/wipe-users', { preHandler: requireAdmin }, async (req: any, reply) => {
-  const { confirm } = req.query as any;
-  if (confirm !== 'YES_WIPE_EVERYTHING') {
-    return reply.status(400).send({
-      error: 'Falta confirmación. Añade ?confirm=YES_WIPE_EVERYTHING a la URL.',
-    });
-  }
-  const client = await db.connect();
-  try {
-    await client.query('BEGIN');
-    // TRUNCATE con CASCADE recorre las FKs y vacía todo de golpe. RESTART
-    // IDENTITY reinicia secuencias autoincrementales (no usamos pero por si).
-    await client.query(`
-      TRUNCATE TABLE
-        users, user_stats, runs, zones, cells, taunts, friendships
-      RESTART IDENTITY CASCADE
-    `);
-    // El marker de migración v1.8 se mantiene — no queremos que se borre la
-    // tabla cells (que TRUNCATE no borra schema, solo filas) y la migración
-    // ya está aplicada.
-    await client.query('COMMIT');
-    return reply.send({ ok: true, message: 'Wipe completo. Todos los usuarios y datos relacionados eliminados.' });
-  } catch (err) {
-    await client.query('ROLLBACK');
-    return reply.status(500).send({ error: String(err) });
-  } finally {
-    client.release();
-  }
-});
+// El endpoint /admin/wipe-users vivía aquí: vaciaba de golpe usuarios,
+// carreras, celdas, taunts y amistades. Se hizo para un borrado puntual
+// durante el desarrollo y se quedó, pero con la app ya publicada y gente
+// real dentro era una mina: una sola petición, y todo fuera. La barrera
+// del ?confirm=... no protege de lo que de verdad pasa (una clave
+// filtrada, un copia-pega), solo de un despiste.
+//
+// No se sustituye por nada. Si algún día hay que vaciar la base de datos,
+// se hace desde Supabase: cuesta más y obliga a pensarlo, que es
+// justamente lo que quieres antes de un borrado irreversible.
 
 /** GET /admin/strava/subscriptions — lista las suscripciones webhook activas
  *  con Strava (solo puede haber 1 por app). Útil para diagnosticar. */
