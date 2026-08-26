@@ -231,6 +231,10 @@ async function initDB() {
   // de minimización). Nulo en las cuentas anteriores a esta comprobación.
   await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS age_confirmed_at TIMESTAMPTZ`).catch(() => {});
   await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS sessions_valid_from TIMESTAMPTZ`).catch(() => {});
+  // Motivo por el que una carrera quedó marcada como geométricamente inusual.
+  // Nulo en las normales. Se guarda en vez de rechazar la carrera: ver el
+  // bloque de anti-trampas en POST /runs.
+  await db.query(`ALTER TABLE runs ADD COLUMN IF NOT EXISTS flagged_reason TEXT`).catch(() => {});
 
   // Track stolen zones in user_stats
   await db.query(`ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS total_steals INT DEFAULT 0`).catch(() => {});
@@ -1800,14 +1804,42 @@ app.post('/runs', {
   // Coherencia geométrica: las celdas tienen que ser compatibles con la
   // carrera declarada. Ver validateClaimedCellsGeometry — es lo que impide
   // reclamar territorio arbitrario con una petición fabricada.
+  //
+  // NO se rechaza la carrera: se anota y se guarda igual. Esta comprobación
+  // rechazaba, y tiró carreras de corredoras reales — la carrera se perdía
+  // para siempre, el mapa del móvil quedaba diciendo una cosa y el servidor
+  // otra, y la persona se quedaba sin su esfuerzo y sin explicación.
+  //
+  // El error de los dos lados no cuesta lo mismo. Si acepto por error a un
+  // tramposo, gana unas celdas que puedo revertir en cuanto lo vea. Si
+  // rechazo por error a alguien que ha salido a correr, le borro su carrera
+  // y probablemente lo pierdo como usuario. Lo primero se arregla; lo
+  // segundo no. Así que ante la duda, se guarda.
+  //
+  // La señal anti-trampas no se pierde: queda registrada en flagged_reason y
+  // en el log con las cifras, para poder revisarla y calibrar el umbral con
+  // datos reales en vez de a ojo. Los topes duros de más arriba (distancia
+  // 0-100 km, máximo de celdas, velocidad media) sí siguen rechazando: esos
+  // son físicamente imposibles, no discutibles.
+  let flaggedReason: string | null = null;
   if (Array.isArray(claimedCells) && claimedCells.length > 0) {
-    const geometryError = validateClaimedCellsGeometry(claimedCells, distanceKm, durationSecs);
-    if (geometryError) {
+    flaggedReason = validateClaimedCellsGeometry(claimedCells, distanceKm, durationSecs);
+    if (flaggedReason) {
       req.log.warn(
-        { userId: req.userId, cells: claimedCells.length, distanceKm, reason: geometryError },
-        '[anti-cheat] carrera rechazada por geometría incoherente',
+        {
+          userId: req.userId,
+          cells: claimedCells.length,
+          distanceKm,
+          durationSecs,
+          reason: flaggedReason,
+          // Cifras para poder recalibrar sin adivinar.
+          maxCellsPermitidas: Math.ceil(
+            (((distanceKm * 1000) ** 2) / (4 * Math.PI * CELL_SIZE_M * CELL_SIZE_M)
+              + (distanceKm * 1000) / CELL_SIZE_M) * RUN_AREA_TOLERANCE,
+          ) + 20,
+        },
+        '[anti-cheat] carrera MARCADA (se guarda igual) por geometría inusual',
       );
-      return reply.status(400).send({ error: geometryError });
     }
   }
 
@@ -1821,8 +1853,9 @@ app.post('/runs', {
     await client.query('BEGIN');
 
     const { rows } = await client.query(
-      'INSERT INTO runs (user_id, distance_km, duration_secs, points, zones_count) VALUES ($1,$2,$3,$4,$5) RETURNING id',
-      [userId, distanceKm, durationSecs, clientPointsEstimate || 0, zonesCount]
+      `INSERT INTO runs (user_id, distance_km, duration_secs, points, zones_count, flagged_reason)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
+      [userId, distanceKm, durationSecs, clientPointsEstimate || 0, zonesCount, flaggedReason]
     );
     const runId = rows[0].id;
 
