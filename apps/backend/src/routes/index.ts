@@ -38,7 +38,31 @@ const STRAVA_CLIENT_SECRET = process.env.STRAVA_CLIENT_SECRET;
 const RAILWAY_URL = process.env.RAILWAY_PUBLIC_DOMAIN
   ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
   : (process.env.RAILWAY_URL ?? 'http://localhost:3000');
-const db = new Pool({ connectionString: process.env.DATABASE_URL });
+// El pool se creaba sin opciones, y eso tenía un fallo capaz de tumbar el
+// servidor entero. Estamos contra el *pooler* de Supabase, que cierra las
+// conexiones que llevan un rato sin usarse. Cuando eso pasa, el pool de `pg`
+// emite un evento 'error' sobre una conexión dormida; si nadie lo escucha,
+// Node lo trata como excepción no capturada y MATA el proceso. No es un
+// fallo de una petición: se cae el servicio para todos, en mitad de la noche
+// y sin que nadie esté haciendo nada.
+//
+// El manejador de abajo es lo que lo evita: registra el problema y deja que
+// el pool descarte esa conexión y abra otra, que es su comportamiento normal.
+//
+// Los tiempos límite acompañan: soltamos las conexiones ociosas nosotros
+// (30s) antes de que las cierre el pooler por su cuenta, y no dejamos que una
+// petición se quede colgada indefinidamente esperando conexión (10s) — mejor
+// un error claro que un usuario mirando una pantalla congelada.
+const db = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  max: 10,
+  idleTimeoutMillis: 30_000,
+  connectionTimeoutMillis: 10_000,
+});
+
+db.on('error', (err) => {
+  console.error('[DB] Error en conexión inactiva (se descarta y se reabre):', err.message);
+});
 // JWT_ACCESS_SECRET sí o sí debe existir: sin él, TextEncoder().encode(undefined)
 // produciría un secret literal "undefined" → cualquiera podría forjar tokens.
 // Si es corto pero existe, avisamos (warning, no fail) para no romper deploys
