@@ -3128,12 +3128,47 @@ const LATEST_APP_VERSION = process.env.LATEST_APP_VERSION ?? '1.11.1';
 const LATEST_APP_VC = parseInt(process.env.LATEST_APP_VC ?? '59', 10);
 const MIN_APP_VERSION = process.env.MIN_APP_VERSION ?? '1.0.0';
 
-app.get('/app/version', async (_req: any, reply) => {
+// iOS va por su cuenta: sube a App Store cuando Apple aprueba, no cuando
+// subimos a Play. Antes había UNA sola versión y UNA sola URL, las de
+// Android, y eso rompía a los usuarios de iPhone por partida doble: se les
+// anunciaba una versión que en su tienda no existe, y el botón "Actualizar"
+// les abría Google Play, que en un iPhone no lleva a ninguna parte.
+const LATEST_IOS_VERSION = process.env.LATEST_IOS_VERSION ?? '1.11.0';
+const LATEST_IOS_BUILD = parseInt(process.env.LATEST_IOS_BUILD ?? '3', 10);
+const ANDROID_UPDATE_URL = 'https://play.google.com/store/apps/details?id=app.corrr';
+// Sin publicar aún: en cuanto App Store Connect asigne el ID numérico, se
+// define IOS_UPDATE_URL en Railway como https://apps.apple.com/app/idXXXXXXXXX
+const IOS_UPDATE_URL = process.env.IOS_UPDATE_URL;
+
+/** Averigua desde qué plataforma se pregunta.
+ *
+ *  Lo ideal es que el cliente lo diga (?platform=ios), y las versiones nuevas
+ *  lo hacen. Pero las que ya están publicadas —incluida la que Apple tiene en
+ *  revisión— no mandan nada, y a esas no las podemos actualizar. Por eso
+ *  miramos también el User-Agent, que sí distingue: en iOS las peticiones
+ *  salen por NSURLSession y llevan "CFNetwork"/"Darwin"; en Android salen por
+ *  okhttp. Así el arreglo alcanza a los clientes que ya existen. */
+function detectPlatform(req: any): 'ios' | 'android' {
+  const explicit = String((req.query as any)?.platform ?? '').toLowerCase();
+  if (explicit === 'ios' || explicit === 'android') return explicit;
+  const ua = String(req.headers['user-agent'] ?? '');
+  if (/CFNetwork|Darwin|iPhone|iPad|iOS/i.test(ua)) return 'ios';
+  return 'android';
+}
+
+app.get('/app/version', async (req: any, reply) => {
+  const platform = detectPlatform(req);
+  const isIos = platform === 'ios';
   reply.send({
-    latestVersion: LATEST_APP_VERSION,
-    latestVersionCode: LATEST_APP_VC,
+    platform,
+    latestVersion: isIos ? LATEST_IOS_VERSION : LATEST_APP_VERSION,
+    latestVersionCode: isIos ? LATEST_IOS_BUILD : LATEST_APP_VC,
     minVersion: MIN_APP_VERSION,       // below this → force update
-    updateUrl: 'https://play.google.com/store/apps/details?id=app.corrr',
+    // En iOS se omite mientras no haya App Store: mejor sin botón que con un
+    // botón que lleva a la tienda equivocada.
+    ...(isIos
+      ? (IOS_UPDATE_URL ? { updateUrl: IOS_UPDATE_URL } : {})
+      : { updateUrl: ANDROID_UPDATE_URL }),
   });
 });
 

@@ -1,6 +1,11 @@
-import { Alert, Linking } from 'react-native';
+import { Alert, Linking, Platform } from 'react-native';
 
-const VERSION_ENDPOINT = 'https://corrr-api-production.up.railway.app/app/version';
+// Le decimos al servidor desde qué tienda venimos. iOS y Android van por
+// versiones distintas —Apple aprueba cuando quiere— y sin esto el servidor
+// contestaba siempre con la de Android: a los de iPhone se les anunciaba una
+// versión inexistente y el botón les abría Google Play.
+const VERSION_ENDPOINT =
+  `https://corrr-api-production.up.railway.app/app/version?platform=${Platform.OS}`;
 
 /** Guard a nivel de módulo: el aviso automático de "nueva versión" se muestra
  *  como MUCHO una vez por sesión de app. Antes el re-check en cada foreground
