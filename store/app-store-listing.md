@@ -170,9 +170,13 @@ Apple exige declarar CADA dato recogido, para qué y si se vincula a la
 identidad del usuario. Lo que aplica a CORRR:
 
 ### Ubicación
-- **Ubicación precisa** — Vinculada al usuario. Sí se usa para rastrear (*).
+- **Ubicación precisa** — Vinculada al usuario. NO se usa para rastrear (*).
   - Finalidad: **Funcionalidad de la app**
   - Es el dato central: sin él no hay producto.
+
+### Salud y forma física
+- **Forma física** — Vinculada al usuario. Distancia, duración y ritmo.
+  - Finalidad: **Funcionalidad de la app**
 
 ### Información de contacto
 - **Correo electrónico** — Vinculado al usuario.
