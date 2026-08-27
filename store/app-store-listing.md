@@ -226,7 +226,7 @@ metros y 5 celdas para guardarse.
 
 CUENTA DE PRUEBA
 Email: applereview@corrr.es
-Contraseña: CorrrReview2026
+Contraseña: (ver store/apple-review-notes.md, fuera de git)
 
 SIN COMPRAS
 La app es totalmente gratuita. No hay compras integradas ni suscripciones.

@@ -13,3 +13,7 @@ apps/mobile/android/keystore.properties
 *.keystore
 *.jks
 !apps/mobile/android/app/debug.keystore
+
+# Notas de revisión de Apple: llevan las credenciales de la cuenta demo que
+# Apple necesita para entrar. El repositorio es público.
+store/apple-review-notes.md
