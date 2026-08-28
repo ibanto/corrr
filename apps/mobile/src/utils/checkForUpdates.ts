@@ -61,13 +61,24 @@ export async function checkForUpdates(currentVersion: string, silent: boolean): 
     // el backend anuncia una versión que todavía no está disponible en Play.
     if (silent && autoUpdatePromptShown) return;
     if (silent) autoUpdatePromptShown = true;
+    // Sin dirección de tienda no ofrecemos botón de actualizar. Pasa en iOS
+    // mientras la app no está publicada: el servidor no manda updateUrl
+    // (mejor eso que mandar a la tienda equivocada, que es lo que hacía
+    // antes desde un iPhone), y entonces "Actualizar" no hacía nada al
+    // pulsarlo. Un aviso informativo es honesto; un botón que no responde
+    // parece una app rota.
+    const url = data.updateUrl;
     Alert.alert(
       '¡Nueva versión disponible!',
-      `CORRR ${data.latestVersion} ya está disponible. Actualiza para disfrutar de las últimas mejoras.`,
-      [
-        { text: 'Ahora no', style: 'cancel' },
-        { text: 'Actualizar', onPress: () => data.updateUrl && Linking.openURL(data.updateUrl) },
-      ],
+      url
+        ? `CORRR ${data.latestVersion} ya está disponible. Actualiza para disfrutar de las últimas mejoras.`
+        : `CORRR ${data.latestVersion} ya está disponible. Búscala en tu tienda de aplicaciones.`,
+      url
+        ? [
+            { text: 'Ahora no', style: 'cancel' },
+            { text: 'Actualizar', onPress: () => Linking.openURL(url) },
+          ]
+        : [{ text: 'Entendido' }],
     );
   } else if (!silent) {
     Alert.alert('Estás al día', `Tienes la última versión (${currentVersion}).`);
