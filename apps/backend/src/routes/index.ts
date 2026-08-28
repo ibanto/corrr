@@ -235,6 +235,20 @@ async function initDB() {
   // Nulo en las normales. Se guarda en vez de rechazar la carrera: ver el
   // bloque de anti-trampas en POST /runs.
   await db.query(`ALTER TABLE runs ADD COLUMN IF NOT EXISTS flagged_reason TEXT`).catch(() => {});
+  // TEMPORAL — diagnóstico del aviso de actualización en iOS. Guarda qué
+  // User-Agent manda cada app al preguntar por la versión, porque la
+  // deducción de plataforma se probó con un User-Agent inventado y en un
+  // iPhone real sigue saliendo el aviso de Android. Borrar esta tabla y el
+  // registro de más abajo en cuanto esté resuelto.
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS version_check_log (
+      id BIGSERIAL PRIMARY KEY,
+      seen_at TIMESTAMPTZ DEFAULT NOW(),
+      user_agent TEXT,
+      query_platform TEXT,
+      detected TEXT
+    )
+  `).catch(() => {});
 
   // Track stolen zones in user_stats
   await db.query(`ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS total_steals INT DEFAULT 0`).catch(() => {});
@@ -3192,6 +3206,16 @@ function detectPlatform(req: any): 'ios' | 'android' {
 app.get('/app/version', async (req: any, reply) => {
   const platform = detectPlatform(req);
   const isIos = platform === 'ios';
+
+  // TEMPORAL — ver la migración version_check_log. Sin await: si falla o
+  // tarda, no debe retrasar ni romper la respuesta.
+  db.query(
+    `INSERT INTO version_check_log (user_agent, query_platform, detected) VALUES ($1,$2,$3)`,
+    [String(req.headers['user-agent'] ?? '(sin user-agent)'),
+     String((req.query as any)?.platform ?? '(no envía)'),
+     platform],
+  ).catch(() => {});
+
   reply.send({
     platform,
     latestVersion: isIos ? LATEST_IOS_VERSION : LATEST_APP_VERSION,
