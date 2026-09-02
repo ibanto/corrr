@@ -3168,7 +3168,7 @@ const MIN_APP_VERSION = process.env.MIN_APP_VERSION ?? '1.0.0';
 // anunciaba una versión que en su tienda no existe, y el botón "Actualizar"
 // les abría Google Play, que en un iPhone no lleva a ninguna parte.
 const LATEST_IOS_VERSION = process.env.LATEST_IOS_VERSION ?? '1.11.0';
-const LATEST_IOS_BUILD = parseInt(process.env.LATEST_IOS_BUILD ?? '3', 10);
+const LATEST_IOS_BUILD = parseInt(process.env.LATEST_IOS_BUILD ?? '2', 10);
 const ANDROID_UPDATE_URL = 'https://play.google.com/store/apps/details?id=app.corrr';
 // Sin publicar aún: en cuanto App Store Connect asigne el ID numérico, se
 // define IOS_UPDATE_URL en Railway como https://apps.apple.com/app/idXXXXXXXXX
