@@ -2911,9 +2911,13 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       )}
 
       <View style={styles.header}>
-        <View>
-          <Text style={styles.cityLabel}>{cityName}</Text>
-          <Text style={styles.citySubtitle}>{user?.username ?? 'Runner'}</Text>
+        {/* numberOfLines + el flex del contenedor son lo que impide que un
+            nombre largo ("Sant Cugat del Vallès") empuje el botón de refrescar
+            fuera de la pantalla. Antes este bloque crecía sin límite y el
+            botón se salía por la derecha. */}
+        <View style={styles.headerTitles}>
+          <Text style={styles.cityLabel} numberOfLines={1}>{cityName}</Text>
+          <Text style={styles.citySubtitle} numberOfLines={1}>{user?.username ?? 'Runner'}</Text>
         </View>
         {/* Botón de refrescar el mapa. Sustituye a los antiguos contadores de
             sesión (llama=puntos, bandera=zonas) que eran poco útiles. Recarga
@@ -3412,6 +3416,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
     paddingHorizontal: spacing.md, paddingTop: spacing.sm, paddingBottom: spacing.sm,
   },
+  // flexShrink deja que el bloque del título ceda ancho; minWidth 0 es
+  // imprescindible en flexbox para que un texto pueda encogerse por debajo de
+  // su tamaño natural (sin él, numberOfLines ni llega a aplicarse).
+  headerTitles: { flexShrink: 1, minWidth: 0, marginRight: spacing.sm },
   cityLabel: { fontSize: 20, fontWeight: '900', color: colors.textPrimary, letterSpacing: 1 },
   citySubtitle: { fontSize: 12, color: colors.textSecondary },
   headerStats: { flexDirection: 'row', gap: spacing.md },
@@ -3425,6 +3433,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: colors.bgCard,
     paddingHorizontal: spacing.md, paddingVertical: 8, borderRadius: radius.full,
     borderWidth: 1, borderColor: colors.border, minWidth: 124, justifyContent: 'center',
+    flexShrink: 0,   // nunca cede ancho: el que cede es el nombre de la ciudad
   },
   refreshBtnText: { fontSize: 13, fontWeight: '700', color: colors.orange },
   mapContainer: { flex: 1, position: 'relative' },
