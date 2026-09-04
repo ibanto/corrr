@@ -25,6 +25,16 @@ import { STRAVA_ENABLED } from '../config/features';
 
 const { width, height } = Dimensions.get('window');
 
+// Las pantallas de bienvenida son imágenes con el texto dentro, dibujadas para
+// la proporción alargada de un móvil. Con resizeMode "cover" en una pantalla
+// más cuadrada (iPad) la imagen se amplía para cubrir el ancho y recorta por
+// abajo — justo donde va el texto, que acababa medio tapado por el botón.
+//
+// En pantallas anchas usamos "contain": se ve la diapositiva entera, con banda
+// negra arriba y abajo que ni se nota sobre un fondo ya negro. En móvil se
+// queda "cover" como hasta ahora, que ahí encaja bien.
+const INTRO_RESIZE_MODE: 'cover' | 'contain' = height / width < 1.6 ? 'contain' : 'cover';
+
 const INTRO_PAGES: { image: ImageSourcePropType; buttonColor: string; buttonText: string }[] = [
   {
     image: require('../../assets/onboarding/slide1.png'),
@@ -358,7 +368,7 @@ export default function OnboardingScreen({ onAuthenticated, pendingStravaSignup,
             <ImageBackground
               source={item.image}
               style={[styles.introPage, { width }]}
-              resizeMode="cover"
+              resizeMode={INTRO_RESIZE_MODE}
             />
           )}
         />
@@ -398,7 +408,7 @@ export default function OnboardingScreen({ onAuthenticated, pendingStravaSignup,
         <ImageBackground
           source={require('../../assets/onboarding/splash.png')}
           style={styles.splashImage}
-          resizeMode="cover"
+          resizeMode={INTRO_RESIZE_MODE}
         />
         <View style={styles.splashBottom}>
           <TouchableOpacity style={styles.btnPrimary} onPress={() => setMode('register')}>
