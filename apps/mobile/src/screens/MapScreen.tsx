@@ -1333,6 +1333,17 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
 
   /** Load cells (v2 grid) for the current map viewport. Cheap call; runs alongside
    *  loadZones during the polygon→grid transition. */
+  // Temporizador para recargar celdas al mover el mapa. Con retardo: mientras
+  // arrastras se disparan muchos onRegionChangeComplete seguidos y no tiene
+  // sentido pedirle al servidor una consulta por cada uno.
+  const regionReloadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Cancelar el temporizador al salir de la pantalla: si no, puede dispararse
+  // una recarga sobre un componente ya desmontado.
+  useEffect(() => () => {
+    if (regionReloadTimer.current) clearTimeout(regionReloadTimer.current);
+  }, []);
+
   const loadCells = async (lat?: number, lng?: number) => {
     try {
       // Skip when zoomed out — would return thousands of cells and choke the map.
@@ -3011,6 +3022,22 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
             // desaparecía del mapa sin que se mostrase ningún mensaje, y el
             // usuario solo veía esfumarse lo que había conquistado.
             setZoomedOutTooMuch(region.latitudeDelta > MAX_DELTA_FOR_CELLS);
+
+            // Recargar el territorio de la zona a la que te has movido. Antes
+            // esto no se hacía: las celdas eran las de tu posición inicial y
+            // nada más, así que al desplazar el mapa a otra ciudad no aparecía
+            // nada — parecía que tus carreras se habían perdido cuando lo que
+            // pasaba es que nunca se pedían.
+            //
+            // Durante una carrera no se recarga: el mapa está tapado por la
+            // pantalla de carrera y las celdas que importan son las que se
+            // están pintando en vivo.
+            if (!isRunning) {
+              if (regionReloadTimer.current) clearTimeout(regionReloadTimer.current);
+              regionReloadTimer.current = setTimeout(() => {
+                loadCells(region.latitude, region.longitude);
+              }, 600);
+            }
             // Limitar al territorio español
             const clampedLat = Math.max(SPAIN_BOUNDS.south, Math.min(SPAIN_BOUNDS.north, region.latitude));
             const clampedLng = Math.max(SPAIN_BOUNDS.west, Math.min(SPAIN_BOUNDS.east, region.longitude));
