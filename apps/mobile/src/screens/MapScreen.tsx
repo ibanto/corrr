@@ -121,9 +121,18 @@ const CELL_SIZE_M = 10;
 const CELL_LAT_DEG = CELL_SIZE_M / 111000;
 const CELL_LNG_DEG = CELL_SIZE_M / (111000 * Math.cos(40 * Math.PI / 180));
 
-// Don't even attempt cell rendering when zoomed out beyond this — would draw
-// thousands of tiny polygons and lag the map. 0.02 ≈ 2km viewport at Spain.
-const MAX_DELTA_FOR_CELLS = 0.02;
+// Tope de zoom para pintar celdas. Más allá, no se cargan y se avisa con el
+// banner "Acércate para ver los territorios" (mismo umbral, ver
+// onRegionChangeComplete: usar dos distintos hacía desaparecer el territorio
+// sin avisar).
+//
+// Subido de 0.02 (~2 km) a 0.05 (~5,5 km): en un juego de territorio, ver tu
+// barrio entero es lo normal, y con 2 km el mapa se vaciaba en cuanto te
+// separabas un poco. No es una celda = un polígono — se fusionan con
+// polygon-clipping antes de pintar — así que el coste sube mucho menos que el
+// área. Aun así es el número a bajar si algún móvil va lento: se toca solo
+// aquí, y hay que probarlo en Android y en iPhone.
+const MAX_DELTA_FOR_CELLS = 0.05;
 
 function coordToCell(lat: number, lng: number): { x: number; y: number } {
   return {
@@ -1822,11 +1831,29 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
   };
 
   const doStartRun = async () => {
-    // Pedir permiso de background para que el GPS siga activo con pantalla apagada
-    const { status: bgStatus } = await Location.requestBackgroundPermissionsAsync();
+    // Ni el permiso de background ni mantener la pantalla activa son
+    // imprescindibles para correr: mejoran la experiencia, pero la carrera
+    // funciona sin ellos. Antes iban sin protección justo ANTES de
+    // setIsRunning(true), así que si cualquiera de los dos fallaba o se
+    // quedaba colgado, la función se cortaba y la carrera no arrancaba: el
+    // usuario se quedaba mirando el mapa, viendo su posición moverse, sin que
+    // pasara nada y sin ningún mensaje.
+    //
+    // Ahora se intentan, se registra el fallo si lo hay, y la carrera arranca
+    // igual. Nunca al revés.
+    let bgStatus: string | undefined;
+    try {
+      const res = await Location.requestBackgroundPermissionsAsync();
+      bgStatus = res.status;
+    } catch (err) {
+      console.warn('[startRun] permiso de background no disponible:', err);
+    }
 
-    // Mantener pantalla activa durante la carrera (evita que MIUI mate el GPS)
-    await activateScreenAwake();
+    try {
+      await activateScreenAwake();
+    } catch (err) {
+      console.warn('[startRun] no se pudo mantener la pantalla activa:', err);
+    }
 
     setIsRunning(true);
     setRunTime(0);
@@ -1994,6 +2021,21 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       fullPathRef.current.push(newCoord);
       pathRef.current = [...pathRef.current, newCoord];
       setCurrentPath([...pathRef.current]);
+
+      // Distancia por POSICIÓN, la misma que ya se acumulaba en segundo plano.
+      // Faltaba aquí, y ese hueco es lo que rompía las carreras: con la
+      // pantalla encendida solo contaba el método Doppler, que se queda a cero
+      // cuando el móvil no reporta velocidad fiable o cuando la precisión pasa
+      // de 18 m (habitual entre edificios). Resultado: gente corriendo 14
+      // minutos con 60 metros contados, y carreras reales descartadas por
+      // "demasiado corta".
+      //
+      // result.distKm ya viene limpio: el filtro descarta coordenadas
+      // inválidas, ignora el jitter por debajo de 6 m manteniendo el ancla, y
+      // corta los teletransportes. Es el mismo recorrido del que salen las
+      // celdas, así que distancia y territorio por fin cuentan lo mismo — que
+      // es justo lo que el anti-trampas comparaba y no le cuadraba.
+      if (result.distKm > 0) setDistancePosDelta(d => d + result.distKm);
 
       // Auto-pause silencioso: si estamos auto-pausados, este punto solo cuenta
       // si demuestra movimiento real (>5m de la última posición o >1.5 km/h).
@@ -2354,7 +2396,11 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       // se recargan. Se desactiva en finally para cubrir éxito y error.
       setSavingRun(true);
       api.saveRun({
-        distanceKm: distance,
+        // El mayor de los dos métodos, el mismo criterio que ya se usaba para
+        // decidir si la carrera es válida. Guardar solo el Doppler era
+        // incoherente: una carrera podía pasar la validación por posición y
+        // registrarse luego con los kilómetros del método que había fallado.
+        distanceKm: distanceForValidity,
         durationSecs: runTime,
         points: finalPoints, // client estimate — backend ignores and recomputes
         loopBonus: totalPoints, // legacy: preview de bonos de loop (backend lo clampa)
@@ -2959,7 +3005,12 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
           onRegionChangeComplete={(region) => {
             currentDelta.current = { latDelta: region.latitudeDelta, lngDelta: region.longitudeDelta };
             // Comprobar si está demasiado lejos para mostrar zonas
-            setZoomedOutTooMuch(region.latitudeDelta > MAX_DELTA_FOR_ZONES);
+            // El aviso tiene que usar EL MISMO umbral que decide borrar las
+            // celdas. Usaba el de las zonas (0.15) mientras el borrado usa el
+            // de las celdas (0.02): entre esos dos valores el territorio
+            // desaparecía del mapa sin que se mostrase ningún mensaje, y el
+            // usuario solo veía esfumarse lo que había conquistado.
+            setZoomedOutTooMuch(region.latitudeDelta > MAX_DELTA_FOR_CELLS);
             // Limitar al territorio español
             const clampedLat = Math.max(SPAIN_BOUNDS.south, Math.min(SPAIN_BOUNDS.north, region.latitude));
             const clampedLng = Math.max(SPAIN_BOUNDS.west, Math.min(SPAIN_BOUNDS.east, region.longitude));
