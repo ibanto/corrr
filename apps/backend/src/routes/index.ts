@@ -3170,9 +3170,11 @@ const MIN_APP_VERSION = process.env.MIN_APP_VERSION ?? '1.0.0';
 const LATEST_IOS_VERSION = process.env.LATEST_IOS_VERSION ?? '1.11.0';
 const LATEST_IOS_BUILD = parseInt(process.env.LATEST_IOS_BUILD ?? '2', 10);
 const ANDROID_UPDATE_URL = 'https://play.google.com/store/apps/details?id=app.corrr';
-// Sin publicar aún: en cuanto App Store Connect asigne el ID numérico, se
-// define IOS_UPDATE_URL en Railway como https://apps.apple.com/app/idXXXXXXXXX
-const IOS_UPDATE_URL = process.env.IOS_UPDATE_URL;
+// ID asignado por App Store Connect al publicarse (consultable sin claves en
+// https://itunes.apple.com/lookup?bundleId=app.corrr). Configurable por
+// variable de entorno por si algún día cambia.
+const IOS_UPDATE_URL = process.env.IOS_UPDATE_URL
+  ?? 'https://apps.apple.com/es/app/corrr-conquista-tu-ciudad/id6805088892';
 
 /** Averigua desde qué plataforma se pregunta.
  *
