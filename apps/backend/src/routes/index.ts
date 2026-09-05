@@ -3167,8 +3167,8 @@ const MIN_APP_VERSION = process.env.MIN_APP_VERSION ?? '1.0.0';
 // Android, y eso rompía a los usuarios de iPhone por partida doble: se les
 // anunciaba una versión que en su tienda no existe, y el botón "Actualizar"
 // les abría Google Play, que en un iPhone no lleva a ninguna parte.
-const LATEST_IOS_VERSION = process.env.LATEST_IOS_VERSION ?? '1.11.0';
-const LATEST_IOS_BUILD = parseInt(process.env.LATEST_IOS_BUILD ?? '2', 10);
+const LATEST_IOS_VERSION = process.env.LATEST_IOS_VERSION ?? '1.11.2';
+const LATEST_IOS_BUILD = parseInt(process.env.LATEST_IOS_BUILD ?? '6', 10);
 const ANDROID_UPDATE_URL = 'https://play.google.com/store/apps/details?id=app.corrr';
 // ID asignado por App Store Connect al publicarse (consultable sin claves en
 // https://itunes.apple.com/lookup?bundleId=app.corrr). Configurable por
