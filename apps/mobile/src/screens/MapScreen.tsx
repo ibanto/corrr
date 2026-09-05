@@ -1539,7 +1539,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
   /** Rival cells grouped by owner_id → one merged polygon per owner. Each carries
    *  the owner metadata so taps still resolve to the rival info modal. */
   const rivalCellsUnions = useMemo(() => {
-    const byOwner = new Map<string, { ownerId: string; ownerName: string | undefined; ownerWarCry: string | null | undefined; cells: { x: number; y: number }[] }>();
+    const byOwner = new Map<string, { ownerId: string; ownerName: string | undefined; ownerWarCry: string | null | undefined; ownerAvatar: string | null | undefined; cells: { x: number; y: number }[] }>();
     for (const c of remoteCells) {
       if (c.is_mine) continue;
       const entry = byOwner.get(c.owner_id);
@@ -1548,6 +1548,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         ownerId: c.owner_id,
         ownerName: c.owner_name,
         ownerWarCry: c.owner_war_cry,
+        ownerAvatar: c.owner_avatar,
         cells: [{ x: c.cell_x, y: c.cell_y }],
       });
     }
@@ -1555,6 +1556,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       ownerId: o.ownerId,
       ownerName: o.ownerName,
       ownerWarCry: o.ownerWarCry,
+      ownerAvatar: o.ownerAvatar,
       polygons: unionCellsToPolygons(o.cells),
     }));
   }, [remoteCells]);
@@ -2919,10 +2921,19 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
                 <Ionicons name="close" size={22} color={colors.textSecondary} />
               </TouchableOpacity>
 
+              {/* Foto del dueño de la zona. Si no tiene puesta —hoy la mayoría—
+                  se mantiene la inicial de siempre, que nunca falla. */}
               <View style={[styles.rivalAvatarBig, { borderColor: getRivalColor(selectedRivalZone.owner_id ?? selectedRivalZone.owner_name ?? '') }]}>
-                <Text style={styles.rivalAvatarText}>
-                  {(selectedRivalZone.owner_name ?? '?').charAt(0).toUpperCase()}
-                </Text>
+                {selectedRivalZone.owner_avatar ? (
+                  <Image
+                    source={{ uri: selectedRivalZone.owner_avatar }}
+                    style={styles.rivalAvatarPhoto}
+                  />
+                ) : (
+                  <Text style={styles.rivalAvatarText}>
+                    {(selectedRivalZone.owner_name ?? '?').charAt(0).toUpperCase()}
+                  </Text>
+                )}
               </View>
               <Text style={styles.zoneCardTitle}>{selectedRivalZone.owner_name ?? 'Rival'}</Text>
               {/* Grito de guerra del rival (v1.9). Se muestra justo bajo el nombre
@@ -3871,8 +3882,11 @@ const styles = StyleSheet.create({
   rivalAvatarBig: {
     width: 60, height: 60, borderRadius: 30,
     backgroundColor: colors.bgCardAlt, alignItems: 'center', justifyContent: 'center',
-    borderWidth: 3, marginBottom: spacing.sm,
+    borderWidth: 3, marginBottom: spacing.sm, overflow: 'hidden',
   },
+  // La foto rellena el círculo entero. overflow hidden en el contenedor no
+  // basta en Android, así que el propio Image lleva el borderRadius.
+  rivalAvatarPhoto: { width: '100%', height: '100%', borderRadius: 30 },
   rivalAvatarText: { fontSize: 26, fontWeight: '900', color: colors.textPrimary },
   addFriendBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.sm,

@@ -75,6 +75,7 @@ interface RemoteZone {
   owner_id?: string;
   owner_name?: string;
   owner_war_cry?: string | null;
+  owner_avatar?: string | null;
   is_mine?: boolean;
 }
 
@@ -87,6 +88,7 @@ interface RemoteCell {
   owner_id: string;
   owner_name?: string;
   owner_war_cry?: string | null;
+  owner_avatar?: string | null;
   claimed_at?: string;
   is_mine: boolean;
 }
