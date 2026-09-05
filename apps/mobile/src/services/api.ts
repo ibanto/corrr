@@ -88,7 +88,6 @@ interface RemoteCell {
   owner_id: string;
   owner_name?: string;
   owner_war_cry?: string | null;
-  owner_avatar?: string | null;
   claimed_at?: string;
   is_mine: boolean;
 }
@@ -381,9 +380,12 @@ class ApiService {
     });
   }
 
-  async getCellsInViewport(north: number, south: number, east: number, west: number): Promise<{ cells: RemoteCell[] }> {
+  /** Las fotos de perfil vienen en `owners`, una por dueño, NO dentro de cada
+   *  celda: se guardan como imagen en base64 (una llega a 2,3 MB) y repetirlas
+   *  por fila hacía peticiones de decenas de MB. */
+  async getCellsInViewport(north: number, south: number, east: number, west: number): Promise<{ cells: RemoteCell[]; owners?: Record<string, { avatar: string | null }> }> {
     const qs = `north=${north}&south=${south}&east=${east}&west=${west}`;
-    return this.request<{ cells: RemoteCell[] }>(`/cells/viewport?${qs}`);
+    return this.request<{ cells: RemoteCell[]; owners?: Record<string, { avatar: string | null }> }>(`/cells/viewport?${qs}`);
   }
 
   /** Listado paginado de todas las carreras del usuario. Usado por la pantalla

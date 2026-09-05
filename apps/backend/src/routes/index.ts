@@ -2261,8 +2261,7 @@ app.get('/cells/viewport', { preHandler: requireAuth }, async (req: any, reply) 
     // when the user zooms way out — clients should detect that and skip the call.
     const q = await db.query(
       `SELECT c.cell_x, c.cell_y, c.owner_id, c.claimed_at,
-              u.display_name AS owner_name, u.war_cry AS owner_war_cry,
-              u.avatar_url AS owner_avatar
+              u.display_name AS owner_name, u.war_cry AS owner_war_cry
        FROM cells c
        JOIN users u ON u.id = c.owner_id
        WHERE c.cell_x BETWEEN $1 AND $2 AND c.cell_y BETWEEN $3 AND $4
@@ -2281,9 +2280,31 @@ app.get('/cells/viewport', { preHandler: requireAuth }, async (req: any, reply) 
     viewportCache.set(cacheKey, { rows, expires: Date.now() + VIEWPORT_TTL_MS });
   }
 
+  // Las fotos van APARTE, una por dueño, no repetidas en cada celda.
+  //
+  // Esto no es una optimización de manual: los avatares se guardan como la
+  // imagen entera en base64, no como una URL. La de un usuario ocupa 2,3 MB.
+  // Devolverla en cada fila —540 celdas de un mismo corredor es un encuadre
+  // normal— daban 56 MB en UNA carga del mapa, que además se repite cada vez
+  // que el usuario mueve el dedo. Mandarlas una vez por dueño lo deja en unos
+  // pocos cientos de KB.
+  //
+  // Va fuera del caché de celdas a propósito: el caché guarda muchos encuadres
+  // y no conviene tener la misma foto duplicada en cada uno.
+  const ownerIds = [...new Set(rows.map(r => r.owner_id))];
+  let owners: Record<string, { avatar: string | null }> = {};
+  if (ownerIds.length > 0) {
+    const av = await db.query(
+      `SELECT id, avatar_url FROM users WHERE id = ANY($1::uuid[]) AND avatar_url IS NOT NULL`,
+      [ownerIds],
+    );
+    for (const o of av.rows) owners[o.id] = { avatar: o.avatar_url };
+  }
+
   // "Es mía" se calcula aquí, no en SQL: así el caché sirve a todos.
   return reply.send({
     cells: rows.map(r => ({ ...r, is_mine: r.owner_id === req.userId })),
+    owners,
   });
 });
 

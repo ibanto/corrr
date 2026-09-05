@@ -1002,6 +1002,10 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
   // user and run so the TauntSelector knows where to send the message.
   const [tauntTarget, setTauntTarget] = useState<{ toUserId: string; toName: string; runId: string | null; mode: 'taunt' | 'response' } | null>(null);
   const [selectedRivalZone, setSelectedRivalZone] = useState<RemoteZone | null>(null);
+  // Fotos de perfil por dueño. Llegan aparte de las celdas porque son la
+  // imagen en base64, no una URL: repetirlas por celda disparaba el tamaño de
+  // la respuesta a decenas de MB.
+  const ownerAvatarsRef = useRef<Record<string, string | null>>({});
   const [zoomedOutTooMuch, setZoomedOutTooMuch] = useState(false);
   const [speedWarning, setSpeedWarning] = useState(false);
   const [currentSpeed, setCurrentSpeed] = useState(0);
@@ -1362,12 +1366,18 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       // guardar). Con el mínimo, el refresh cubre un run típico.
       const halfLat = Math.max(currentDelta.current.latDelta / 2, 0.01);
       const halfLng = Math.max(currentDelta.current.lngDelta / 2, 0.01);
-      const { cells } = await api.getCellsInViewport(
+      const { cells, owners } = await api.getCellsInViewport(
         useLat + halfLat,
         useLat - halfLat,
         useLng + halfLng,
         useLng - halfLng,
       );
+      // Acumulamos las fotos en vez de reemplazarlas: al moverte por el mapa
+      // cada carga trae solo los dueños de ese encuadre, y no queremos perder
+      // la foto de uno cuya zona acabas de dejar atrás.
+      if (owners) {
+        for (const [id, o] of Object.entries(owners)) ownerAvatarsRef.current[id] = o.avatar;
+      }
       setRemoteCells(cells);
     } catch {}
   };
@@ -1410,7 +1420,10 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         east = centerLng + MIN_HALF_LNG;
         west = centerLng - MIN_HALF_LNG;
       }
-      const { cells } = await api.getCellsInViewport(north, south, east, west);
+      const { cells, owners } = await api.getCellsInViewport(north, south, east, west);
+      if (owners) {
+        for (const [id, o] of Object.entries(owners)) ownerAvatarsRef.current[id] = o.avatar;
+      }
       setRemoteCells(cells);
     } catch {
       await loadCells().catch(() => {});
@@ -1548,7 +1561,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         ownerId: c.owner_id,
         ownerName: c.owner_name,
         ownerWarCry: c.owner_war_cry,
-        ownerAvatar: c.owner_avatar,
+        ownerAvatar: ownerAvatarsRef.current[c.owner_id] ?? null,
         cells: [{ x: c.cell_x, y: c.cell_y }],
       });
     }
