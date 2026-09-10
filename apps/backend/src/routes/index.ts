@@ -1909,7 +1909,10 @@ app.post('/runs', {
       // el robo se vea al instante y no dentro de 30 segundos.
       invalidateViewportCache(claimedCells.map((c: any) => ({ x: c.x, y: c.y })));
 
-      // Decrement total_cells for each robbed user and notify them.
+      // Aquí solo se restan CELDAS. Los puntos de la víctima se descuentan más
+      // abajo, en el bloque que recorre stolenCells (1 punto por celda). Están
+      // separados desde el principio; restarlos también aquí penalizaba el
+      // doble — comprobado con un robo real: 12 puntos por 6 celdas.
       for (const [prevOwnerId, robosList] of robosByPrevOwner.entries()) {
         await client.query(
           `UPDATE user_stats SET total_cells = GREATEST(0, total_cells - $2) WHERE user_id = $1`,
@@ -1935,7 +1938,9 @@ app.post('/runs', {
           sendPushNotification(
             prev[0].push_token,
             '😱 ¡Te han robado territorio!',
-            `${thief[0]?.display_name ?? 'Alguien'} te ha quitado ${robosList.length} ${robosList.length === 1 ? 'celda' : 'celdas'}. ¡Sal a recuperarlas!`
+            // Se dice el coste en puntos a propósito: si la penalización no se ve,
+            // no genera ninguna reacción. Es 1 punto por celda, mismo número.
+            `${thief[0]?.display_name ?? 'Alguien'} te ha quitado ${robosList.length} ${robosList.length === 1 ? 'celda' : 'celdas'} y ${robosList.length} ${robosList.length === 1 ? 'punto' : 'puntos'}. ¡Sal a recuperarlas!`
           );
         }
       }
@@ -3074,7 +3079,7 @@ async function importStravaActivity(userId: string, activityId: number, accessTo
           sendPushNotification(
             prev[0].push_token,
             '😱 ¡Te han robado territorio!',
-            `${thiefName} (vía Strava) te ha quitado ${robosList.length} ${robosList.length === 1 ? 'celda' : 'celdas'}. ¡Sal a recuperarlas!`
+            `${thiefName} (vía Strava) te ha quitado ${robosList.length} ${robosList.length === 1 ? 'celda' : 'celdas'} y ${robosList.length} ${robosList.length === 1 ? 'punto' : 'puntos'}. ¡Sal a recuperarlas!`
           );
         }
       }
