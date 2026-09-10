@@ -488,6 +488,26 @@ class ApiService {
       body: JSON.stringify({ toUserId, tauntId, mode, runId }),
     });
   }
+  /** Marcador de territorio de un corredor: superficie, su parte de la ciudad
+   *  y su puesto nacional. Vale para tu perfil y para el de un rival.
+   *
+   *  Los porcentajes van sobre el territorio ya conquistado, no sobre la
+   *  superficie real: medido contra el terreno de verdad, el mejor corredor
+   *  tiene el 0,0001% de España, que no dice nada. */
+  async getTerritory(userId: string): Promise<{
+    displayName: string;
+    avatar: string | null;
+    city: string | null;
+    cells: number;
+    areaM2: number;
+    citySharePct: number | null;
+    nationalSharePct: number;
+    nationalRank: number | null;
+    nationalTotal: number;
+  }> {
+    return this.request(`/territory/${userId}`);
+  }
+
   async markTauntsRead(ids: string[]): Promise<void> {
     if (ids.length === 0) return;
     await this.request('/taunts/read', {

@@ -61,6 +61,8 @@ const logroImages: Record<string, any> = {
 export default function PerfilScreen({ user, onLogout }: Props) {
   const displayName = user?.username ?? 'Runner';
   const [stravaLoading, setStravaLoading] = useState(false);
+  // Marcador de territorio: superficie, parte de la ciudad y puesto nacional.
+  const [territory, setTerritory] = useState<Awaited<ReturnType<typeof api.getTerritory>> | null>(null);
   const [stats, setStats] = useState<MyStats | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
@@ -129,6 +131,11 @@ export default function PerfilScreen({ user, onLogout }: Props) {
       ]);
       setStats(data);
       setAchievements(achs);
+      // El territorio va en su propia llamada y sin bloquear: si falla, el
+      // perfil se muestra igual, solo sin ese bloque.
+      if (profile?.id) {
+        api.getTerritory(profile.id).then(setTerritory).catch(() => {});
+      }
       // Setear siempre (incluso null) para que si el avatar se borra desde
       // backend o desde otro dispositivo, el local se actualice. Antes solo
       // se seteaba si había valor → avatar viejo se quedaba pegado.
@@ -391,6 +398,42 @@ export default function PerfilScreen({ user, onLogout }: Props) {
           </View>
         ))}
       </View>
+
+      {/* TU TERRITORIO.
+          Los porcentajes van sobre el territorio ya conquistado, no sobre la
+          superficie real de la ciudad: medido contra el terreno de verdad sale
+          0,4% de tu ciudad y 0,0001% de España, números que no dicen nada.
+          Sobre lo conquistado sale "69% de Valencia, nº 2 de España", que sí
+          se entiende y se persigue. */}
+      {territory && territory.cells > 0 && (
+        <View style={styles.territoryCard}>
+          <View style={styles.territoryHeader}>
+            <Ionicons name="map" size={18} color={colors.orange} />
+            <Text style={styles.territoryTitle}>TU TERRITORIO</Text>
+          </View>
+          <Text style={styles.territoryArea}>
+            {territory.areaM2 >= 10000
+              ? `${(territory.areaM2 / 10000).toFixed(1)} hectáreas`
+              : `${territory.areaM2.toLocaleString('es-ES')} m²`}
+          </Text>
+          <View style={styles.territoryRows}>
+            {territory.citySharePct !== null && !!territory.city && (
+              <View style={styles.territoryRow}>
+                <Text style={styles.territoryLabel} numberOfLines={1}>{territory.city}</Text>
+                <Text style={styles.territoryValue}>{territory.citySharePct}%</Text>
+              </View>
+            )}
+            {territory.nationalRank !== null && (
+              <View style={styles.territoryRow}>
+                <Text style={styles.territoryLabel}>España</Text>
+                <Text style={styles.territoryValue}>
+                  nº {territory.nationalRank} · {territory.nationalSharePct}%
+                </Text>
+              </View>
+            )}
+          </View>
+        </View>
+      )}
 
       {/* Logros y Actividad reciente eliminados del Perfil — ahora viven en
           la pestaña Stats. El Perfil se centra en identidad + edición + stats
@@ -880,6 +923,21 @@ const styles = StyleSheet.create({
   // Card más compacta verticalmente — antes paddingVertical: xl (32) dejaba
   // mucho aire dentro de cada tarjeta y separaba el bloque entero. Ahora md
   // (16) → tarjetas más bajas y los 4 elementos quedan agrupados.
+  // TU TERRITORIO
+  territoryCard: {
+    backgroundColor: colors.bgCard, borderRadius: radius.lg,
+    borderWidth: 1, borderColor: colors.border,
+    padding: spacing.md, marginHorizontal: spacing.md, marginBottom: spacing.md,
+  },
+  territoryHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 },
+  territoryTitle: { fontSize: 12, fontWeight: '900', color: colors.orange, letterSpacing: 1 },
+  territoryArea: { fontSize: 28, fontWeight: '900', color: colors.textPrimary, marginBottom: spacing.sm },
+  territoryRows: { gap: 6 },
+  territoryRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  // El nombre de la ciudad puede ser largo ("Sant Just Desvern"), así que cede
+  // ancho y se corta antes que empujar el porcentaje fuera de la tarjeta.
+  territoryLabel: { fontSize: 14, color: colors.textSecondary, flexShrink: 1, marginRight: spacing.sm },
+  territoryValue: { fontSize: 15, fontWeight: '800', color: colors.textPrimary, flexShrink: 0 },
   bigStatCard: {
     width: '49%', flexGrow: 1,
     backgroundColor: colors.bgCard,

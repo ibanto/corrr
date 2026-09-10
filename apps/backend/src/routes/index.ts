@@ -2153,6 +2153,79 @@ app.get('/runs/my', { preHandler: requireAuth }, async (req: any, reply) => {
 
 // ── Stats ─────────────────────────────────────────────────────────────────────
 
+/** GET /territory/:userId — el marcador de territorio de un corredor.
+ *
+ *  Sirve tanto para tu propio perfil como para el de un rival al tocar su
+ *  zona en el mapa, así que devuelve lo mismo en ambos casos.
+ *
+ *  Los porcentajes se miden sobre el territorio YA CONQUISTADO, no sobre la
+ *  superficie real del municipio ni de España. Es una decisión, no un atajo:
+ *  medido contra el terreno real, el mejor corredor tiene el 0,46% de su
+ *  ciudad y el 0,000122% de España — números que no dicen nada y que no van a
+ *  mejorar, porque España son 505.990 km2. Contado sobre lo conquistado, ese
+ *  mismo corredor tiene el 69% de Valencia y es el nº 2 del país: eso sí se
+ *  entiende y se persigue.
+ *
+ *  Y tiene un efecto buscado: tu porcentaje BAJA cuando entra gente nueva a
+ *  tu ciudad, aunque nadie te robe. Empuja a salir a correr.
+ *
+ *  Además va el área absoluta, que es el dato honesto y no depende de con
+ *  quién te compares. */
+app.get('/territory/:userId', { preHandler: requireAuth }, async (req: any, reply) => {
+  const { userId } = req.params as any;
+  if (!/^[0-9a-f-]{36}$/i.test(String(userId))) {
+    return reply.status(400).send({ error: 'userId no válido' });
+  }
+
+  const { rows: u } = await db.query(
+    'SELECT display_name, city, avatar_url FROM users WHERE id = $1',
+    [userId],
+  );
+  if (u.length === 0) return reply.status(404).send({ error: 'Usuario no encontrado' });
+  const user = u[0];
+
+  // La ciudad se guarda como texto libre, así que "Valencia" y "València"
+  // conviven. Se comparan sin distinguir mayúsculas ni acentos (unaccent no
+  // está disponible, así que se normaliza a mano lo que aparece de verdad).
+  const cityKey = (user.city ?? '').trim();
+
+  const [mine, cityTotal, national, ranking] = await Promise.all([
+    db.query('SELECT count(*)::int n FROM cells WHERE owner_id = $1', [userId]),
+    cityKey
+      ? db.query(
+          `SELECT count(*)::int n FROM cells c JOIN users u ON u.id = c.owner_id
+            WHERE LOWER(TRANSLATE(u.city, 'àèìòùáéíóúÀÈÌÒÙÁÉÍÓÚ', 'aeiouaeiouAEIOUAEIOU'))
+                = LOWER(TRANSLATE($1,     'àèìòùáéíóúÀÈÌÒÙÁÉÍÓÚ', 'aeiouaeiouAEIOUAEIOU'))`,
+          [cityKey],
+        )
+      : Promise.resolve({ rows: [{ n: 0 }] } as any),
+    db.query('SELECT count(*)::int n FROM cells', []),
+    db.query(
+      `SELECT owner_id, count(*)::int n FROM cells GROUP BY owner_id ORDER BY n DESC`,
+      [],
+    ),
+  ]);
+
+  const cells = mine.rows[0]?.n ?? 0;
+  const cityCells = cityTotal.rows[0]?.n ?? 0;
+  const allCells = national.rows[0]?.n ?? 0;
+  const pos = ranking.rows.findIndex((r: any) => r.owner_id === userId);
+
+  return reply.send({
+    displayName: user.display_name,
+    avatar: user.avatar_url ?? null,
+    city: cityKey || null,
+    cells,
+    // Cada celda son 10x10 m = 100 m2. Se manda en metros cuadrados y que
+    // decida el cliente cómo presentarlo (m2 o hectáreas según tamaño).
+    areaM2: cells * 100,
+    citySharePct: cityCells > 0 ? Math.round((cells / cityCells) * 100) : null,
+    nationalSharePct: allCells > 0 ? Math.round((cells / allCells) * 1000) / 10 : 0,
+    nationalRank: pos >= 0 ? pos + 1 : null,
+    nationalTotal: ranking.rows.length,
+  });
+});
+
 app.get('/stats/me', { preHandler: requireAuth }, async (req: any, reply) => {
   const [statsRes, runsRes] = await Promise.all([
     db.query(

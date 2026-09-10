@@ -1002,6 +1002,10 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
   // user and run so the TauntSelector knows where to send the message.
   const [tauntTarget, setTauntTarget] = useState<{ toUserId: string; toName: string; runId: string | null; mode: 'taunt' | 'response'; notifId?: string } | null>(null);
   const [selectedRivalZone, setSelectedRivalZone] = useState<RemoteZone | null>(null);
+  // Marcador de territorio del rival cuya zona acabas de tocar. Se pide al
+  // abrir la tarjeta, no junto a las celdas: es una consulta por usuario y no
+  // tiene sentido calcularla para todos los que salen en pantalla.
+  const [rivalTerritory, setRivalTerritory] = useState<Awaited<ReturnType<typeof api.getTerritory>> | null>(null);
   // Fotos de perfil por dueño. Llegan aparte de las celdas porque son la
   // imagen en base64, no una URL: repetirlas por celda disparaba el tamaño de
   // la respuesta a decenas de MB.
@@ -2972,6 +2976,27 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
               {!!selectedRivalZone.owner_war_cry && (
                 <Text style={styles.zoneCardWarCry}>"{selectedRivalZone.owner_war_cry}"</Text>
               )}
+              {/* Su territorio: superficie, parte de su ciudad y puesto
+                  nacional. Los porcentajes van sobre lo ya conquistado, no
+                  sobre la superficie real — contra el terreno de verdad todo
+                  el mundo sale con 0,0001% de España. */}
+              {rivalTerritory && rivalTerritory.cells > 0 && (
+                <View style={styles.rivalTerritory}>
+                  <Text style={styles.rivalTerritoryArea}>
+                    {rivalTerritory.areaM2 >= 10000
+                      ? `${(rivalTerritory.areaM2 / 10000).toFixed(1)} ha`
+                      : `${rivalTerritory.areaM2.toLocaleString('es-ES')} m²`}
+                  </Text>
+                  <Text style={styles.rivalTerritoryLine}>
+                    {rivalTerritory.citySharePct !== null && !!rivalTerritory.city
+                      ? `${rivalTerritory.citySharePct}% de ${rivalTerritory.city}`
+                      : ''}
+                    {rivalTerritory.nationalRank !== null
+                      ? `${rivalTerritory.citySharePct !== null && rivalTerritory.city ? '  ·  ' : ''}nº ${rivalTerritory.nationalRank} de España`
+                      : ''}
+                  </Text>
+                </View>
+              )}
               {/* Cells (grid v2) don't have a per-cell points value — hide the
                   line so we don't show a useless "0 pts" on a cell tap. */}
               {selectedRivalZone.points > 0 && (
@@ -3116,6 +3141,10 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
                   strokeWidth={2}
                   tappable
                   onPress={() => {
+                    setRivalTerritory(null);
+                    if (rival.ownerId) {
+                      api.getTerritory(rival.ownerId).then(setRivalTerritory).catch(() => {});
+                    }
                     setSelectedRivalZone({
                       id: `rival-${rival.ownerId}-${polyIdx}`,
                       polygon: p.outer,
@@ -3900,6 +3929,9 @@ const styles = StyleSheet.create({
     fontSize: 16, fontWeight: '900', color: colors.textPrimary,
     letterSpacing: 2, marginTop: spacing.sm,
   },
+  rivalTerritory: { alignItems: 'center', marginTop: 6, marginBottom: 2 },
+  rivalTerritoryArea: { fontSize: 20, fontWeight: '900', color: colors.textPrimary },
+  rivalTerritoryLine: { fontSize: 12, color: colors.textSecondary, marginTop: 2, textAlign: 'center' },
   zoneCardWarCry: {
     fontSize: 13, fontStyle: 'italic', color: colors.textSecondary,
     marginTop: 4, textAlign: 'center', paddingHorizontal: spacing.lg,
