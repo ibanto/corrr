@@ -1000,7 +1000,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
   const [currentTaunt, setCurrentTaunt] = useState<TauntInbox | null>(null);
   // When responding to a robo_notif or a received taunt, this stores the target
   // user and run so the TauntSelector knows where to send the message.
-  const [tauntTarget, setTauntTarget] = useState<{ toUserId: string; toName: string; runId: string | null; mode: 'taunt' | 'response' } | null>(null);
+  const [tauntTarget, setTauntTarget] = useState<{ toUserId: string; toName: string; runId: string | null; mode: 'taunt' | 'response'; notifId?: string } | null>(null);
   const [selectedRivalZone, setSelectedRivalZone] = useState<RemoteZone | null>(null);
   // Fotos de perfil por dueño. Llegan aparte de las celdas porque son la
   // imagen en base64, no una URL: repetirlas por celda disparaba el tamaño de
@@ -1496,24 +1496,36 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     return () => clearTimeout(t);
   }, [currentTaunt, mapLoading, savingRun, runSummary?.visible, popup.visible, showTaunts]);
 
-  /** Abrir el selector de mensajes DESPUÉS de cerrar el aviso actual. Abrirlo
-   *  con el aviso todavía visible dejaba el selector sin presentar ("el botón
-   *  de responder no hace nada"): son dos modales solapados. */
+  /** Pasar del aviso "te han robado" al selector de mensajes.
+   *
+   *  Antes esto cerraba el aviso y abría el selector 320 ms después. Ese hueco
+   *  entre los dos modales es donde se perdía la respuesta: si el selector no
+   *  llegaba a presentarse —pasa en iOS cuando uno se está cerrando— el
+   *  usuario se quedaba sin nada Y la notificación ya se había marcado como
+   *  leída, así que tampoco podía reintentarlo. Visto en producción: un
+   *  robo_notif leído sin ningún taunt detrás.
+   *
+   *  Dos cambios:
+   *
+   *  1. Se MONTA el selector antes de desmontar el aviso, no al revés. Sin
+   *     hueco entre ambos no hay carrera que perder.
+   *  2. La notificación ya NO se marca como leída aquí. Se marca al enviar el
+   *     mensaje de verdad (o si el usuario cierra el selector sin enviar). Si
+   *     algo falla por el camino, el aviso sigue ahí la próxima vez en vez de
+   *     desaparecer sin dejar rastro. */
   const respondToTaunt = (t: TauntInbox, mode: 'taunt' | 'response') => {
     if (!t.from_user_id) return;
-    const target = {
+    setTauntTarget({
       toUserId: t.from_user_id,
       toName: t.from_user_name ?? 'Rival',
       runId: t.run_id,
       mode,
-    };
-    api.markTauntsRead([t.id]).catch(() => {});
-    setCurrentTaunt(null);
+      notifId: t.id,   // para marcarla leída cuando de verdad se resuelva
+    });
+    setShowTaunts(true);
+    // El aviso se retira DESPUÉS, ya con el selector montado encima.
     setTauntReady(false);
-    setTimeout(() => {
-      setTauntTarget(target);
-      setShowTaunts(true);
-    }, 320);
+    setTimeout(() => setCurrentTaunt(null), 60);
   };
 
   // Sondeo periódico del inbox mientras la app está abierta. Antes solo se
@@ -2721,11 +2733,15 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
             try {
               await api.sendTaunt(tauntTarget.toUserId, messageId, tauntTarget.mode, tauntTarget.runId || undefined);
               Alert.alert('💬 Mensaje enviado', `Has enviado un mensaje a ${tauntTarget.toName}`);
-              // Mark the original inbox item as read once the response goes through.
-              if (currentTaunt) {
-                try { await api.markTauntsRead([currentTaunt.id]); } catch {}
-                setCurrentTaunt(null);
+              // La notificación se marca leída AQUÍ, cuando el mensaje ha salido
+              // de verdad. Se usa notifId y no currentTaunt porque el aviso ya
+              // está cerrado a estas alturas — y marcarla antes de tiempo era
+              // justo lo que dejaba al usuario sin aviso y sin respuesta cuando
+              // el selector no llegaba a abrirse.
+              if (tauntTarget.notifId) {
+                try { await api.markTauntsRead([tauntTarget.notifId]); } catch {}
               }
+              setCurrentTaunt(null);
             } catch (e: any) {
               // 409 = hilo ya cerrado (ya hay un taunt/response previo para
               // este run). Mensaje específico en vez del genérico para que el
@@ -2733,10 +2749,12 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
               // leído el inbox item para que no le aparezca otra vez.
               if (e?.status === 409) {
                 Alert.alert('Hilo cerrado', e?.body?.error ?? 'En este hilo solo se permite un mensaje y una respuesta.');
-                if (currentTaunt) {
-                  try { await api.markTauntsRead([currentTaunt.id]); } catch {}
-                  setCurrentTaunt(null);
+                // Hilo cerrado: no hay nada que reintentar, así que sí se marca
+                // leída para no volver a ofrecer algo imposible.
+                if (tauntTarget.notifId) {
+                  try { await api.markTauntsRead([tauntTarget.notifId]); } catch {}
                 }
+                setCurrentTaunt(null);
               } else {
                 Alert.alert('Error', 'No se pudo enviar el mensaje. Inténtalo de nuevo.');
               }
