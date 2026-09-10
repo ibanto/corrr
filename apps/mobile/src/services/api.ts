@@ -496,7 +496,6 @@ class ApiService {
    *  tiene el 0,0001% de España, que no dice nada. */
   async getTerritory(userId: string): Promise<{
     displayName: string;
-    avatar: string | null;
     city: string | null;
     cells: number;
     areaM2: number;

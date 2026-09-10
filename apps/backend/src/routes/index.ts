@@ -2177,8 +2177,12 @@ app.get('/territory/:userId', { preHandler: requireAuth }, async (req: any, repl
     return reply.status(400).send({ error: 'userId no válido' });
   }
 
+  // Sin avatar_url a propósito: las fotos se guardan como la imagen entera en
+  // base64 (hasta 2,3 MB) y esta respuesta solo debería llevar números. Quien
+  // la necesita ya la tiene por otra vía — el mapa la manda en `owners` y el
+  // perfil propio la tiene en su ficha.
   const { rows: u } = await db.query(
-    'SELECT display_name, city, avatar_url FROM users WHERE id = $1',
+    'SELECT display_name, city FROM users WHERE id = $1',
     [userId],
   );
   if (u.length === 0) return reply.status(404).send({ error: 'Usuario no encontrado' });
@@ -2213,7 +2217,6 @@ app.get('/territory/:userId', { preHandler: requireAuth }, async (req: any, repl
 
   return reply.send({
     displayName: user.display_name,
-    avatar: user.avatar_url ?? null,
     city: cityKey || null,
     cells,
     // Cada celda son 10x10 m = 100 m2. Se manda en metros cuadrados y que
