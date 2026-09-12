@@ -316,8 +316,24 @@ const MAX_DOPPLER_DT_S = 15;
 // de velocidad dentro de ±4%. Ajustable si algún dispositivo/ritmo se desvía;
 // el arreglo "de libro" (fusión con acelerómetro / Kalman) queda para más adelante.
 const DOPPLER_CALIBRATION = 0.72;
-const MAX_ACCURACY_M = 18;       // Ignore GPS points with accuracy worse than 18m
-const WARMUP_ACCURACY_M = 12;    // First 5 points need accuracy < 12m (GPS warming up)
+// Precisión máxima aceptable de una lectura GPS. Por encima de esto el punto
+// se descarta ENTERO: ni pinta celda ni suma distancia.
+//
+// Estaba en 18 m y era demasiado estricto. En ciudad, entre edificios, una
+// precisión de 20-35 m es lo normal, así que había carreras en las que NINGÚN
+// punto pasaba el filtro: el cronómetro corría, no se pintaba nada, no se
+// sumaba ni un metro, y al terminar la carrera se descartaba por "demasiado
+// corta" y se perdía entera. Sin ningún aviso por el camino.
+//
+// 30 m es un compromiso: sigue descartando las lecturas de verdad malas (las
+// de 50-100 m que dan saltos absurdos), pero deja pasar las normales de ciudad.
+// El ruido que entra lo filtran igualmente MIN_POINT_DIST_M (6 m de suelo) y
+// la detección de teletransportes, que no han cambiado.
+const MAX_ACCURACY_M = 30;
+// Los primeros puntos siguen siendo más exigentes: es cuando el GPS está
+// calentando y da las lecturas más disparatadas, y un primer punto malo
+// desplaza el arranque del recorrido.
+const WARMUP_ACCURACY_M = 20;
 const WARMUP_POINTS = 5;         // Number of initial points with strict accuracy
 // Techo de lecturas para el warmup estricto. Sin esto el warmup se podía
 // DEADLOCKEAR: el contador de warmup mira puntos ACEPTADOS, pero si la
@@ -1012,6 +1028,13 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
   const ownerAvatarsRef = useRef<Record<string, string | null>>({});
   const [zoomedOutTooMuch, setZoomedOutTooMuch] = useState(false);
   const [speedWarning, setSpeedWarning] = useState(false);
+  // Aviso de señal: si durante la carrera no entra ningún punto válido, el
+  // cronómetro corre pero no se registra NADA, y el usuario no se entera hasta
+  // el final —cuando la carrera se descarta por "demasiado corta" y se pierde.
+  // Esto lo dice en cuanto pasan 25 segundos sin una lectura utilizable.
+  const [gpsWeak, setGpsWeak] = useState(false);
+  const lastGoodPointRef = useRef<number>(0);
+  const gpsWatchTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const [currentSpeed, setCurrentSpeed] = useState(0);
   // Frase motivacional que rota cada minuto durante la carrera (sustituye km/h).
   const [runPhrase, setRunPhrase] = useState(() => randomPhrase());
@@ -1898,6 +1921,8 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     }
 
     setIsRunning(true);
+    lastGoodPointRef.current = Date.now();
+    setGpsWeak(false);
     setRunTime(0);
     runStartTimeRef.current = Date.now();
     pauseStartedAtRef.current = null;
@@ -1927,6 +1952,15 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     isAutoPausedRef.current = false;
     setIsAutoPaused(false);
     lastMovementTime.current = Date.now();
+
+    // Vigilante de señal: si llevamos 25 s sin una lectura GPS utilizable, la
+    // carrera no está registrando nada y hay que decirlo. Sin esto el usuario
+    // ve el cronómetro correr y se entera al final, cuando ya la ha perdido.
+    if (gpsWatchTimer.current) clearInterval(gpsWatchTimer.current);
+    gpsWatchTimer.current = setInterval(() => {
+      if (!isRunningRef.current) return;
+      setGpsWeak(Date.now() - lastGoodPointRef.current > 25000);
+    }, 3000);
 
     // Auto-pause silencioso: cada 3s comprobamos si llevas 20s sin moverte.
     // Si sí, congelamos contadores (timer, distancia, celdas) sin tocar el GPS.
@@ -2059,6 +2093,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       }
 
       // 'accept' — good point
+      lastGoodPointRef.current = Date.now();
       lastLocationTimestamp.current = now;
       fullPathRef.current.push(newCoord);
       pathRef.current = [...pathRef.current, newCoord];
@@ -2195,6 +2230,8 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     setIsAutoPaused(false);
     pauseStartedAtRef.current = Date.now();
     if (autoPauseTimer.current) { clearInterval(autoPauseTimer.current); autoPauseTimer.current = null; }
+    if (gpsWatchTimer.current) { clearInterval(gpsWatchTimer.current); gpsWatchTimer.current = null; }
+    setGpsWeak(false);
     deactivateScreenAwake();
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
     if (locationRef.current) { locationRef.current.remove(); locationRef.current = null; }
@@ -2344,51 +2381,78 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     // convexHull, que era el verdadero fantasma y ya no se usa). Estas celdas
     // se mandan al backend → al reabrir el interior sigue cerrado (consistente).
     if (loopClosedRef.current) {
-      // Cerrar el ANILLO antes de rellenar. El loop se detecta por geometría
-      // (has vuelto a <30m de un punto anterior), pero eso no garantiza que el
-      // rastro de CELDAS cierre: el GPS muestrea cada ~8m, así que esos últimos
-      // metros suelen quedar sin muestrear y el anillo queda abierto por 2-3
-      // celdas. fillEnclosedCells es topológico: por un hueco de una sola celda
-      // el relleno se escapa al exterior y no reclama NADA. Medido en carreras
-      // reales: circuitos cerrados de verdad acababan con solo el perímetro
-      // pintado. Puenteamos del último punto al primero con cellLine (lo mismo
-      // que ya se hace entre lecturas consecutivas), con un tope corto para no
-      // inventar territorio si el "cierre" no era real.
-      // Rellenamos por GEOMETRÍA del recorrido, no por topología del rastro de
-      // celdas. fillEnclosedCells necesita un anillo de celdas perfectamente
-      // cerrado: basta un hueco de una celda —y los hay, porque el GPS pierde
-      // lecturas a mitad de recorrido— para que el relleno se escape al
-      // exterior y no reclame NADA. Medido en circuitos reales cerrados de
-      // verdad: solo quedaba pintado el perímetro.
-      // Con el polígono del trazado real no hay ese problema: probamos cada
-      // celda de la caja con point-in-polygon. No infla como el viejo
-      // convexHull (que sí inventaba territorio): el límite es exactamente por
-      // donde pasaste. Después seguimos pasando el flood-fill topológico, que
-      // remata huecos interiores.
-      const poly = fullPathRef.current;
-      if (poly.length >= 8) {
-        let minCX = Infinity, maxCX = -Infinity, minCY = Infinity, maxCY = -Infinity;
-        for (const p of poly) {
-          const c = coordToCell(p.latitude, p.longitude);
-          if (c.x < minCX) minCX = c.x; if (c.x > maxCX) maxCX = c.x;
-          if (c.y < minCY) minCY = c.y; if (c.y > maxCY) maxCY = c.y;
+      // Rellenar SOLO los circuitos que de verdad se cerraron.
+      //
+      // Antes esto tomaba el recorrido ENTERO como un polígono. Un polígono se
+      // cierra solo, uniendo el último punto con el primero, así que si salías
+      // de A y acababas en B —lejos— esa línea recta imaginaria cerraba la
+      // figura y se reclamaba TODA el área entre tu ruta y esa diagonal.
+      // Territorio por el que nunca se pasó.
+      //
+      // Y saltaba casi siempre: basta volver a menos de 30 m de cualquier punto
+      // anterior para dar el recorrido por "cerrado", y en una carrera larga
+      // por ciudad eso ocurre seguro (cruzas tu propia ruta, vuelves por una
+      // calle paralela...). Medido en producción: ocho carreras infladas entre
+      // 2 y 5,4 veces, y una de 16 km que dibujaba una cuña maciza en lugar de
+      // un recorrido.
+      //
+      // Ahora se buscan los tramos cerrados de verdad: pares de puntos a menos
+      // de 30 m entre sí con al menos 200 m de recorrido por medio. Cada uno es
+      // un circuito real y se rellena su polígono. Lo que quede fuera —la ida
+      // hasta el circuito, o la vuelta a casa después— es una cola abierta que
+      // no encierra nada, y no aporta ni una celda.
+      const path = fullPathRef.current;
+      if (path.length >= 8) {
+        // Distancia acumulada, para medir el recorrido entre dos puntos sin
+        // tener que recorrer el tramo cada vez.
+        const cum: number[] = [0];
+        for (let k = 1; k < path.length; k++) {
+          cum[k] = cum[k - 1] + getDistance(path[k - 1], path[k]);
         }
-        // Tope de seguridad: un GPS enloquecido no puede hacernos recorrer un
-        // área absurda (200x200 celdas = 2x2 km ya es una carrera enorme).
-        const w = maxCX - minCX + 1, h = maxCY - minCY + 1;
-        if (w * h <= 40000) {
+
+        const loops: Coord[][] = [];
+        let from = 0;
+        for (let j = 1; j < path.length; j++) {
+          for (let i = from; i < j; i++) {
+            const perimeter = cum[j] - cum[i];
+            // Al crecer i el perímetro solo puede encoger: si ya es corto,
+            // ninguno de los siguientes servirá.
+            if (perimeter < LOOP_MIN_PERIMETER_M) break;
+            // Un "circuito" de más de 10 km casi siempre es el recorrido
+            // entero cerrándose contra sí mismo, que es lo que evitamos.
+            if (perimeter > 10000) continue;
+            if (getDistance(path[i], path[j]) < LOOP_CLOSE_DIST_M) {
+              loops.push(path.slice(i, j + 1));
+              from = j; // tramo consumido
+              break;
+            }
+          }
+        }
+
+        for (const loop of loops) {
+          let minCX = Infinity, maxCX = -Infinity, minCY = Infinity, maxCY = -Infinity;
+          for (const pt of loop) {
+            const c = coordToCell(pt.latitude, pt.longitude);
+            if (c.x < minCX) minCX = c.x; if (c.x > maxCX) maxCX = c.x;
+            if (c.y < minCY) minCY = c.y; if (c.y > maxCY) maxCY = c.y;
+          }
+          // Tope por circuito: 200x200 celdas son 2x2 km, ya un circuito
+          // enorme. Si sale mayor, algo va mal en el GPS.
+          const w = maxCX - minCX + 1, h = maxCY - minCY + 1;
+          if (w * h > 40000) continue;
           for (let cy = minCY; cy <= maxCY; cy++) {
             for (let cx = minCX; cx <= maxCX; cx++) {
               const k = cellKey(cx, cy);
               if (claimedCellsRef.current.has(k)) continue;
-              // Centro de la celda
               const lat = (cy + 0.5) * CELL_LAT_DEG;
               const lng = (cx + 0.5) * CELL_LNG_DEG;
-              if (pointInPolygon(lat, lng, poly)) claimedCellsRef.current.add(k);
+              if (pointInPolygon(lat, lng, loop)) claimedCellsRef.current.add(k);
             }
           }
         }
       }
+      // El flood-fill topológico remata huecos interiores. Nunca inventa: solo
+      // reclama lo que el rastro encierra por completo.
       const filledCells = fillEnclosedCells(claimedCellsRef.current);
       if (filledCells.size !== claimedCellsRef.current.size) {
         claimedCellsRef.current = filledCells;
@@ -3250,6 +3314,14 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         )}
 
         {/* Anti-trampa: aviso velocidad excesiva */}
+        {gpsWeak && (
+          <View style={styles.gpsBanner}>
+            <Ionicons name="warning" size={18} color="#FFB300" />
+            <Text style={styles.gpsBannerText}>
+              Sin señal GPS suficiente — no se está registrando
+            </Text>
+          </View>
+        )}
         {speedWarning && (
           <View style={styles.speedBanner}>
             <Ionicons name="speedometer" size={18} color="#FF3B30" />
@@ -3611,6 +3683,13 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm, gap: spacing.xs,
   },
   zoomBannerText: { fontSize: 14, fontWeight: '700', color: colors.orange },
+  gpsBanner: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    backgroundColor: 'rgba(255,179,0,0.15)', borderColor: '#FFB300', borderWidth: 1,
+    paddingHorizontal: spacing.md, paddingVertical: 8, borderRadius: radius.full,
+    alignSelf: 'center', marginTop: spacing.sm,
+  },
+  gpsBannerText: { fontSize: 13, fontWeight: '700', color: '#FFB300', flexShrink: 1 },
   speedBanner: {
     position: 'absolute', top: spacing.md, left: spacing.md, right: spacing.md,
     backgroundColor: 'rgba(255,59,48,0.15)', borderRadius: radius.full,
