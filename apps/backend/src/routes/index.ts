@@ -3261,8 +3261,8 @@ app.post('/strava/webhook', async (req: any, reply) => {
 // MIN_APP_VERSION) para no tener que hacer redeploy del backend en cada
 // release. Si las env vars no están, se usan los fallbacks hardcodeados —
 // que SÍ hay que mantener sincronizados manualmente con cada subida a Play.
-const LATEST_APP_VERSION = process.env.LATEST_APP_VERSION ?? '1.11.3';
-const LATEST_APP_VC = parseInt(process.env.LATEST_APP_VC ?? '61', 10);
+const LATEST_APP_VERSION = process.env.LATEST_APP_VERSION ?? '1.11.4';
+const LATEST_APP_VC = parseInt(process.env.LATEST_APP_VC ?? '62', 10);
 const MIN_APP_VERSION = process.env.MIN_APP_VERSION ?? '1.0.0';
 
 // iOS va por su cuenta: sube a App Store cuando Apple aprueba, no cuando
@@ -3270,8 +3270,8 @@ const MIN_APP_VERSION = process.env.MIN_APP_VERSION ?? '1.0.0';
 // Android, y eso rompía a los usuarios de iPhone por partida doble: se les
 // anunciaba una versión que en su tienda no existe, y el botón "Actualizar"
 // les abría Google Play, que en un iPhone no lleva a ninguna parte.
-const LATEST_IOS_VERSION = process.env.LATEST_IOS_VERSION ?? '1.11.2';
-const LATEST_IOS_BUILD = parseInt(process.env.LATEST_IOS_BUILD ?? '6', 10);
+const LATEST_IOS_VERSION = process.env.LATEST_IOS_VERSION ?? '1.11.4';
+const LATEST_IOS_BUILD = parseInt(process.env.LATEST_IOS_BUILD ?? '7', 10);
 const ANDROID_UPDATE_URL = 'https://play.google.com/store/apps/details?id=app.corrr';
 // ID asignado por App Store Connect al publicarse (consultable sin claves en
 // https://itunes.apple.com/lookup?bundleId=app.corrr). Configurable por
