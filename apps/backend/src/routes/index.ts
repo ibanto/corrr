@@ -7,6 +7,7 @@ import { hash, verify } from 'argon2';
 import { SignJWT, jwtVerify } from 'jose';
 import { Resend } from 'resend';
 import { randomBytes } from 'crypto';
+import { SUPABASE_ROOT_CA } from '../db/supabase-ca.js';
 
 /**
  * Genera un token criptográficamente seguro para email verification / reset
@@ -54,7 +55,7 @@ const RAILWAY_URL = process.env.RAILWAY_PUBLIC_DOMAIN
 // petición se quede colgada indefinidamente esperando conexión (10s) — mejor
 // un error claro que un usuario mirando una pantalla congelada.
 const db = new Pool({
-  connectionString: process.env.DATABASE_URL,
+  ...databaseConfig(),
   max: 10,
   idleTimeoutMillis: 30_000,
   connectionTimeoutMillis: 10_000,
@@ -63,6 +64,45 @@ const db = new Pool({
 db.on('error', (err) => {
   console.error('[DB] Error en conexión inactiva (se descarta y se reabre):', err.message);
 });
+
+// Conexión con la base de datos CIFRADA y VERIFICADA.
+//
+// Hasta septiembre de 2026 iba sin cifrar: node-postgres no pide TLS si la
+// cadena de conexión no lo dice, y la nuestra no lo decía. Emails, hashes de
+// contraseña, ubicaciones y tokens viajaban en claro entre Railway y Supabase,
+// por internet. El RGPD (art. 32) pide cifrado adecuado al riesgo, y la
+// política de privacidad lo prometía.
+//
+// Se VERIFICA contra la CA raíz de Supabase, no solo se cifra: cifrar sin
+// verificar deja pasar a quien se ponga en medio con su propio certificado.
+//
+// Los parámetros ssl* de la URL se quitan porque en node-postgres los de la
+// cadena de conexión PISAN la opción `ssl` de aquí. Solo se reescribe la URL si
+// los trae, para no tocar una contraseña con caracteres raros.
+//
+// Salida de emergencia: DATABASE_SSL=no-verify en Railway cifra SIN verificar
+// el certificado. Solo para levantar el servicio si Supabase cambiara de CA
+// (la actual caduca en 2031) mientras se actualiza db/supabase-ca.ts.
+function databaseConfig(): { connectionString: string; ssl: { ca?: string; rejectUnauthorized: boolean } } {
+  const raw = process.env.DATABASE_URL;
+  if (!raw) {
+    console.error('[FATAL] DATABASE_URL missing. Set it in Railway env vars.');
+    process.exit(1);
+  }
+  let connectionString = raw;
+  if (/[?&](sslmode|sslrootcert|sslcert|sslkey|ssl|uselibpqcompat)=/.test(raw)) {
+    const url = new URL(raw);
+    for (const p of ['sslmode', 'sslrootcert', 'sslcert', 'sslkey', 'ssl', 'uselibpqcompat']) {
+      url.searchParams.delete(p);
+    }
+    connectionString = url.toString();
+  }
+  if (process.env.DATABASE_SSL === 'no-verify') {
+    console.warn('[DB] DATABASE_SSL=no-verify: conexión cifrada pero SIN verificar el certificado.');
+    return { connectionString, ssl: { rejectUnauthorized: false } };
+  }
+  return { connectionString, ssl: { ca: SUPABASE_ROOT_CA, rejectUnauthorized: true } };
+}
 // JWT_ACCESS_SECRET sí o sí debe existir: sin él, TextEncoder().encode(undefined)
 // produciría un secret literal "undefined" → cualquiera podría forjar tokens.
 // Si es corto pero existe, avisamos (warning, no fail) para no romper deploys
@@ -412,8 +452,21 @@ const requireAuth = async (req: any, reply: any) => {
 // ── Auth ──────────────────────────────────────────────────────────────────────
 
 app.get('/health', async (req, reply) => {
-  try { await db.query('SELECT 1'); } catch (err) { return reply.status(503).send({ ok: false, error: String(err) }); }
-  return reply.send({ ok: true, ts: Date.now() });
+  // dbTls dice si la conexión con la base de datos va cifrada y con el
+  // certificado verificado. Es la única forma de comprobarlo desde fuera, y
+  // si algún día alguien quita la configuración de TLS, se ve aquí.
+  let client;
+  try {
+    client = await db.connect();
+    await client.query('SELECT 1');
+    const stream: any = (client as any).connection?.stream;
+    const dbTls = { encrypted: stream?.encrypted === true, verified: stream?.authorized === true };
+    return reply.send({ ok: true, ts: Date.now(), dbTls });
+  } catch (err) {
+    return reply.status(503).send({ ok: false, error: String(err) });
+  } finally {
+    client?.release();
+  }
 });
 
 app.post('/auth/register', {
