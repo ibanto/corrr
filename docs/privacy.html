@@ -66,7 +66,7 @@
     <div class="subtitle">Conquista tu ciudad corriendo</div>
 
     <h1>Política de Privacidad</h1>
-    <p class="updated">Última actualización: 26 de agosto de 2026</p>
+    <p class="updated">Última actualización: 16 de septiembre de 2026</p>
 
     <p>
       Esta Política de Privacidad describe cómo <strong>CORRR</strong> ("la aplicación", "nosotros") recoge,
@@ -107,8 +107,8 @@
 
     <h3>2.3 Datos generados al usar la aplicación</h3>
     <ul>
-      <li><strong>Rutas GPS</strong> de tus carreras (coordenadas latitud/longitud, marcas temporales, velocidad, precisión).</li>
-      <li><strong>Celdas conquistadas</strong> en el mapa (cuadrados de 10×10 m que tu carrera ha cubierto).</li>
+      <li><strong>Ubicación durante la carrera:</strong> el GPS se procesa en tu móvil para medir la distancia y saber qué celdas pisas. No guardamos tu recorrido punto a punto: al servidor llegan las celdas conquistadas y, si cierras un circuito, su contorno.</li>
+      <li><strong>Celdas conquistadas</strong> en el mapa (cuadrados de 10×10 m que tu carrera ha cubierto), con la fecha y la carrera en que las conseguiste.</li>
       <li><strong>Estadísticas:</strong> distancia total, número de carreras, zonas conquistadas, robos, puntos, parciales por km.</li>
       <li><strong>Identificador de dispositivo para notificaciones push</strong> (Expo push token).</li>
     </ul>
@@ -131,7 +131,24 @@
     </ul>
     <p>Puedes revocar el acceso a Strava en cualquier momento desde tu perfil de Strava.</p>
 
-    <p><strong>NO recogemos:</strong> datos de pago, lista de contactos, fotos de tu galería (salvo la que tú elijas como avatar), acceso a tu micrófono o cámara fuera del flujo de avatar, datos de salud, datos biométricos.</p>
+    <h3>2.6 Datos de Salud de Apple (opcional, solo iPhone)</h3>
+    <p>
+      Si conectas tu Apple Watch desde tu perfil y das permiso en iOS, CORRR lee de la app Salud
+      <strong>solo tus entrenos de correr y caminar y sus rutas GPS</strong>, y solo los que hagas después
+      de conectar. No leemos pulso, calorías ni ningún otro dato de salud.
+    </p>
+    <p>
+      La ruta se procesa en tu iPhone para convertirla en celdas. A nuestro servidor llegan las celdas,
+      la distancia, la duración, la hora de inicio y de fin, y un identificador del entreno para no
+      importarlo dos veces. La ruta punto a punto no sale de tu móvil.
+    </p>
+    <p>
+      Los datos de Salud no se usan para publicidad, no se ceden a terceros y no se guardan en iCloud.
+      Puedes dejar de importar desde tu perfil ("Desconectar") y retirar el permiso en
+      Ajustes → Salud → Acceso a datos y dispositivos → CORRR.
+    </p>
+
+    <p><strong>NO recogemos:</strong> datos de pago, lista de contactos, fotos de tu galería (salvo la que tú elijas como avatar), acceso a tu micrófono o cámara fuera del flujo de avatar, datos biométricos, ni datos de salud más allá de los entrenos del apartado 2.6.</p>
 
     <h2>3. Finalidad del tratamiento</h2>
     <p>Usamos tus datos exclusivamente para:</p>
@@ -143,13 +160,19 @@
       <li>Calcular estadísticas personales y rankings (locales y globales).</li>
       <li>Mostrar tu nombre y grito de guerra a otros usuarios cuando tocan tus zonas.</li>
       <li>Importar carreras desde Strava si lo solicitas expresamente.</li>
+      <li>Importar tus carreras y caminatas del Apple Watch si lo conectas.</li>
     </ul>
 
     <h2>4. Base legal</h2>
     <p>
-      El tratamiento se basa en el <strong>consentimiento</strong> que otorgas al registrarte y al aceptar los permisos
-      del sistema operativo (ubicación, notificaciones). En el caso de Strava, al autorizar expresamente la conexión.
-      Puedes retirar tu consentimiento en cualquier momento eliminando tu cuenta o desconectando Strava.
+      Tratamos tus datos para <strong>prestarte el servicio que pides al registrarte</strong>: tu cuenta, el registro
+      de carreras, el mapa y los rankings. Es la ejecución del contrato que aceptas al crear la cuenta (art. 6.1.b RGPD).
+    </p>
+    <p>
+      Los datos opcionales del perfil, las notificaciones y la conexión con Strava y la importación desde el Apple Watch se basan en tu
+      <strong>consentimiento</strong> (art. 6.1.a), que puedes retirar cuando quieras desde la app o desde los ajustes
+      de tu móvil. Las medidas contra trampas y abusos se basan en nuestro <strong>interés legítimo</strong> en que el
+      juego sea justo y seguro (art. 6.1.f).
     </p>
 
     <h2>5. Localización GPS y seguimiento en segundo plano</h2>
@@ -172,15 +195,18 @@
     </p>
     <table>
       <tr><th>Proveedor</th><th>Servicio</th><th>Ubicación física</th></tr>
-      <tr><td><strong>Supabase</strong></td><td>Base de datos PostgreSQL y almacenamiento de imágenes (avatares)</td><td>AWS, Irlanda (UE)</td></tr>
+      <tr><td><strong>Supabase</strong></td><td>Base de datos PostgreSQL, incluida tu foto de perfil</td><td>AWS, Irlanda (UE)</td></tr>
       <tr><td><strong>Railway</strong></td><td>Servidor backend de la API</td><td>Países Bajos (UE)</td></tr>
       <tr><td><strong>GitHub Pages</strong></td><td>Sitio web público (corrr.es) — sin datos de usuario</td><td>Microsoft, CDN global</td></tr>
-      <tr><td><strong>Expo (Expo Application Services)</strong></td><td>Envío de notificaciones push</td><td>Estados Unidos</td></tr>
+      <tr><td><strong>Expo (Expo Application Services)</strong></td><td>Envío de notificaciones push (las entrega a tu móvil a través de Apple o Google)</td><td>Estados Unidos</td></tr>
+      <tr><td><strong>Resend</strong></td><td>Envío de los correos de verificación y de recuperación de contraseña (tu dirección de email)</td><td>Estados Unidos</td></tr>
+      <tr><td><strong>Google Maps</strong></td><td>Mapa dentro de la app. Google recibe la zona del mapa que se muestra y datos técnicos del dispositivo, según su propia política</td><td>Estados Unidos</td></tr>
       <tr><td><strong>Strava</strong></td><td>Si conectas Strava, sus datos los gestiona Strava según su política</td><td>Estados Unidos</td></tr>
     </table>
     <p>
-      <strong>Transferencia internacional:</strong> Expo (notificaciones push) y Strava son proveedores con sede en EE.UU.
-      Solo se les transfieren los datos mínimos necesarios (un identificador opaco de dispositivo, en el caso de Expo).
+      <strong>Transferencia internacional:</strong> Expo, Resend, Google y Strava son proveedores con sede en EE.UU.
+      Solo reciben lo necesario para su función: un identificador opaco de dispositivo (Expo), tu email (Resend)
+      o la zona del mapa que estás viendo (Google).
       Estas transferencias están amparadas por las Cláusulas Contractuales Tipo de la Comisión Europea y/o por el
       EU-US Data Privacy Framework.
     </p>
@@ -190,8 +216,8 @@
       Algunos datos son visibles para otros usuarios de CORRR por la naturaleza del juego:
     </p>
     <ul>
-      <li><strong>Tu nombre de usuario público</strong> y <strong>grito de guerra</strong> aparecen al tocar zonas que has conquistado, en rankings y en notificaciones de robo.</li>
-      <li><strong>Tus celdas conquistadas</strong> son visibles en el mapa para otros usuarios cercanos.</li>
+      <li><strong>Tu nombre de usuario público</strong>, tu <strong>foto de perfil</strong> y tu <strong>grito de guerra</strong> aparecen al tocar zonas que has conquistado, en rankings y en notificaciones de robo.</li>
+      <li><strong>Tus celdas conquistadas</strong> son visibles en el mapa para cualquier usuario de CORRR que mire esa zona. Ten en cuenta que dibujan por dónde sueles correr, y eso puede incluir los alrededores de tu casa.</li>
       <li><strong>Tu ciudad</strong> se usa en el ranking local.</li>
       <li><strong>Tus estadísticas agregadas</strong> (km totales, zonas, puntos) aparecen en rankings.</li>
     </ul>
@@ -239,8 +265,9 @@
     <ul>
       <li><strong>Contraseñas cifradas con Argon2</strong> — nunca se almacenan en texto plano.</li>
       <li><strong>HTTPS obligatorio</strong> en todas las comunicaciones entre la app y el servidor.</li>
+      <li><strong>Conexión cifrada y verificada</strong> (TLS, comprobando el certificado) entre nuestro servidor y la base de datos.</li>
       <li><strong>Encriptación en reposo</strong> en la base de datos (Supabase encripta los discos por defecto).</li>
-      <li><strong>Row-Level Security (RLS)</strong> activado en todas las tablas — un usuario no puede acceder a datos de otro a nivel de base de datos.</li>
+      <li><strong>Row-Level Security (RLS)</strong> activado en las tablas con datos de usuarios: la base de datos no es accesible desde fuera sin pasar por nuestro servidor.</li>
       <li><strong>Tokens de sesión</strong> con validez limitada y firmados criptográficamente (JWT).</li>
       <li><strong>Verificación de correo</strong> para evitar registros falsos.</li>
     </ul>
