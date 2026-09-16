@@ -20,6 +20,18 @@ function secureToken(): string {
   return randomBytes(32).toString('hex');
 }
 
+/** "hoy a las 8:15", "ayer a las 19:40" o "el 12 de septiembre a las 8:15",
+ *  en hora de España: la app solo está en español y sus usuarios están aquí. */
+export function formatRunMoment(ms: number, nowMs: number = Date.now()): string {
+  const tz = 'Europe/Madrid';
+  const dayKey = (t: number) => new Date(t).toLocaleDateString('en-CA', { timeZone: tz });
+  const hora = new Date(ms).toLocaleTimeString('es-ES', { timeZone: tz, hour: 'numeric', minute: '2-digit' });
+  if (dayKey(ms) === dayKey(nowMs)) return `hoy a las ${hora}`;
+  if (dayKey(ms) === dayKey(nowMs - 86_400_000)) return `ayer a las ${hora}`;
+  const fecha = new Date(ms).toLocaleDateString('es-ES', { timeZone: tz, day: 'numeric', month: 'long' });
+  return `el ${fecha} a las ${hora}`;
+}
+
 dotenv.config();
 
 // bodyLimit por defecto en Fastify es 1MB → demasiado pequeño para subir
@@ -177,6 +189,12 @@ async function initDB() {
   // este campo + UNIQUE.
   await db.query(`ALTER TABLE runs ADD COLUMN IF NOT EXISTS strava_activity_id BIGINT`).catch(() => {});
   await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS runs_strava_activity_id_uniq ON runs(strava_activity_id) WHERE strava_activity_id IS NOT NULL`).catch(() => {});
+  // Carreras importadas del Apple Watch (vía Salud). `source` dice de dónde
+  // vino; `external_id` es el UUID del entreno en Salud y la clave de
+  // idempotencia: la app puede reintentar la importación sin duplicar nada.
+  await db.query(`ALTER TABLE runs ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'app'`).catch(() => {});
+  await db.query(`ALTER TABLE runs ADD COLUMN IF NOT EXISTS external_id TEXT`).catch(() => {});
+  await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS runs_user_external_id_uniq ON runs(user_id, external_id) WHERE external_id IS NOT NULL`).catch(() => {});
 
   await db.query(`ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS total_points INT DEFAULT 0`);
   await db.query(`ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS total_km FLOAT DEFAULT 0`);
@@ -1831,7 +1849,8 @@ app.post('/runs', {
 }, async (req: any, reply) => {
   // `points` (legacy) is the client's estimate. We recompute authoritatively
   // server-side below using loopBonus + cellPoints + kmPoints * multipliers.
-  const { distanceKm, durationSecs, points: clientPointsEstimate, loopBonus, loopClosed, zonesCount, zones, claimedCells } = req.body ?? {};
+  const { distanceKm, durationSecs, points: clientPointsEstimate, loopBonus, loopClosed, zonesCount, zones, claimedCells,
+          source, externalId, startedAt, endedAt } = req.body ?? {};
 
   // Sanitización + límites anti-cheat. Aunque la lógica de puntos se
   // recomputa server-side, valores absurdos en los inputs (carreras de
@@ -1853,6 +1872,69 @@ app.post('/runs', {
   }
   if (zones != null && (!Array.isArray(zones) || zones.length > 200)) {
     return reply.status(400).send({ error: 'zones inválido o demasiado grande' });
+  }
+
+  // ── Cuándo se corrió ─────────────────────────────────────────────────────
+  // Las carreras del Apple Watch llegan horas después de correrse. Para que el
+  // territorio sea justo, una celda la gana quien PASÓ por ella más tarde, no
+  // quien guardó más tarde: si alguien te la quitó a mediodía, tu carrera de
+  // la mañana importada por la noche no se la vuelve a robar.
+  //
+  // La app manda startedAt/endedAt desde la 1.11.6. Las versiones anteriores
+  // no, y para ellas la carrera acaba "ahora", como hasta hoy.
+  const isImport = source === 'healthkit';
+  if (source !== undefined && source !== 'app' && !isImport) {
+    return reply.status(400).send({ error: 'source no válido' });
+  }
+  const nowMs = Date.now();
+  let runStartMs = nowMs - durationSecs * 1000;
+  let runEndMs = nowMs;
+  if (startedAt !== undefined || endedAt !== undefined) {
+    const s = typeof startedAt === 'string' ? Date.parse(startedAt) : NaN;
+    const e = typeof endedAt === 'string' ? Date.parse(endedAt) : NaN;
+    if (!Number.isFinite(s) || !Number.isFinite(e) || s >= e || e > nowMs + 5 * 60_000 || e - s > 86_400_000) {
+      return reply.status(400).send({ error: 'startedAt/endedAt no válidos' });
+    }
+    runStartMs = s;
+    runEndMs = e;
+  }
+  if (isImport) {
+    if (typeof externalId !== 'string' || externalId.length < 8 || externalId.length > 100) {
+      return reply.status(400).send({ error: 'externalId no válido' });
+    }
+    if (startedAt === undefined) {
+      return reply.status(400).send({ error: 'Una carrera importada necesita startedAt y endedAt' });
+    }
+    // La app solo importa entrenos posteriores a conectar el reloj; esto es un
+    // tope por si acaso, para que nadie se traiga meses de carreras de golpe.
+    if (nowMs - runEndMs > 8 * 86_400_000) {
+      return reply.status(400).send({ error: 'Entreno demasiado antiguo para importar' });
+    }
+  }
+  // Las carreras hechas con la app ganan sus celdas "ahora", igual que siempre,
+  // con la hora de la propia base de datos (NOW()): así ni el reloj del móvil
+  // ni una diferencia de reloj entre Railway y Supabase pueden bloquear un robo.
+  const claimAtMs = runEndMs;
+
+  // Duplicados de una importación: el mismo entreno otra vez, o una carrera
+  // que ya registraste con CORRR a la vez que con el reloj (se solapan más de
+  // la mitad). Las carreras antiguas no guardaban la hora de fin: su
+  // started_at es el momento de guardarlas, y empezaron duration_secs antes.
+  if (isImport) {
+    const { rows: dup } = await db.query(
+      `SELECT id FROM runs
+       WHERE user_id = $1
+         AND (external_id = $2 OR (
+           LEAST(COALESCE(ended_at, started_at), $4::timestamptz)
+           - GREATEST(CASE WHEN ended_at IS NULL
+                           THEN started_at - make_interval(secs => duration_secs)
+                           ELSE started_at END, $3::timestamptz)
+           > ($4::timestamptz - $3::timestamptz) * 0.5
+         ))
+       LIMIT 1`,
+      [req.userId, externalId, new Date(runStartMs).toISOString(), new Date(runEndMs).toISOString()],
+    );
+    if (dup.length > 0) return reply.send({ duplicate: true, runId: dup[0].id });
   }
 
   // Coherencia geométrica: las celdas tienen que ser compatibles con la
@@ -1906,10 +1988,16 @@ app.post('/runs', {
   try {
     await client.query('BEGIN');
 
+    // created_at es la fecha que ve el usuario en su historial: para una
+    // importada, la del entreno, no la de la importación (como con Strava).
     const { rows } = await client.query(
-      `INSERT INTO runs (user_id, distance_km, duration_secs, points, zones_count, flagged_reason)
-       VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
-      [userId, distanceKm, durationSecs, clientPointsEstimate || 0, zonesCount, flaggedReason]
+      `INSERT INTO runs (user_id, distance_km, duration_secs, points, zones_count, flagged_reason,
+                         started_at, ended_at, created_at, source, external_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7::timestamptz,$8::timestamptz,$9::timestamptz,$10,$11) RETURNING id`,
+      [userId, distanceKm, durationSecs, clientPointsEstimate || 0, zonesCount, flaggedReason,
+       new Date(runStartMs).toISOString(), new Date(runEndMs).toISOString(),
+       new Date(isImport ? runEndMs : nowMs).toISOString(),
+       isImport ? 'healthkit' : 'app', isImport ? externalId : null]
     );
     const runId = rows[0].id;
 
@@ -1917,6 +2005,7 @@ app.post('/runs', {
     // Coexists with the polygon logic below. v1.5.x clients send only `zones`,
     // v1.6+ clients send `claimedCells`. Server handles whichever arrives.
     let newCellCount = 0;
+    let newerCellsKept = 0;
     if (Array.isArray(claimedCells) && claimedCells.length > 0) {
       // Bounding box of all claims — used to fetch existing ownership in one query.
       const xs = claimedCells.map((c: any) => c.x);
@@ -1925,42 +2014,57 @@ app.post('/runs', {
       const minY = Math.min(...ys), maxY = Math.max(...ys);
 
       const { rows: existing } = await client.query(
-        `SELECT cell_x, cell_y, owner_id FROM cells
+        `SELECT cell_x, cell_y, owner_id, claimed_at FROM cells
          WHERE cell_x BETWEEN $1 AND $2 AND cell_y BETWEEN $3 AND $4`,
         [minX, maxX, minY, maxY]
       );
-      const existingMap = new Map<string, string>();
-      for (const e of existing) existingMap.set(`${e.cell_x},${e.cell_y}`, e.owner_id);
+      const existingMap = new Map<string, { owner: string; at: number }>();
+      for (const e of existing) {
+        existingMap.set(`${e.cell_x},${e.cell_y}`, {
+          owner: e.owner_id,
+          at: e.claimed_at ? new Date(e.claimed_at).getTime() : 0,
+        });
+      }
 
-      // Classify: new claims vs robos vs self-reclaims.
+      // Classify: new claims vs robos vs self-reclaims — y las que NO se tocan
+      // porque alguien pasó por ellas después de esta carrera (solo ocurre con
+      // importadas: una carrera de la app siempre es la más reciente).
       const robosByPrevOwner = new Map<string, { x: number; y: number }[]>();
+      const toClaim: { x: number; y: number }[] = [];
       for (const c of claimedCells) {
         const prev = existingMap.get(`${c.x},${c.y}`);
         if (!prev) {
           newCellCount++;
-        } else if (prev !== userId) {
-          const list = robosByPrevOwner.get(prev) ?? [];
+        } else if (isImport && prev.at > claimAtMs) {
+          newerCellsKept++;
+          continue;
+        } else if (prev.owner !== userId) {
+          const list = robosByPrevOwner.get(prev.owner) ?? [];
           list.push({ x: c.x, y: c.y });
-          robosByPrevOwner.set(prev, list);
+          robosByPrevOwner.set(prev.owner, list);
         }
-        // prev === userId → self-reclaim, just refresh timestamp (no count change)
+        // prev.owner === userId → self-reclaim, just refresh timestamp (no count change)
+        toClaim.push({ x: c.x, y: c.y });
       }
 
       // Batch upsert all claimed cells. ON CONFLICT transfers ownership for robos
       // and refreshes the timestamp for self-reclaims.
-      const xArr = claimedCells.map((c: any) => c.x);
-      const yArr = claimedCells.map((c: any) => c.y);
+      // claimed_at = cuándo se pasó por la celda. El WHERE repite la regla de
+      // arriba dentro de la base de datos, por si dos carreras se guardan a la vez.
+      const xArr = toClaim.map(c => c.x);
+      const yArr = toClaim.map(c => c.y);
       await client.query(
-        `INSERT INTO cells (cell_x, cell_y, owner_id, run_id)
-         SELECT x, y, $3::uuid, $4::uuid
+        `INSERT INTO cells (cell_x, cell_y, owner_id, run_id, claimed_at)
+         SELECT x, y, $3::uuid, $4::uuid, COALESCE($5::timestamptz, NOW())
          FROM unnest($1::int[], $2::int[]) AS t(x, y)
          ON CONFLICT (cell_x, cell_y) DO UPDATE
-         SET owner_id = EXCLUDED.owner_id, run_id = EXCLUDED.run_id, claimed_at = NOW()`,
-        [xArr, yArr, userId, runId]
+         SET owner_id = EXCLUDED.owner_id, run_id = EXCLUDED.run_id, claimed_at = EXCLUDED.claimed_at
+         WHERE COALESCE(cells.claimed_at, '-infinity'::timestamptz) <= EXCLUDED.claimed_at`,
+        [xArr, yArr, userId, runId, isImport ? new Date(claimAtMs).toISOString() : null]
       );
       // El mapa de esta zona acaba de cambiar de dueño: tira su caché para que
       // el robo se vea al instante y no dentro de 30 segundos.
-      invalidateViewportCache(claimedCells.map((c: any) => ({ x: c.x, y: c.y })));
+      invalidateViewportCache(toClaim);
 
       // Aquí solo se restan CELDAS. Los puntos de la víctima se descuentan más
       // abajo, en el bloque que recorre stolenCells (1 punto por celda). Están
@@ -1993,7 +2097,11 @@ app.post('/runs', {
             '😱 ¡Te han robado territorio!',
             // Se dice el coste en puntos a propósito: si la penalización no se ve,
             // no genera ninguna reacción. Es 1 punto por celda, mismo número.
-            `${thief[0]?.display_name ?? 'Alguien'} te ha quitado ${robosList.length} ${robosList.length === 1 ? 'celda' : 'celdas'} y ${robosList.length} ${robosList.length === 1 ? 'punto' : 'puntos'}. ¡Sal a recuperarlas!`
+            `${thief[0]?.display_name ?? 'Alguien'} te ha quitado ${robosList.length} ${robosList.length === 1 ? 'celda' : 'celdas'} y ${robosList.length} ${robosList.length === 1 ? 'punto' : 'puntos'}`
+              // Una importada roba con horas de retraso: se dice cuándo corrió,
+              // para que no parezca que alguien te está robando ahora mismo.
+              + (isImport ? ` con su Apple Watch ${formatRunMoment(runStartMs)}` : '')
+              + '. ¡Sal a recuperarlas!'
           );
         }
       }
@@ -2098,12 +2206,19 @@ app.post('/runs', {
       [userId]
     );
     const prevStats = statsRows[0] || { last_run_date: null, streak_days: 0, best_daily_km: 0 };
-    const today = new Date(); today.setUTCHours(0, 0, 0, 0);
+    // El día de la carrera, no el de guardarla: una importada de ayer cuenta
+    // para ayer. Si es anterior a tu última carrera, la racha no se toca (ni
+    // se rompe ni se mueve la fecha hacia atrás).
+    // Carreras de la app: la fecha del servidor, como siempre (el reloj del
+    // móvil puede ir mal). Importadas: la del entreno.
+    const today = new Date(isImport ? runEndMs : nowMs); today.setUTCHours(0, 0, 0, 0);
     let newStreak = 1;
+    let lastRunDay = today;
     if (prevStats.last_run_date) {
       const last = new Date(prevStats.last_run_date); last.setUTCHours(0, 0, 0, 0);
       const diffDays = Math.round((today.getTime() - last.getTime()) / 86_400_000);
-      if (diffDays === 0) newStreak = prevStats.streak_days || 1; // same day, keep
+      if (diffDays < 0) { newStreak = prevStats.streak_days || 1; lastRunDay = last; }
+      else if (diffDays === 0) newStreak = prevStats.streak_days || 1; // same day, keep
       else if (diffDays === 1) newStreak = (prevStats.streak_days || 0) + 1; // consecutive
       // else: streak broken, newStreak stays at 1
     }
@@ -2153,7 +2268,7 @@ app.post('/runs', {
        WHERE user_id = $1`,
       [userId, zonesCount, authoritativePoints, distanceKm,
        stolenZones.length + stolenCells.length, newCellCount,
-       today.toISOString().slice(0, 10), newStreak, newBestKm]
+       lastRunDay.toISOString().slice(0, 10), newStreak, newBestKm]
     );
 
     // Check and unlock achievements
@@ -2165,6 +2280,8 @@ app.post('/runs', {
       stolenZones,
       stolenCells,
       newCellCount,
+      // Celdas de la carrera que se quedan con quien pasó por ellas después.
+      newerCellsKept,
       points: authoritativePoints,
       breakdown: {
         kmPoints,
@@ -2195,7 +2312,7 @@ app.get('/runs/my', { preHandler: requireAuth }, async (req: any, reply) => {
   const offset = Math.max(parseInt(q.offset ?? '0', 10) || 0, 0);
   const [rowsRes, countRes] = await Promise.all([
     db.query(
-      `SELECT id, distance_km, duration_secs, points, zones_count, created_at
+      `SELECT id, distance_km, duration_secs, points, zones_count, created_at, source
        FROM runs WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
       [req.userId, limit, offset]
     ),
