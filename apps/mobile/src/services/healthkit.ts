@@ -34,9 +34,11 @@ const RUNNING = 37;
 const WALKING = 52;
 const IMPORTABLE = new Set<number>([RUNNING, WALKING]);
 
-// La ruta llega al iPhone cuando el reloj sincroniza, a veces minutos después
-// del entreno. Mientras sea reciente, un entreno sin ruta se vuelve a mirar.
-const ROUTE_SYNC_GRACE_MS = 2 * 60 * 60 * 1000;
+// La ruta llega al iPhone cuando el reloj sincroniza: a veces minutos después del
+// entreno, a veces horas si el reloj no estaba cerca del móvil. Durante un día, un
+// entreno sin ruta se vuelve a mirar; después se da por hecho que no la tendrá
+// (cinta, reloj de otra marca).
+const ROUTE_SYNC_GRACE_MS = 24 * 60 * 60 * 1000;
 // Mismo tope que el servidor, con margen.
 const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 // Mismos mínimos que una carrera en directo para guardarse.
@@ -114,7 +116,16 @@ export async function importNewWorkouts(userId: string): Promise<ImportedWorkout
     const now = Date.now();
     const since = Math.max(Date.parse(state.connectedAt), now - MAX_AGE_MS);
     const seen = new Set(state.seen);
-    const workouts = await hk.queryWorkoutSamples({ limit: 50, ascending: true });
+    // Los 50 MÁS RECIENTES (la librería ordena por fecha de inicio). La 1.11.6 (10)
+    // pedía ascending: true, que devuelve los 50 más ANTIGUOS de Salud: con un Apple
+    // Watch con historial, los entrenos nuevos nunca entraban en la lista y no se
+    // importaba nada.
+    const recent = await hk.queryWorkoutSamples({ limit: 50, ascending: false });
+    // Se procesan en orden cronológico: si dos carreras pasan por la misma celda, el
+    // servidor tiene que verlas en el orden en que se corrieron.
+    const workouts = [...recent].sort(
+      (a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime(),
+    );
 
     for (const w of workouts) {
       try {
