@@ -1,0 +1,117 @@
+diff --git a/node_modules/react-native-maps/ios/AirGoogleMaps/AIRGoogleMap.m b/node_modules/react-native-maps/ios/AirGoogleMaps/AIRGoogleMap.m
+index a1ffe69..1e3d460 100644
+--- a/node_modules/react-native-maps/ios/AirGoogleMaps/AIRGoogleMap.m
++++ b/node_modules/react-native-maps/ios/AirGoogleMaps/AIRGoogleMap.m
+@@ -148,6 +148,13 @@ - (id)eventFromCoordinate:(CLLocationCoordinate2D)coordinate {
+ #pragma clang diagnostic push
+ #pragma clang diagnostic ignored "-Wobjc-missing-super-calls"
+ - (void)insertReactSubview:(id<RCTComponent>)subview atIndex:(NSInteger)atIndex {
++  // CORRR: last line of defence against the New Architecture interop (see the
++  // end of this file). A nil view, a view that is already on the map or an
++  // index past the end used to throw inside -[NSMutableArray insertObject:atIndex:].
++  if (subview == nil || [_reactSubviews containsObject:(UIView *)subview]) {
++    return;
++  }
++  atIndex = MAX(0, MIN(atIndex, (NSInteger)_reactSubviews.count));
+   // Our desired API is to pass up markers/overlays as children to the mapview component.
+   // This is where we intercept them and do the appropriate underlying mapview action.
+   if ([subview isKindOfClass:[AIRGoogleMapMarker class]]) {
+@@ -1038,6 +1045,98 @@ - (void)setLoadingBackgroundColor:(UIColor *)loadingBackgroundColor {
+ }
+ 
+ 
++@end
++
++#pragma mark - New Architecture interop fix (CORRR)
++
++// With the New Architecture, AIRGoogleMap is mounted through React Native's
++// RCTLegacyViewManagerInteropComponentView (RN 0.81). That wrapper inserts a
++// child right away only when it goes at the end of the list. Any other insert
++// is queued until the map itself gets a props/state/layout update, and in the
++// meantime removals go by index against a list that lacks the queued children,
++// so they take the wrong overlay off the map. If a queued child is removed and
++// recycled before the queue is flushed, its contentView is nil and
++// -insertReactSubview:atIndex: throws "object cannot be nil".
++// Reproduced in CORRR 1.11.6 build 12: pan the map, wait, tap "Refrescar".
++//
++// React Native core ships precompiled, so the wrapper is corrected from here:
++// when the wrapped view is an AIRGoogleMap, children are inserted immediately
++// and removed by identity. Every other component keeps the original behaviour.
++
++@protocol AIRInteropContentView
++- (UIView *)contentView;
++@end
++
++static Class AIRInteropClass;
++static IMP AIRInteropOriginalMount;
++static IMP AIRInteropOriginalUnmount;
++
++static AIRGoogleMap *AIRInteropMapOf(UIView *wrapper) {
++  UIView *content = [(id<AIRInteropContentView>)wrapper contentView];
++  return [content isKindOfClass:[AIRGoogleMap class]] ? (AIRGoogleMap *)content : nil;
++}
++
++static UIView *AIRInteropPaperViewOf(UIView *child) {
++  return [child isKindOfClass:AIRInteropClass] ? [(id<AIRInteropContentView>)child contentView] : child;
++}
++
++static void AIRInteropMount(UIView *self, SEL _cmd, UIView *child, NSInteger index) {
++  AIRGoogleMap *map = AIRInteropMapOf(self);
++  UIView *paperChild = map != nil ? AIRInteropPaperViewOf(child) : nil;
++  if (paperChild == nil) {
++    // The map has not been created yet. The wrapper queues the children and
++    // inserts them in order in the same transaction that creates the map.
++    ((void (*)(id, SEL, UIView *, NSInteger))AIRInteropOriginalMount)(self, _cmd, child, index);
++    return;
++  }
++  [map insertReactSubview:paperChild atIndex:index];
++  [map didUpdateReactSubviews];
++}
++
++static void AIRInteropUnmount(UIView *self, SEL _cmd, UIView *child, NSInteger index) {
++  AIRGoogleMap *map = AIRInteropMapOf(self);
++  if (map == nil) {
++    ((void (*)(id, SEL, UIView *, NSInteger))AIRInteropOriginalUnmount)(self, _cmd, child, index);
++    return;
++  }
++  UIView *paperChild = AIRInteropPaperViewOf(child);
++  if (paperChild != nil && [map.reactSubviews containsObject:paperChild]) {
++    [map removeReactSubview:paperChild];
++  }
++}
++
++// Only swap methods the wrapper class implements itself: replacing one it
++// inherits would change every Fabric view in the app.
++static Method AIRInteropOwnMethod(Class cls, SEL selector) {
++  unsigned int count = 0;
++  Method *methods = class_copyMethodList(cls, &count);
++  Method found = NULL;
++  for (unsigned int i = 0; i < count; i++) {
++    if (method_getName(methods[i]) == selector) {
++      found = methods[i];
++      break;
++    }
++  }
++  free(methods);
++  return found;
++}
++
++@implementation AIRGoogleMap (AIRInteropFix)
++
+++ (void)load {
++  AIRInteropClass = NSClassFromString(@"RCTLegacyViewManagerInteropComponentView");
++  if (AIRInteropClass == nil || ![AIRInteropClass instancesRespondToSelector:@selector(contentView)]) {
++    return; // Old Architecture: children go through the old UIManager, nothing to fix.
++  }
++  Method mount = AIRInteropOwnMethod(AIRInteropClass, NSSelectorFromString(@"mountChildComponentView:index:"));
++  Method unmount = AIRInteropOwnMethod(AIRInteropClass, NSSelectorFromString(@"unmountChildComponentView:index:"));
++  if (mount == NULL || unmount == NULL) {
++    return;
++  }
++  AIRInteropOriginalMount = method_setImplementation(mount, (IMP)AIRInteropMount);
++  AIRInteropOriginalUnmount = method_setImplementation(unmount, (IMP)AIRInteropUnmount);
++}
++
+ @end
+ 
+ #endif
