@@ -3,7 +3,7 @@
     "name": "CORRR",
     "slug": "mobile",
     "scheme": "corrr",
-    "version": "1.11.5",
+    "version": "1.11.6",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -38,7 +38,7 @@
     },
     "android": {
       "package": "app.corrr",
-      "versionCode": 63,
+      "versionCode": 64,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#0A0A0A"
@@ -80,7 +80,15 @@
       ],
       "@react-native-google-signin/google-signin",
       "expo-build-properties",
-      "./plugins/withModularHeaders.js"
+      "./plugins/withModularHeaders.js",
+      [
+        "@kingstinct/react-native-healthkit",
+        {
+          "NSHealthShareUsageDescription": "CORRR lee tus entrenos de correr y caminar y sus rutas, por ejemplo los del Apple Watch, para convertirlos en territorio. No lee pulso, calorías ni ningún otro dato de salud.",
+          "NSHealthUpdateUsageDescription": false,
+          "background": false
+        }
+      ]
     ],
     "extra": {
       "eas": {

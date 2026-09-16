@@ -23,6 +23,7 @@ import { api, MyStats, RunRecord, Achievement, ProfileData } from '../services/a
 import EditProfileScreen from './EditProfileScreen';
 import { checkForUpdates, CURRENT_VERSION } from '../utils/checkForUpdates';
 import { STRAVA_ENABLED } from '../config/features';
+import { appleWatchSupported, isAppleWatchConnected, connectAppleWatch, disconnectAppleWatch } from '../services/healthkit';
 
 interface Props {
   user: { username: string; id: string; city?: string } | null;
@@ -61,6 +62,12 @@ const logroImages: Record<string, any> = {
 export default function PerfilScreen({ user, onLogout }: Props) {
   const displayName = user?.username ?? 'Runner';
   const [stravaLoading, setStravaLoading] = useState(false);
+  // Apple Watch vía Salud (solo iPhone). Ver services/healthkit.ts.
+  const [watchConnected, setWatchConnected] = useState(false);
+  const [watchLoading, setWatchLoading] = useState(false);
+  useEffect(() => {
+    if (user?.id) isAppleWatchConnected(user.id).then(setWatchConnected).catch(() => {});
+  }, [user?.id]);
   // Marcador de territorio: superficie, parte de la ciudad y puesto nacional.
   const [territory, setTerritory] = useState<Awaited<ReturnType<typeof api.getTerritory>> | null>(null);
   const [stats, setStats] = useState<MyStats | null>(null);
@@ -287,6 +294,49 @@ export default function PerfilScreen({ user, onLogout }: Props) {
     );
   };
 
+  const handleConnectWatch = async () => {
+    if (!user?.id) return;
+    setWatchLoading(true);
+    try {
+      const ok = await connectAppleWatch(user.id);
+      if (!ok) {
+        Alert.alert('Salud no disponible', 'Este dispositivo no tiene la app Salud.');
+        return;
+      }
+      setWatchConnected(true);
+      // iOS no dice si el usuario dio permiso de lectura (por privacidad, uno
+      // denegado parece simplemente "sin datos"), así que se explica dónde mirar.
+      Alert.alert(
+        'Apple Watch conectado',
+        'Desde ahora, las carreras y caminatas que grabes con el reloj se importarán solas al abrir CORRR.\n\nSi no aparece ninguna, revisa en Ajustes → Salud → Acceso a datos y dispositivos → CORRR que puede leer Entrenamientos y Rutas de entrenamiento.',
+      );
+    } catch {
+      Alert.alert('No se pudo conectar', 'Inténtalo de nuevo en un momento.');
+    } finally {
+      setWatchLoading(false);
+    }
+  };
+
+  const handleDisconnectWatch = () => {
+    if (!user?.id) return;
+    const userId = user.id;
+    Alert.alert(
+      'Desconectar Apple Watch',
+      'Las carreras que ya se importaron se quedan. Las nuevas dejarán de importarse.',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Desconectar',
+          style: 'destructive',
+          onPress: async () => {
+            await disconnectAppleWatch(userId);
+            setWatchConnected(false);
+          },
+        },
+      ],
+    );
+  };
+
   const handleConnectStrava = async () => {
     setStravaLoading(true);
     try {
@@ -457,6 +507,36 @@ export default function PerfilScreen({ user, onLogout }: Props) {
                 style={styles.stravaButton}
                 resizeMode="contain"
               />
+            )}
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* Apple Watch (vía Salud), solo iPhone: las carreras del reloj se
+          importan solas al abrir la app. Ver services/healthkit.ts. */}
+      {appleWatchSupported() && (
+        <View style={styles.watchSection}>
+          <View style={styles.watchHeader}>
+            <Ionicons name="watch-outline" size={20} color={colors.orange} />
+            <Text style={styles.watchTitle}>Apple Watch</Text>
+          </View>
+          <Text style={styles.watchSub}>
+            {watchConnected
+              ? 'Conectado. Las carreras y caminatas que grabes con el reloj se importan solas al abrir CORRR.'
+              : 'Conquista territorio con las carreras que grabes con el reloj, sin sacar el móvil.'}
+          </Text>
+          <TouchableOpacity
+            style={[styles.watchButton, watchConnected && styles.watchButtonSecondary]}
+            onPress={watchConnected ? handleDisconnectWatch : handleConnectWatch}
+            disabled={watchLoading}
+            activeOpacity={0.85}
+          >
+            {watchLoading ? (
+              <ActivityIndicator size="small" color={watchConnected ? colors.textPrimary : '#000'} />
+            ) : (
+              <Text style={[styles.watchButtonText, watchConnected && styles.watchButtonTextSecondary]}>
+                {watchConnected ? 'Desconectar' : 'Conectar Apple Watch'}
+              </Text>
             )}
           </TouchableOpacity>
         </View>
@@ -1019,6 +1099,30 @@ const styles = StyleSheet.create({
   runStats: { alignItems: 'flex-end' },
   runKm: { fontSize: 14, fontWeight: '700', color: colors.textPrimary },
   runPace: { fontSize: 12, color: colors.textSecondary },
+  watchSection: {
+    marginHorizontal: spacing.md,
+    marginBottom: spacing.lg,
+    gap: spacing.sm,
+  },
+  watchHeader: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  watchTitle: { fontSize: 16, fontWeight: '800', color: colors.textPrimary },
+  watchSub: { fontSize: 13, color: colors.textSecondary, lineHeight: 18 },
+  watchButton: {
+    alignSelf: 'flex-start',
+    minWidth: 200,
+    paddingVertical: 12,
+    paddingHorizontal: spacing.lg,
+    borderRadius: radius.full,
+    backgroundColor: colors.orange,
+    alignItems: 'center',
+  },
+  watchButtonSecondary: {
+    backgroundColor: 'transparent',
+    borderWidth: 1,
+    borderColor: colors.textSecondary,
+  },
+  watchButtonText: { fontSize: 15, fontWeight: '800', color: '#000' },
+  watchButtonTextSecondary: { color: colors.textPrimary },
   stravaSection: {
     marginHorizontal: spacing.md,
     marginBottom: spacing.lg,

@@ -11,6 +11,7 @@ import {
   Image,
   AppState,
   AppStateStatus,
+  DeviceEventEmitter,
   NativeModules,
   Platform,
   ActivityIndicator,
@@ -24,6 +25,7 @@ import {
   CELL_LAT_DEG, CELL_LNG_DEG, coordToCell, cellKey, getDistance,
   LOOP_CLOSE_DIST_M, LOOP_MIN_PERIMETER_M,
 } from '../tracking/runTracker';
+import { RUNS_IMPORTED_EVENT } from '../services/healthkit';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import polygonClipping from 'polygon-clipping';
@@ -976,6 +978,18 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     } catch {}
   };
 
+  // Carrera importada del Apple Watch (ver App.tsx): recargar el mapa para que
+  // se vea su territorio. Por ref, para llamar siempre a la loadCells actual y
+  // no a la del primer render.
+  const loadCellsRef = useRef(loadCells);
+  loadCellsRef.current = loadCells;
+  useEffect(() => {
+    const sub = DeviceEventEmitter.addListener(RUNS_IMPORTED_EVENT, () => {
+      if (!isRunningRef.current) loadCellsRef.current();
+    });
+    return () => sub.remove();
+  }, []);
+
   /** Tras una carrera: recarga las celdas del servidor cubriendo TODO el bounding
    *  box del run (a partir de claimedCellsRef), no solo el viewport tight de zoom
    *  17. Permite luego VACIAR claimedCellsRef y pintar SOLO la verdad del servidor,
@@ -1737,6 +1751,9 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     setIsAutoPaused(false);
     // Freeze the final time before clearing the timer refs.
     setRunTime(computeRunTime());
+    // Hora real de la carrera, para el servidor (ver saveRun más abajo).
+    const runStartedAtMs = runStartTimeRef.current ?? Date.now();
+    const runEndedAtMs = Date.now();
     runStartTimeRef.current = null;
     pauseStartedAtRef.current = null;
     pausedAccumulatedRef.current = 0;
@@ -1838,6 +1855,11 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         zonesCount,
         zones: closedZones.map(z => ({ coords: z.coords, area: z.area, points: z.points })),
         claimedCells,
+        // Con la hora real el servidor detecta si una carrera del Apple Watch
+        // importada después es esta misma, grabada a la vez con el reloj.
+        source: 'app',
+        startedAt: new Date(runStartedAtMs).toISOString(),
+        endedAt: new Date(runEndedAtMs).toISOString(),
       }).then(async (res) => {
         loadZones();
         // Ocultar polígonos ANTES del reload: cuando polygonsVisible=false

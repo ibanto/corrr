@@ -162,10 +162,23 @@ interface CellRunPayload extends RunPayload {
   // el bono de loop autoritativo a partir de esto (25 / 50 si ≥3km), en vez de
   // confiar en el estimate del cliente.
   loopClosed?: boolean;
+  // De dónde viene la carrera. 'healthkit' = importada del Apple Watch.
+  source?: 'app' | 'healthkit';
+  // UUID del entreno en Salud: el servidor lo usa para no importarlo dos veces.
+  externalId?: string;
+  // Cuándo se corrió de verdad (ISO). Con esto el servidor da cada celda a
+  // quien pasó por ella más tarde, no a quien guardó más tarde.
+  startedAt?: string;
+  endedAt?: string;
 }
 
 interface RunSaveResult {
+  // Importación repetida o solapada con una carrera ya guardada: no se ha
+  // creado nada nuevo y runId apunta a la existente.
+  duplicate?: boolean;
   runId: string;
+  // Celdas que se quedan con quien pasó por ellas después de esta carrera.
+  newerCellsKept?: number;
   stolenZones: { id: string; ownerName: string; points: number }[];
   stolenCells?: { x: number; y: number; prevOwnerId: string; prevOwnerName: string }[];
   newCellCount?: number;
@@ -192,6 +205,7 @@ interface RunRecord {
   points: number;
   zones_count: number;
   created_at: string;
+  source?: 'app' | 'healthkit';
 }
 
 interface UserStats {

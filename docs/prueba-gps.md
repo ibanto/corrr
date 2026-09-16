@@ -34,6 +34,21 @@ Android y otra en iPhone.
 | 7 | Abrir Estadísticas | La carrera está, con los mismos km que el resumen |
 | 8 | Mirar el mapa | Solo está pintado por donde pasaste. Ninguna cuña entre el inicio y el final |
 
+## 3. Apple Watch — en iPhone, con el reloj
+
+Solo si se ha tocado la importación (`src/services/healthkit.ts`,
+`src/tracking/importWorkout.ts` o `POST /runs` en el backend).
+
+| # | Qué haces | Qué tiene que pasar |
+|---|---|---|
+| 1 | Perfil → **Conectar Apple Watch** | Sale el permiso de Salud pidiendo solo Entrenamientos y Rutas de entrenamiento |
+| 2 | Grabar con el reloj (app Entrenamiento) una carrera o caminata al aire libre de 10 minutos, **sin** CORRR abierto | — |
+| 3 | Esperar a que el reloj sincronice y abrir CORRR | Aviso "Carrera del Apple Watch importada" con km y celdas. El mapa enseña el territorio |
+| 4 | Estadísticas | La carrera está con la fecha y hora del entreno, no la de importarla |
+| 5 | Cerrar y abrir CORRR otra vez | No se importa dos veces |
+| 6 | Grabar a la vez con CORRR y con el reloj, luego abrir CORRR | Solo cuenta una: la del reloj se descarta por duplicada |
+| 7 | Entreno anterior a conectar | No se importa |
+
 ## Emulador Android (opcional, sin salir de casa)
 
 `apps/mobile/scripts/gps-emulator.sh` hace los pasos 1 a 3 con una ruta

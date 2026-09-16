@@ -14,6 +14,7 @@
 import {
   RunTracker, GpsReading, Coord, getDistance, CELL_SIZE_M,
 } from '../src/tracking/runTracker';
+import { processImportedRoute } from '../src/tracking/importWorkout';
 
 // ── Generador de recorridos ──────────────────────────────────────────────────
 let seed = 1;
@@ -229,6 +230,24 @@ scenario('Paseo corto de 200 m: la carrera es válida para guardar', check => {
   tr.finish();
   check('≥ 50 m', tr.distanceKm >= 0.05, km(tr.distanceKm));
   check('≥ 5 celdas', tr.cells.size >= 5, `${tr.cells.size}`);
+});
+
+scenario('Apple Watch: 2 km a 11 km/h, un punto por segundo', check => {
+  // El reloj guarda la ruta a 1 Hz y ya suavizada: muchos más puntos y más
+  // juntos que en directo. No debe inflar la distancia.
+  const rs = route(BCN, [{ eastM: 1000, northM: 0 }, { eastM: 0, northM: 1000 }], { t0: T0, kmh: 11, everyS: 1, acc: 4, noiseM: 1 });
+  const run = processImportedRoute(rs);
+  check('distancia ≈ 2 km', run.distanceKm > 1.8 && run.distanceKm < 2.3, km(run.distanceKm));
+  check('rastro continuo', components(new Set(run.cells.map(c => `${c.x},${c.y}`))) === 1, `${run.cells.length} celdas`);
+  check('sin circuito', !run.loopClosed, run.loopClosed ? 'sí' : 'no');
+});
+
+scenario('Apple Watch: pausa de 3 minutos en el reloj a mitad', check => {
+  const a = route(BCN, [{ eastM: 600, northM: 0 }], { t0: T0, kmh: 11, everyS: 1, acc: 4, noiseM: 1 });
+  // En pausa el reloj no graba; al reanudar estás 40 m más allá.
+  const b = route(offset(endOf(a), 40, 0), [{ eastM: 600, northM: 0 }], { t0: lastTs(a) + 180_000, kmh: 11, everyS: 1, acc: 4, noiseM: 1 });
+  const run = processImportedRoute([...b, ...a]); // desordenadas a propósito
+  check('lo andado en pausa no cuenta', run.distanceKm > 1.08 && run.distanceKm < 1.35, km(run.distanceKm));
 });
 
 // ── Informe ──────────────────────────────────────────────────────────────────

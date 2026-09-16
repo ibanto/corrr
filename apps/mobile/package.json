@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@expo/metro-runtime": "~6.1.2",
+    "@kingstinct/react-native-healthkit": "15.1.0",
     "@react-native-async-storage/async-storage": "2.2.0",
     "@react-native-google-signin/google-signin": "^16.1.2",
     "expo": "~54.0.33",
@@ -32,6 +33,7 @@
     "react-dom": "19.1.0",
     "react-native": "0.81.5",
     "react-native-maps": "1.20.1",
+    "react-native-nitro-modules": "0.37.1",
     "react-native-view-shot": "4.0.3",
     "react-native-web": "^0.21.0",
     "sharp": "^0.34.5"
