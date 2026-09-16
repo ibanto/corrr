@@ -240,6 +240,10 @@
       <li>Tus tokens de Strava (también deberías revocar el acceso desde Strava).</li>
       <li>Tu push token y mensajes intercambiados con otros usuarios.</li>
     </ul>
+    <p>
+      Hacemos una <strong>copia de seguridad cifrada</strong> de la base de datos cada semana y guardamos solo las
+      cuatro últimas. Si eliminas tu cuenta, tus datos desaparecen también de esas copias en un máximo de cuatro semanas.
+    </p>
 
     <h2>9. Tus derechos (RGPD)</h2>
     <p>Como usuario residente en la Unión Europea, tienes derecho a:</p>
@@ -270,6 +274,7 @@
       <li><strong>Row-Level Security (RLS)</strong> activado en las tablas con datos de usuarios: la base de datos no es accesible desde fuera sin pasar por nuestro servidor.</li>
       <li><strong>Tokens de sesión</strong> con validez limitada y firmados criptográficamente (JWT).</li>
       <li><strong>Verificación de correo</strong> para evitar registros falsos.</li>
+      <li><strong>Copias de seguridad</strong> semanales cifradas (AES-256), guardadas en España en un equipo con el disco cifrado y conservadas un máximo de cuatro semanas.</li>
     </ul>
 
     <h2>11. Menores de edad</h2>
