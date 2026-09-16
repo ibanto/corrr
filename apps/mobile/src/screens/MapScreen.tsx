@@ -978,18 +978,6 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     } catch {}
   };
 
-  // Carrera importada del Apple Watch (ver App.tsx): recargar el mapa para que
-  // se vea su territorio. Por ref, para llamar siempre a la loadCells actual y
-  // no a la del primer render.
-  const loadCellsRef = useRef(loadCells);
-  loadCellsRef.current = loadCells;
-  useEffect(() => {
-    const sub = DeviceEventEmitter.addListener(RUNS_IMPORTED_EVENT, () => {
-      if (!isRunningRef.current) loadCellsRef.current();
-    });
-    return () => sub.remove();
-  }, []);
-
   /** Tras una carrera: recarga las celdas del servidor cubriendo TODO el bounding
    *  box del run (a partir de claimedCellsRef), no solo el viewport tight de zoom
    *  17. Permite luego VACIAR claimedCellsRef y pintar SOLO la verdad del servidor,
@@ -1061,6 +1049,23 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       setRefreshingMap(false);
     }
   };
+
+  // Carrera importada del Apple Watch (ver App.tsx): recargar el mapa para que se
+  // vea su territorio, con la recarga SEGURA del botón de refrescar (ocultar
+  // polígonos → recargar → mostrar). La 1.11.6 (11) usaba loadCells a secas: el
+  // territorio nuevo cambiaba la forma de los polígonos, se quitaban y añadían en
+  // la misma pasada, y en iPhone la capa de compatibilidad de react-native-maps
+  // insertaba un hijo nulo → la app se cerraba (NSInvalidArgumentException
+  // "object cannot be nil", informe del 16-sep-2026 16:15). Por ref, para llamar
+  // siempre a la refreshMap actual y no a la del primer render.
+  const refreshMapRef = useRef(refreshMap);
+  refreshMapRef.current = refreshMap;
+  useEffect(() => {
+    const sub = DeviceEventEmitter.addListener(RUNS_IMPORTED_EVENT, () => {
+      if (!isRunningRef.current) refreshMapRef.current();
+    });
+    return () => sub.remove();
+  }, []);
 
   /** Fetch unread taunts and queue them. Called on mount + on AppState 'active'.
    *  Each item gets shown one at a time via the tauntQueue useEffect below. */
