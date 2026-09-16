@@ -18,3 +18,7 @@ apps/mobile/android/keystore.properties
 # Apple necesita para entrar. El repositorio es público.
 store/apple-review-notes.md
 store/apple-reply-4000.txt
+
+# Documentación legal interna (EIPD): describe puntos débiles del sistema.
+# El repositorio es público.
+legal/

@@ -19,6 +19,11 @@ import {
 import MapView, { Polygon, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
+import {
+  RunTracker, GpsReading, ReadingOutcome,
+  CELL_LAT_DEG, CELL_LNG_DEG, coordToCell, cellKey, getDistance,
+  LOOP_CLOSE_DIST_M, LOOP_MIN_PERIMETER_M,
+} from '../tracking/runTracker';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import polygonClipping from 'polygon-clipping';
@@ -59,36 +64,59 @@ const deactivateScreenAwake = () => {
 // Background location task
 const BACKGROUND_LOCATION_TASK = 'corrr-background-location';
 const BG_BUFFER_KEY = 'corrr:bg-loc-buffer';
-type BgPoint = { latitude: number; longitude: number; timestamp: number; accuracy: number; speed: number };
-let bgLocationBuffer: BgPoint[] = [];
+
+const BG_LOCATION_OPTIONS: Location.LocationTaskOptions = {
+  accuracy: Location.Accuracy.BestForNavigation,
+  distanceInterval: 8,
+  timeInterval: 3000,
+  foregroundService: {
+    notificationTitle: 'CORRR — Carrera en curso',
+    notificationBody: 'Registrando tu recorrido...',
+    notificationColor: '#FF6600',
+  },
+  pausesUpdatesAutomatically: false,
+  showsBackgroundLocationIndicator: true,
+  // iOS ajusta el filtrado del GPS para alguien que se mueve a pie.
+  activityType: Location.ActivityType.Fitness,
+};
+
+const toReading = (loc: Location.LocationObject): GpsReading => ({
+  latitude: loc.coords.latitude,
+  longitude: loc.coords.longitude,
+  timestamp: loc.timestamp ?? Date.now(),
+  accuracy: loc.coords.accuracy ?? 999,
+  speed: loc.coords.speed ?? -1,
+});
+
+// Quién recibe los puntos de la tarea de fondo durante una carrera. Con la app
+// viva —lo normal: la propia tarea la mantiene despierta— van directos al
+// mismo registro que los de primer plano, así el contador sigue avanzando con
+// la pantalla apagada y al desbloquear ya está al día. Antes se amontonaban en
+// disco hasta volver a la app y se procesaban con otras reglas.
+let bgReadingsListener: ((readings: GpsReading[]) => void) | null = null;
 
 TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
   if (error) return;
   const { locations } = data as { locations: Location.LocationObject[] };
   if (!locations || locations.length === 0) return;
-  const newPts: BgPoint[] = locations.map(loc => ({
-    latitude: loc.coords.latitude,
-    longitude: loc.coords.longitude,
-    timestamp: loc.timestamp ?? Date.now(),
-    accuracy: loc.coords.accuracy ?? 999,
-    speed: loc.coords.speed ?? -1,
-  }));
-  bgLocationBuffer.push(...newPts);
-  // Persist so points survive even if Android kills the JS process during a long background.
-  // The task may run in a fresh headless JS context (module state reset), so AsyncStorage is the
-  // only authoritative source across process lifetimes.
+  const readings = locations.map(toReading);
+  if (bgReadingsListener) {
+    try { bgReadingsListener(readings); return; } catch {}
+  }
+  // Nadie escuchando (la tarea corre en un contexto JS aparte): a disco, y se
+  // repasa al volver a la app. Los repetidos los descarta el registro.
   try {
     const raw = await AsyncStorage.getItem(BG_BUFFER_KEY);
-    const existing: BgPoint[] = raw ? JSON.parse(raw) : [];
-    await AsyncStorage.setItem(BG_BUFFER_KEY, JSON.stringify([...existing, ...newPts]));
+    const existing: GpsReading[] = raw ? JSON.parse(raw) : [];
+    await AsyncStorage.setItem(BG_BUFFER_KEY, JSON.stringify([...existing, ...readings]));
   } catch {}
 });
 
-async function loadAndClearPersistedBgBuffer(): Promise<BgPoint[]> {
+async function loadAndClearPersistedBgBuffer(): Promise<GpsReading[]> {
   try {
     const raw = await AsyncStorage.getItem(BG_BUFFER_KEY);
     await AsyncStorage.removeItem(BG_BUFFER_KEY);
-    return raw ? (JSON.parse(raw) as BgPoint[]) : [];
+    return raw ? (JSON.parse(raw) as GpsReading[]) : [];
   } catch {
     return [];
   }
@@ -117,9 +145,7 @@ const MAX_DELTA_FOR_ZONES = 0.15;
 // 10m × 10m in Spain (varies by ±5% with latitude). The 10m size accommodates
 // typical urban GPS drift (5-15m) — most readings fall in the same cell, so
 // claims look like a clean blob instead of a noisy zigzag.
-const CELL_SIZE_M = 10;
-const CELL_LAT_DEG = CELL_SIZE_M / 111000;
-const CELL_LNG_DEG = CELL_SIZE_M / (111000 * Math.cos(40 * Math.PI / 180));
+// Las constantes de la cuadrícula están en src/tracking/runTracker.ts.
 
 // Tope de zoom para pintar celdas. Más allá, no se cargan y se avisa con el
 // banner "Acércate para ver los territorios" (mismo umbral, ver
@@ -133,13 +159,6 @@ const CELL_LNG_DEG = CELL_SIZE_M / (111000 * Math.cos(40 * Math.PI / 180));
 // área. Aun así es el número a bajar si algún móvil va lento: se toca solo
 // aquí, y hay que probarlo en Android y en iPhone.
 const MAX_DELTA_FOR_CELLS = 0.05;
-
-function coordToCell(lat: number, lng: number): { x: number; y: number } {
-  return {
-    x: Math.floor(lng / CELL_LNG_DEG),
-    y: Math.floor(lat / CELL_LAT_DEG),
-  };
-}
 
 /** Returns the 4 corners of a cell as a polygon path (counter-clockwise). */
 function cellToCorners(x: number, y: number): { latitude: number; longitude: number }[] {
@@ -189,75 +208,6 @@ function rasterizePolygonToCells(polygon: { latitude: number; longitude: number 
   return cells;
 }
 
-const cellKey = (x: number, y: number) => `${x},${y}`;
-
-/** 4-connected line of cells between two grid coordinates. Greedy: each step
- *  moves one orthogonal cell toward the target. Used to "bridge" consecutive
- *  GPS readings — even if the GPS skips 1-2 cells, the trail stays continuous
- *  with no holes, so the flood fill always seals enclosures. */
-function cellLine(x0: number, y0: number, x1: number, y1: number): { x: number; y: number }[] {
-  const cells: { x: number; y: number }[] = [{ x: x0, y: y0 }];
-  let x = x0, y = y0;
-  let guard = 0;
-  while ((x !== x1 || y !== y1) && guard++ < 5000) {
-    const remX = x1 - x;
-    const remY = y1 - y;
-    if (Math.abs(remX) >= Math.abs(remY) && remX !== 0) x += Math.sign(remX);
-    else if (remY !== 0) y += Math.sign(remY);
-    else if (remX !== 0) x += Math.sign(remX);
-    cells.push({ x, y });
-  }
-  return cells;
-}
-
-/** Fill every cell fully enclosed by a set of claimed cells. Works for ANY
- *  shape — figure-8s, multiple loops, jagged perimeters — because it's a flood
- *  fill, not polygon rasterization. Algorithm: BFS-flood the empty space from
- *  outside the bounding box; any empty cell the flood can't reach is enclosed,
- *  so we claim it. This is what makes "if it closes, it closes" hold true. */
-function fillEnclosedCells(cellKeys: Set<string>): Set<string> {
-  if (cellKeys.size < 8) return cellKeys; // too few to enclose anything
-  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-  cellKeys.forEach(k => {
-    const ci = k.indexOf(',');
-    const x = parseInt(k.slice(0, ci), 10);
-    const y = parseInt(k.slice(ci + 1), 10);
-    if (x < minX) minX = x;
-    if (x > maxX) maxX = x;
-    if (y < minY) minY = y;
-    if (y > maxY) maxY = y;
-  });
-  // Pad by 1 so the flood can always wrap around the outside.
-  minX--; maxX++; minY--; maxY++;
-  // Safety cap — a runaway bounding box (bad GPS) would make this O(huge).
-  if ((maxX - minX) * (maxY - minY) > 2_000_000) return cellKeys;
-
-  const outside = new Set<string>();
-  const stack: [number, number][] = [[minX, minY]];
-  outside.add(cellKey(minX, minY));
-  const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]];
-  while (stack.length > 0) {
-    const [x, y] = stack.pop()!;
-    for (const [dx, dy] of dirs) {
-      const nx = x + dx, ny = y + dy;
-      if (nx < minX || nx > maxX || ny < minY || ny > maxY) continue;
-      const nk = cellKey(nx, ny);
-      if (outside.has(nk) || cellKeys.has(nk)) continue;
-      outside.add(nk);
-      stack.push([nx, ny]);
-    }
-  }
-  // Any empty cell the flood never reached is enclosed → claim it.
-  const result = new Set(cellKeys);
-  for (let y = minY; y <= maxY; y++) {
-    for (let x = minX; x <= maxX; x++) {
-      const k = cellKey(x, y);
-      if (!outside.has(k) && !cellKeys.has(k)) result.add(k);
-    }
-  }
-  return result;
-}
-
 /** Union an array of cells into one (or several disjoint) outlined polygons.
  *  Used to render a territory as a single mass — no internal lines between
  *  adjacent cells, just one stroke around the perimeter of each connected
@@ -293,150 +243,7 @@ function unionCellsToPolygons(cells: { x: number; y: number }[]): UnionedPolygon
   return result;
 }
 
-// ── GPS Filtering (Strava-grade) ──────────────────────────────────────────
-const MAX_SPEED_KMH = 30;        // Anti-cheat: max speed allowed
-const MAX_SPEED_MPS = MAX_SPEED_KMH / 3.6; // clamp para la integración de velocidad
-// Velocidad mínima (m/s) para contar como movimiento real al medir la distancia
-// por velocidad GPS (Doppler). Por debajo (~1.8 km/h) la "velocidad" del chip
-// suele ser ruido estando parado → no sumamos metros (la distancia no sube
-// parado en un semáforo). Ver nota en handleLocationUpdate.
-const MIN_MOVING_MPS = 0.5;
-// Máximo dt (segundos) entre dos lecturas para integrar velocidad×tiempo. A
-// ritmo de paseo, con distanceInterval=8m, una lectura llega cada ~6-10s; con
-// pantalla bloqueada Android espacia aún más. Con el cap en 6s se caían casi
-// todos los intervalos de paseo → infraconteo (~64% real, medido vs iPhone:
-// CORRR 1.31 vs reloj 2.06 km). 15s captura paseo + background moderado y sigue
-// descartando huecos largos de verdad (pausa/lock profundo).
-const MAX_DOPPLER_DT_S = 15;
-// Factor de calibración de la distancia por velocidad. El GPS de muchos Android
-// (medido en Xiaomi) reporta la velocidad de ANDAR ~40% más alta de lo real, así
-// que la integración velocidad×tiempo se pasa de forma consistente. Medido vs
-// Apple Watch en 2 caminatas: CORRR 1.38× y 1.44× la distancia real (mientras la
-// distancia por POSICIÓN se iba a ~2.8×, aún peor). Factor 0.72 deja el método
-// de velocidad dentro de ±4%. Ajustable si algún dispositivo/ritmo se desvía;
-// el arreglo "de libro" (fusión con acelerómetro / Kalman) queda para más adelante.
-const DOPPLER_CALIBRATION = 0.72;
-// Precisión máxima aceptable de una lectura GPS. Por encima de esto el punto
-// se descarta ENTERO: ni pinta celda ni suma distancia.
-//
-// Estaba en 18 m y era demasiado estricto. En ciudad, entre edificios, una
-// precisión de 20-35 m es lo normal, así que había carreras en las que NINGÚN
-// punto pasaba el filtro: el cronómetro corría, no se pintaba nada, no se
-// sumaba ni un metro, y al terminar la carrera se descartaba por "demasiado
-// corta" y se perdía entera. Sin ningún aviso por el camino.
-//
-// 30 m es un compromiso: sigue descartando las lecturas de verdad malas (las
-// de 50-100 m que dan saltos absurdos), pero deja pasar las normales de ciudad.
-// El ruido que entra lo filtran igualmente MIN_POINT_DIST_M (6 m de suelo) y
-// la detección de teletransportes, que no han cambiado.
-const MAX_ACCURACY_M = 30;
-// Los primeros puntos siguen siendo más exigentes: es cuando el GPS está
-// calentando y da las lecturas más disparatadas, y un primer punto malo
-// desplaza el arranque del recorrido.
-const WARMUP_ACCURACY_M = 20;
-const WARMUP_POINTS = 5;         // Number of initial points with strict accuracy
-// Techo de lecturas para el warmup estricto. Sin esto el warmup se podía
-// DEADLOCKEAR: el contador de warmup mira puntos ACEPTADOS, pero si la
-// accuracy se queda estancada en la banda 12-18m (típico entre edificios
-// altos), ningún punto pasa el filtro estricto → el contador nunca sube →
-// el warmup no termina JAMÁS y la carrera entera no acepta un solo punto
-// (sin celdas, sin distancia posicional, y auto-pause a los 20s andando).
-// Pasado este número de lecturas nos conformamos con MAX_ACCURACY_M, que
-// sigue siendo el filtro de siempre — el anti-cheat no se relaja.
-// Ojo con subirlo: las lecturas llegan cada ~3s, así que 15 eran ~45s en los
-// que, con accuracy estancada en 12-18m, no se aceptaba NADA — y como
-// lastMovementTime solo se refresca con puntos aceptados, la auto-pausa
-// saltaba a los 20s en plena caminata al empezar. 5 lecturas ≈ 15s, que es
-// de sobra para lo que el warmup pretende (dar margen al primer fix del chip).
-const WARMUP_MAX_READINGS = 5;
-
-// ── Cierre de circuito (loop) ─────────────────────────────────────────────
-// Se cierra un loop cuando el corredor vuelve a menos de LOOP_CLOSE_DIST_M de
-// un punto por el que ya pasó, habiendo recorrido al menos
-// LOOP_MIN_PERIMETER_M desde entonces. Ese mínimo evita que un ida y vuelta
-// corto, o estar dando vueltas en el sitio, cuente como circuito.
-const LOOP_CLOSE_DIST_M = 30;
-const LOOP_MIN_PERIMETER_M = 200;
-// Suelo de ruido FIJO: si te has "movido" menos que esto entre dos lecturas, es
-// jitter del GPS, no movimiento real. El punto saltado MANTIENE el ancla (no se
-// actualiza prevCoord), así que el desplazamiento real se acaba contando cuando
-// supera el suelo → de-noised, no se pierde.
-//
-// 6m (antes 3m) absorbe el zigzag de drift que inflaba la distancia ~2.36× al
-// andar lento (verificado vs Apple Watch: CORRR 1.42km vs reloj 0.60km).
-//
-// OJO — NO volver al suelo DINÁMICO max(6, accuracy*0.8): como el Filtro 1 deja
-// pasar accuracy hasta 18m, ese suelo subía a 12-14m y rechazaba movimiento REAL
-// (puntos de background a ~8m), causando 3 regresiones en vc47: km sin contar en
-// reposo, velocidad congelada al parar, y diagonales rectas que cruzan edificios
-// (cellLine puenteaba los huecos saltados). El suelo fijo de 6m las arregla las
-// tres. Es el knob de tuning km: si re-mide y SOBREcuenta → subir a 7-8; si
-// INFRAcuenta → bajar a 5. Iterar con APK debug por USB, no subiendo AAB a Play.
-const MIN_POINT_DIST_M = 6;
-const MAX_POINT_DIST_M = 100;    // Teleport if jump > 100m in a single update
-const TELEPORT_TIME_THRESHOLD = 8; // Only count as teleport if also >8s gap
-const SINUOSITY_THRESHOLD = 1.3; // Buffer path/straight ratio below this = straight line = teleport
-// Si entre dos lecturas GPS consecutivas el line bridge tendría que cruzar más
-// de MAX_BRIDGE_CELLS celdas (≈150m a 10m/celda), asumimos que una de las dos
-// lecturas es un outlier de drift (multipath en zona urbana densa) — NO se
-// claimean las celdas del puente. De lo contrario, el flood fill final
-// envuelve ese segmento recto con el trail real y rellena un polígono
-// fantasma. Ver context.md §4 "Network of Fake Cells".
-// Límite generoso: a 30 km/h (MAX_SPEED) en una ventana de buffer de 15s se
-// recorren ≈125m → 13 celdas. 15 deja margen sin permitir el patrón roto.
-const MAX_BRIDGE_CELLS = 15;
-
-// ── Anti-drift (sentado en una silla) ─────────────────────────────────────
-// Rolling window: si las últimas STATIONARY_WINDOW lecturas caben dentro de
-// un círculo de STATIONARY_RADIUS_M, asumimos que el usuario está quieto y
-// el GPS está bailando. No claimemos celdas ni acumulamos distancia.
-// Caminante a 4 km/h en 18s recorre ~20m → fuera del círculo → OK.
-// Sentado con drift de 5-10m → dentro del círculo → bloqueado.
-// 6 puntos (≈18s) en lugar de 8 → detector arranca antes y el usuario no
-// tiene tiempo de ver 15 km/h por un spike de drift.
-const STATIONARY_WINDOW = 6;
-const STATIONARY_RADIUS_M = 15;
-
-// Segunda opinión al detector de "quieto", vía velocidad Doppler del chip.
-// El detector posicional de arriba es marginal para caminantes: con puntos a
-// MIN_POINT_DIST_M (6m), 6 lecturas caminando en línea recta dan una diagonal
-// de ~36m, apenas por encima del umbral de 30m — y en cuanto hay una curva,
-// una acera estrecha o un semáforo, cae por debajo y marca "quieto" a alguien
-// que está andando de verdad. Cuando eso pasa se descarta el punto entero
-// (no celdas, no distancia posicional, no refresco de lastMovementTime), así
-// que el auto-pause salta a los 20s en plena caminata.
-// El chip GPS ya reporta velocidad por Doppler, que el código de distancia
-// oficial usa precisamente por ser "inmune al zigzag de drift": parado en una
-// silla el chip da ~0 m/s aunque la posición baile. Así que si el Doppler dice
-// que hay movimiento sostenido, NO estamos quietos, diga lo que diga el
-// bounding box. Pedimos varias lecturas (no una) para que un spike aislado no
-// desactive el anti-drift.
-const DOPPLER_MOVING_WINDOW = 4;
-const DOPPLER_MOVING_MIN_HITS = 2;
-
-/** ¿Las últimas N coordenadas caen todas dentro de un círculo de radius m?
- *  Si sí, el usuario está parado y el GPS está bailando — no movimiento real.
- *  Calcula bounding box (suficiente como aproximación al círculo envolvente
- *  para nuestros radios pequeños). Necesita al menos STATIONARY_WINDOW puntos
- *  para activarse — durante el "warmup" del run no bloquea. */
-function isStationary(coords: Coord[]): boolean {
-  if (coords.length < STATIONARY_WINDOW) return false;
-  const recent = coords.slice(-STATIONARY_WINDOW);
-  let minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity;
-  for (const p of recent) {
-    if (p.latitude < minLat) minLat = p.latitude;
-    if (p.latitude > maxLat) maxLat = p.latitude;
-    if (p.longitude < minLng) minLng = p.longitude;
-    if (p.longitude > maxLng) maxLng = p.longitude;
-  }
-  // Convertir delta lat/lng a metros (aproximación local plana).
-  const latM = (maxLat - minLat) * 111000;
-  const midLat = (minLat + maxLat) / 2;
-  const lngM = (maxLng - minLng) * 111000 * Math.cos(midLat * Math.PI / 180);
-  // Diagonal del bounding box ≈ diámetro del círculo envolvente.
-  const diag = Math.sqrt(latM * latM + lngM * lngM);
-  return diag < STATIONARY_RADIUS_M * 2;
-}
+// El filtro GPS, la auto-pausa y el anti-deriva están en src/tracking/runTracker.ts.
 
 const MAP_STYLE = [
   { elementType: 'geometry', stylers: [{ color: '#1a1a2e' }] },
@@ -705,33 +512,6 @@ function lineIntersect(a1: Coord, a2: Coord, b1: Coord, b2: Coord): Coord | null
   };
 }
 
-/** Ray-casting point-in-polygon — mismo algoritmo que el backend */
-function pointInPolygon(lat: number, lng: number, polygon: Coord[]): boolean {
-  let inside = false;
-  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
-    const xi = polygon[i].latitude,  yi = polygon[i].longitude;
-    const xj = polygon[j].latitude,  yj = polygon[j].longitude;
-    const intersect = ((yi > lng) !== (yj > lng)) &&
-      (lat < (xj - xi) * (lng - yi) / (yj - yi) + xi);
-    if (intersect) inside = !inside;
-  }
-  return inside;
-}
-
-function getDistance(a: Coord, b: Coord): number {
-  const R = 6371000;
-  const dLat = (b.latitude - a.latitude) * Math.PI / 180;
-  const dLon = (b.longitude - a.longitude) * Math.PI / 180;
-  const x = Math.sin(dLat/2) * Math.sin(dLat/2) +
-    Math.cos(a.latitude * Math.PI / 180) * Math.cos(b.latitude * Math.PI / 180) *
-    Math.sin(dLon/2) * Math.sin(dLon/2);
-  return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1-x));
-}
-
-function getDistanceKm(a: Coord, b: Coord): number {
-  return getDistance(a, b) / 1000;
-}
-
 /** Douglas-Peucker path simplification — reduce puntos conservando la forma */
 function simplifyPath(points: Coord[], tolerance: number): Coord[] {
   if (points.length <= 3) return points;
@@ -777,69 +557,6 @@ function polygonArea(coords: Coord[]): number {
   return Math.abs(area) * 111 * 111 * Math.cos(coords[0].latitude * Math.PI / 180) / 2;
 }
 
-/**
- * Central GPS point filter — returns action to take:
- * - 'accept': good point, add to path and accumulate distance
- * - 'skip': bad point (noise, low accuracy), ignore completely
- * - 'teleport': jump detected, start new path segment
- */
-function filterGpsPoint(
-  newCoord: Coord,
-  prevCoord: Coord | null,
-  newTimestamp: number,
-  prevTimestamp: number,
-  accuracy: number,
-  speed: number,
-  inWarmup: boolean = false, // ¿seguimos en el warmup estricto de accuracy?
-): { action: 'accept' | 'skip' | 'teleport'; distKm: number; speedKmh: number } {
-  // Filter 0: sanity — coords inválidas (NaN/Infinity) o fuera del planeta.
-  // Sin esto, un punto GPS corrupto se propaga a coordToCell → cells con
-  // keys "NaN,NaN" y polígonos rotos. Pasa muy de tarde en tarde con
-  // ciertos chips GPS al perder fix.
-  if (
-    !Number.isFinite(newCoord.latitude) ||
-    !Number.isFinite(newCoord.longitude) ||
-    Math.abs(newCoord.latitude) > 90 ||
-    Math.abs(newCoord.longitude) > 180
-  ) {
-    return { action: 'skip', distKm: 0, speedKmh: 0 };
-  }
-  // Filter 1: accuracy — stricter during warmup (first N points)
-  const maxAcc = inWarmup ? WARMUP_ACCURACY_M : MAX_ACCURACY_M;
-  if (accuracy > maxAcc) {
-    return { action: 'skip', distKm: 0, speedKmh: 0 };
-  }
-
-  if (!prevCoord) {
-    return { action: 'accept', distKm: 0, speedKmh: 0 };
-  }
-
-  const distKm = getDistanceKm(prevCoord, newCoord);
-  const distM = distKm * 1000;
-  const timeDiff = prevTimestamp > 0 ? (newTimestamp - prevTimestamp) / 1000 : 3;
-
-  // Filter 2: ruido GPS. Suelo FIJO (no dinámico — ver nota en MIN_POINT_DIST_M):
-  // si te has "movido" menos que el suelo, es jitter, no movimiento. El punto
-  // saltado MANTIENE el ancla (no se actualiza prevCoord), así que el
-  // desplazamiento real se acaba contando cuando supera el suelo → de-noised.
-  if (distM < MIN_POINT_DIST_M) {
-    return { action: 'skip', distKm: 0, speedKmh: 0 };
-  }
-
-  // Filter 3: teleport (big jump after time gap — GPS glitch or phone slept)
-  if (distM > MAX_POINT_DIST_M && timeDiff > TELEPORT_TIME_THRESHOLD) {
-    return { action: 'teleport', distKm: 0, speedKmh: 0 };
-  }
-
-  // Filter 4: speed check (anti-cheat + catches shorter teleports)
-  const speedKmh = timeDiff > 0 ? (distKm / timeDiff) * 3600 : 0;
-  if (speedKmh > MAX_SPEED_KMH) {
-    return { action: 'skip', distKm: 0, speedKmh };
-  }
-
-  return { action: 'accept', distKm, speedKmh };
-}
-
 /** Convex hull (Andrew's monotone chain) — used for zone polygon when path has gaps */
 function convexHull(points: Coord[]): Coord[] {
   if (points.length < 3) return points;
@@ -868,23 +585,6 @@ function convexHull(points: Coord[]): Coord[] {
   return [...lower, ...upper];
 }
 
-/** Check if a series of points is basically a straight line (sinuosity check) */
-function isBufferStraightLine(lastGoodPoint: Coord, bufferPoints: Coord[]): boolean {
-  if (bufferPoints.length < 2) return true;
-  const first = lastGoodPoint;
-  const last = bufferPoints[bufferPoints.length - 1];
-  const straightDist = getDistance(first, last);
-  if (straightDist < 30) return false; // too short to judge
-
-  let pathDist = getDistance(first, bufferPoints[0]);
-  for (let i = 1; i < bufferPoints.length; i++) {
-    pathDist += getDistance(bufferPoints[i - 1], bufferPoints[i]);
-  }
-
-  const sinuosity = pathDist / straightDist;
-  return sinuosity < SINUOSITY_THRESHOLD; // ratio close to 1 = straight line
-}
-
 /** Una fila del desglose de puntos del resumen post-carrera. `highlight` pinta
  *  el valor en naranja (para multiplicadores, que son lo "premium"). */
 function BreakdownRow({ label, value, hint, highlight }: { label: string; value: string; hint?: string; highlight?: boolean }) {
@@ -909,9 +609,6 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
   // Método VIEJO (suma de saltos de posición) en paralelo. SOLO para comparar
   // con el nuevo en el resumen y validar cuál acierta en este móvil. Temporal.
   const [distancePosDelta, setDistancePosDelta] = useState(0);
-  // Timestamp de la ÚLTIMA lectura GPS cruda (cada lectura, no solo las
-  // aceptadas), para el dt de la integración velocidad×tiempo. Reset por run.
-  const lastRawTimestampRef = useRef(0);
   const [currentPath, setCurrentPath] = useState<Coord[]>([]);
   const [conqueredZones, setConqueredZones] = useState<ConqueredZone[]>([]);
   const [totalPoints, setTotalPoints] = useState(0);
@@ -967,25 +664,10 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
   // True mientras el botón de refrescar el mapa está recargando. Deshabilita el
   // botón y muestra spinner para evitar dobles toques.
   const [refreshingMap, setRefreshingMap] = useState(false);
-  // Last cell claimed — used to bridge a continuous line of cells to the next
-  // one (Bresenham-style), so GPS skips don't leave holes in the trail.
-  const lastClaimedCellRef = useRef<{ x: number; y: number } | null>(null);
-  // Rolling window de las últimas N coordenadas aceptadas, para detector de
-  // "estás en realidad quieto". Si todas caen dentro de un círculo pequeño
-  // → GPS drift, no real movement → no claim cells. Ver STATIONARY_*.
-  const recentCoordsRef = useRef<Coord[]>([]);
-  // Recorrido COMPLETO de la carrera. Necesario aparte de pathRef porque
-  // closeLoop trunca pathRef a un único punto al cerrar un círculo (para
-  // empezar la siguiente zona del sistema legacy), y para rellenar el interior
-  // hace falta el trazado entero. Solo se vacía en startRun.
-  const fullPathRef = useRef<Coord[]>([]);
-  // Últimas velocidades Doppler crudas (m/s) para decidir si hay movimiento
-  // real aunque el detector posicional diga "quieto". Ver DOPPLER_MOVING_*.
-  const recentDopplerSpeedsRef = useRef<number[]>([]);
-  // Lecturas GPS crudas vistas en esta carrera (aceptadas o no). Solo sirve
-  // para que el warmup estricto de accuracy no se quede bloqueado para
-  // siempre. Ver WARMUP_MAX_READINGS.
-  const rawReadingsRef = useRef(0);
+  // Registro de la carrera en curso: distancia, celdas, auto-pausa. La lógica
+  // está en src/tracking/runTracker.ts y se comprueba con `npm run test:gps`.
+  const trackerRef = useRef<RunTracker | null>(null);
+  const handleReadingRef = useRef<(r: GpsReading, live: boolean) => ReadingOutcome | null>(() => null);
   const [remoteCells, setRemoteCells] = useState<RemoteCell[]>([]);
   const [selectedZone, setSelectedZone] = useState<RemoteZone | null>(null);
   // Modal de "aviso destacado" (prominent disclosure) que Google Play exige
@@ -1053,18 +735,12 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
   const isRunningRef = useRef(false);
   const handleLocationUpdateRef = useRef<(loc: Location.LocationObject) => void>(() => {});
 
-  // Timestamp del último punto GPS para cálculo de velocidad real
-  const lastLocationTimestamp = useRef<number>(0);
-
-  // Auto-pause: detect when runner is standing still for 30+ seconds
-  const lastMovementTime = useRef<number>(0);
   const autoPauseTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   // Auto-pause silencioso: a los 20s sin movimiento la carrera se pausa sola
   // (sin modal). Cuando el GPS detecta que vuelves a moverte, se reanuda sola.
   // No es lo mismo que `isPaused` (pausa manual con el botón): el manual mantiene
   // la pausa hasta que pulses Reanudar; el auto se reanuda con movimiento.
   const [isAutoPaused, setIsAutoPaused] = useState(false);
-  const isAutoPausedRef = useRef(false);
 
   // Splits tracker: each time distance crosses an integer km, record the pace
   // for that km (current runTime minus the time at the previous km marker).
@@ -1078,142 +754,33 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     }
   }, [distance, runTime, isRunning]);
 
-  // Background location: integrar puntos del buffer cuando la app vuelve a foreground
+  // Al volver a la app durante una carrera: cronómetro al día y repaso de los
+  // puntos que la tarea de fondo dejó en disco. Eso solo pasa si corrió sin
+  // nadie escuchando; lo normal es que lleguen en directo (bgReadingsListener).
   useEffect(() => {
     const handleAppState = async (nextState: AppStateStatus) => {
-      if (!isRunningRef.current) return;
+      if (!isRunningRef.current || nextState !== 'active') return;
+      // Check for new robo notifications and incoming taunts.
+      checkUnreadTaunts();
+      // Force-recompute runTime from Date.now() math — catches up the timer
+      // if the JS thread was suspended while the screen was off.
+      if (runStartTimeRef.current) setRunTime(computeRunTime());
 
-      if (nextState === 'active') {
-        // Check for new robo notifications and incoming taunts. Runs every time
-        // the user comes back to the app (not just on cold launch).
-        checkUnreadTaunts();
-        // Force-recompute runTime from Date.now() math — catches up the timer
-        // if the JS thread was suspended while the screen was off.
-        if (runStartTimeRef.current) setRunTime(computeRunTime());
+      const persisted = await loadAndClearPersistedBgBuffer();
+      persisted.sort((a, b) => a.timestamp - b.timestamp);
+      for (const r of persisted) handleReadingRef.current(r, false);
 
-        // Drain persisted buffer first (survives process kill). It's authoritative — the task
-        // writes to AsyncStorage AND in-memory on every batch, so persisted is always ≥ in-memory.
-        const persisted = await loadAndClearPersistedBgBuffer();
-        const bufferToProcess = persisted.length >= bgLocationBuffer.length ? persisted : bgLocationBuffer;
-        bgLocationBuffer = [];
-
-        if (bufferToProcess.length > 0) {
-          const lastGood = pathRef.current.length > 0 ? pathRef.current[pathRef.current.length - 1] : null;
-
-          // First: filter buffer points for basic quality
-          const goodBufferPts = bufferToProcess.filter(p => p.accuracy <= MAX_ACCURACY_M);
-          const bufferCoords = goodBufferPts.map(p => ({ latitude: p.latitude, longitude: p.longitude }));
-
-          // ── Distancia OFICIAL del buffer por velocidad GPS (Doppler) ──────
-          // Integramos speed×dt sobre los puntos del buffer (cada uno con su dt),
-          // igual que en foreground. El método viejo (posición) se acumula aparte
-          // en distancePosDelta. dt>6s = corte entre lotes → no se integra ese
-          // hueco con la velocidad instantánea.
-          {
-            let dopplerBufKm = 0;
-            let prevBufTs = lastRawTimestampRef.current;
-            for (const p of goodBufferPts) {
-              const dt = prevBufTs > 0 ? (p.timestamp - prevBufTs) / 1000 : 0;
-              prevBufTs = p.timestamp;
-              if (dt > 0 && dt <= MAX_DOPPLER_DT_S && p.speed >= 0) {
-                const spd = Math.min(p.speed, MAX_SPEED_MPS);
-                if (spd >= MIN_MOVING_MPS) dopplerBufKm += (spd * dt) / 1000 * DOPPLER_CALIBRATION;
-              }
-            }
-            lastRawTimestampRef.current = prevBufTs;
-            if (dopplerBufKm > 0) setDistance(d => d + dopplerBufKm);
-          }
-
-          // Sinuosity check: if buffer is basically a straight line → teleport, don't draw it
-          if (lastGood && bufferCoords.length >= 2 && isBufferStraightLine(lastGood, bufferCoords)) {
-            // Straight line = phone was asleep, GPS gave bad intermediate points
-            // Start new segment from current real position (last buffer point)
-            const lastBuf = goodBufferPts[goodBufferPts.length - 1];
-            if (pathRef.current.length > 1) {
-              setPathSegments(segs => [...segs, [...pathRef.current]]);
-            }
-            const newStart = { latitude: lastBuf.latitude, longitude: lastBuf.longitude };
-            pathRef.current = [newStart];
-            lastLocationTimestamp.current = lastBuf.timestamp;
-            // Count distance as straight line (approximate, better than nothing)
-            // Método VIEJO (validación) → distancePosDelta; la oficial es Doppler.
-            const skipDist = getDistanceKm(lastGood, newStart);
-            if (skipDist > 0.005) setDistancePosDelta(d => d + skipDist);
-            // Phone was asleep → don't bridge across the gap. Claim the cell
-            // where the runner actually is now and reset the bridge anchor.
-            const sc = coordToCell(newStart.latitude, newStart.longitude);
-            claimedCellsRef.current.add(cellKey(sc.x, sc.y));
-            lastClaimedCellRef.current = sc;
-            setClaimedCellsTick(t => t + 1);
-          } else {
-            // Buffer has real movement — integrate points normally
-            let addedDist = 0;
-            let addedCellInBuffer = false;
-            for (const point of bufferToProcess) {
-              const newCoord = { latitude: point.latitude, longitude: point.longitude };
-              const prev = pathRef.current.length > 0 ? pathRef.current[pathRef.current.length - 1] : null;
-              rawReadingsRef.current += 1;
-              const inWarmupBuf =
-                pathRef.current.length < WARMUP_POINTS && rawReadingsRef.current <= WARMUP_MAX_READINGS;
-              const result = filterGpsPoint(newCoord, prev, point.timestamp, lastLocationTimestamp.current, point.accuracy, point.speed, inWarmupBuf);
-
-              if (result.action === 'skip') continue;
-
-              if (result.action === 'teleport') {
-                if (pathRef.current.length > 1) {
-                  setPathSegments(segs => [...segs, [...pathRef.current]]);
-                }
-                pathRef.current = [newCoord];
-                lastLocationTimestamp.current = point.timestamp;
-                lastClaimedCellRef.current = null; // don't bridge across teleport
-                continue;
-              }
-
-              // accept
-              lastLocationTimestamp.current = point.timestamp;
-              pathRef.current = [...pathRef.current, newCoord];
-              addedDist += result.distKm;
-              // Claim cells for this background point, with line bridge — same
-              // logic as the foreground watcher.
-              const cell = coordToCell(newCoord.latitude, newCoord.longitude);
-              const prevCell = lastClaimedCellRef.current;
-              const bridge = prevCell ? cellLine(prevCell.x, prevCell.y, cell.x, cell.y) : [cell];
-              if (bridge.length > MAX_BRIDGE_CELLS) {
-                // Outlier — no claim, rompemos cadena para que la siguiente
-                // lectura empiece limpia y no tienda otro puente largo.
-                lastClaimedCellRef.current = null;
-              } else {
-                for (const bc of bridge) {
-                  const k = cellKey(bc.x, bc.y);
-                  if (!claimedCellsRef.current.has(k)) { claimedCellsRef.current.add(k); addedCellInBuffer = true; }
-                }
-                lastClaimedCellRef.current = cell;
-              }
-            }
-            if (addedDist > 0) setDistancePosDelta(d => d + addedDist); // método viejo (validación)
-            if (addedCellInBuffer) setClaimedCellsTick(t => t + 1);
-          }
-
-          setCurrentPath([...pathRef.current]);
-
-          // Comprobar loop con los nuevos puntos
-          if (!loopDetected && pathRef.current.length >= 10) {
-            if (checkLoop(pathRef.current)) closeLoop([...pathRef.current]);
-          }
-        }
-
-        // Reanudar foreground watcher si se perdió — reutiliza handleLocationUpdate del startRun
-        if (isRunningRef.current && !locationRef.current) {
-          locationRef.current = await Location.watchPositionAsync(
-            { accuracy: Location.Accuracy.BestForNavigation, distanceInterval: 8, timeInterval: 3000 },
-            handleLocationUpdateRef.current,
-          );
-        }
+      // Reanudar el vigilante de primer plano si se perdió
+      if (isRunningRef.current && !locationRef.current) {
+        locationRef.current = await Location.watchPositionAsync(
+          { accuracy: Location.Accuracy.BestForNavigation, distanceInterval: 8, timeInterval: 3000 },
+          handleLocationUpdateRef.current,
+        );
       }
     };
 
     const sub = AppState.addEventListener('change', handleAppState);
-    return () => sub.remove();
+    return () => { sub.remove(); bgReadingsListener = null; };
   }, []);
 
   // Las animaciones del antiguo loading screen (pulseAnim + rotateAnim)
@@ -1522,6 +1089,24 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     const t = setTimeout(() => setTauntReady(true), 350);
     return () => clearTimeout(t);
   }, [currentTaunt, mapLoading, savingRun, runSummary?.visible, popup.visible, showTaunts]);
+
+  // Lo mismo para el final de la carrera. El resumen se montaba en el instante
+  // en que se cerraba la cartela de "zona conquistada", y en iOS un modal que
+  // se monta mientras otro se cierra no llega a presentarse: salía la cartela
+  // y después nada. La carrera sí se guardaba, pero no veías ni km ni tiempo
+  // ni puntos. Ahora cada uno espera a que el anterior haya terminado de irse.
+  const [popupReady, setPopupReady] = useState(false);
+  useEffect(() => {
+    if (!popup.visible || savingRun) { setPopupReady(false); return; }
+    const t = setTimeout(() => setPopupReady(true), 350);
+    return () => clearTimeout(t);
+  }, [popup.visible, savingRun]);
+  const [summaryReady, setSummaryReady] = useState(false);
+  useEffect(() => {
+    if (!runSummary?.visible || savingRun || popup.visible) { setSummaryReady(false); return; }
+    const t = setTimeout(() => setSummaryReady(true), 350);
+    return () => clearTimeout(t);
+  }, [runSummary?.visible, savingRun, popup.visible]);
 
   /** Pasar del aviso "te han robado" al selector de mensajes.
    *
@@ -1857,6 +1442,53 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     fgDisclosureResolveRef.current = null;
   };
 
+  // Vigilante de señal: si llevamos 25 s sin una lectura GPS utilizable, la
+  // carrera no está registrando nada y hay que decirlo. Sin esto el usuario
+  // ve el cronómetro correr y se entera al final, cuando ya la ha perdido.
+  const startGpsWatchTimer = () => {
+    if (gpsWatchTimer.current) clearInterval(gpsWatchTimer.current);
+    gpsWatchTimer.current = setInterval(() => {
+      if (!isRunningRef.current) return;
+      setGpsWeak(Date.now() - lastGoodPointRef.current > 25000);
+    }, 3000);
+  };
+
+  // Auto-pausa silenciosa: cada 3 s el registro mira si llevas 20 s sin
+  // moverte y congela cronómetro y distancia; el primer punto con movimiento
+  // real la levanta. A los 6 s quieto, la velocidad mostrada se desvanece
+  // hacia 0 en vez de quedarse clavada en los km/h que llevabas.
+  const startAutoPauseTimer = () => {
+    if (autoPauseTimer.current) clearInterval(autoPauseTimer.current);
+    autoPauseTimer.current = setInterval(() => {
+      const tr = trackerRef.current;
+      if (!isRunningRef.current || !tr) return;
+      const state = tr.tick(Date.now());
+      if (state === 'autopause') {
+        setIsAutoPaused(true);
+        pauseStartedAtRef.current = Date.now();
+        setCurrentSpeed(0);
+      } else if (state === 'fade') {
+        setCurrentSpeed(prev => (prev < 0.5 ? 0 : prev * 0.6));
+      }
+    }, 3000);
+  };
+
+  // La tarea de fondo arranca SIEMPRE, no solo con el permiso "Siempre".
+  // Con "Mientras se usa la app" también funciona —en Android como servicio en
+  // primer plano con su notificación, en iOS porque se inicia con la app
+  // abierta y el modo de fondo de ubicación activado—, lo dice el propio
+  // código nativo de expo-location. Exigíamos "Siempre", que casi nadie da y
+  // que iOS ni ofrece a la primera: para la mayoría, apagar la pantalla dejaba
+  // de registrar. El contador se paraba y ese tramo se perdía.
+  const startBackgroundUpdates = async () => {
+    try { await AsyncStorage.removeItem(BG_BUFFER_KEY); } catch {}
+    try {
+      await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, BG_LOCATION_OPTIONS);
+    } catch (e) {
+      console.warn('[BG Location] No se pudo iniciar:', e);
+    }
+  };
+
   const startRun = async () => {
     const granted = await ensureForegroundPermission();
     if (!granted) {
@@ -1906,10 +1538,8 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     //
     // Ahora se intentan, se registra el fallo si lo hay, y la carrera arranca
     // igual. Nunca al revés.
-    let bgStatus: string | undefined;
     try {
-      const res = await Location.requestBackgroundPermissionsAsync();
-      bgStatus = res.status;
+      await Location.requestBackgroundPermissionsAsync();
     } catch (err) {
       console.warn('[startRun] permiso de background no disponible:', err);
     }
@@ -1929,19 +1559,11 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     pausedAccumulatedRef.current = 0;
     setDistance(0);
     setDistancePosDelta(0);
-    lastRawTimestampRef.current = 0;
     setTotalPoints(0);
     setConqueredZones([]);
-    claimedCellsRef.current = new Set();
-    lastClaimedCellRef.current = null;
-    // Reset del rolling window del detector anti-drift. Si no lo limpiamos,
-    // los puntos de la carrera ANTERIOR quedaban en el buffer y podían
-    // distorsionar la detección de "estás quieto" en los primeros segundos
-    // de la nueva carrera.
-    recentCoordsRef.current = [];
-    recentDopplerSpeedsRef.current = [];
-    rawReadingsRef.current = 0;
-    fullPathRef.current = [];
+    // Registro nuevo para cada carrera: nada de la anterior se arrastra.
+    trackerRef.current = new RunTracker(Date.now());
+    claimedCellsRef.current = trackerRef.current.cells;
     setClaimedCellsTick(t => t + 1);
     setSplits([]);
     splitsTrackingRef.current = { lastKm: 0, lastTime: 0 };
@@ -1949,284 +1571,114 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     setLoopDetected(false);
     loopClosedRef.current = false; // reset del espejo síncrono de cierre de loop
     setSpeedWarning(false);
-    isAutoPausedRef.current = false;
     setIsAutoPaused(false);
-    lastMovementTime.current = Date.now();
 
-    // Vigilante de señal: si llevamos 25 s sin una lectura GPS utilizable, la
-    // carrera no está registrando nada y hay que decirlo. Sin esto el usuario
-    // ve el cronómetro correr y se entera al final, cuando ya la ha perdido.
-    if (gpsWatchTimer.current) clearInterval(gpsWatchTimer.current);
-    gpsWatchTimer.current = setInterval(() => {
-      if (!isRunningRef.current) return;
-      setGpsWeak(Date.now() - lastGoodPointRef.current > 25000);
-    }, 3000);
-
-    // Auto-pause silencioso: cada 3s comprobamos si llevas 20s sin moverte.
-    // Si sí, congelamos contadores (timer, distancia, celdas) sin tocar el GPS.
-    // Cuando llegue un punto con movimiento real, handleLocationUpdate reanuda.
-    if (autoPauseTimer.current) clearInterval(autoPauseTimer.current);
-    autoPauseTimer.current = setInterval(() => {
-      if (!isRunningRef.current) return;
-      if (isAutoPausedRef.current) return;
-      // Mientras no se haya aceptado NINGÚN punto todavía, el GPS sigue
-      // fijando: no estás quieto, es que aún no hay señal lo bastante buena.
-      // Sin este guard la carrera se auto-pausaba a los 20s nada más arrancar,
-      // porque lastMovementTime solo se refresca con puntos aceptados.
-      if (pathRef.current.length === 0) return;
-      const stillFor = (Date.now() - lastMovementTime.current) / 1000;
-      if (stillFor >= 20) {
-        isAutoPausedRef.current = true;
-        setIsAutoPaused(true);
-        pauseStartedAtRef.current = Date.now();
-        setCurrentSpeed(0);
-      } else if (stillFor >= 6) {
-        // Sin movimiento real reciente → la velocidad mostrada se desvanece
-        // hacia 0 en vez de quedar congelada en el último valor. La EMA de
-        // velocidad solo se actualiza en puntos ACEPTADOS; al parar, los puntos
-        // de drift caen bajo el suelo de ruido y se descartan, así que sin esto
-        // la aguja se queda clavada en los km/h que llevabas. Independiente del
-        // GPS: este intervalo corre cada 3s pase lo que pase. Desde 10 km/h
-        // baja 10→6→3.6→… y llega a ~0 antes del auto-pause de los 20s.
-        setCurrentSpeed(prev => (prev < 0.5 ? 0 : prev * 0.6));
-      }
-    }, 3000);
+    startGpsWatchTimer();
+    startAutoPauseTimer();
     setCurrentSpeed(0);
     setPathSegments([]);
     invalidSegments.current = 0;
     pathRef.current = [];
-    lastLocationTimestamp.current = 0;
 
     // Recompute from Date.now() each tick — self-healing against missed ticks
     // while the JS thread is suspended (screen off, doze mode).
     timerRef.current = setInterval(() => setRunTime(computeRunTime()), 1000);
 
-    // Centrar mapa en posición actual al iniciar
-    const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-    mapRef.current?.animateToRegion({
-      latitude: loc.coords.latitude,
-      longitude: loc.coords.longitude,
-      latitudeDelta: 0.02,
-      longitudeDelta: 0.02,
-    }, 800);
+    /** Un punto GPS venga de donde venga —vigilante de primer plano, tarea de
+     *  fondo o lo guardado en disco—. Un único camino: antes eran dos con
+     *  reglas distintas, y el de pantalla apagada perdía calles enteras. */
+    const handleReading = (r: GpsReading, live: boolean): ReadingOutcome | null => {
+      const tr = trackerRef.current;
+      if (!tr || !isRunningRef.current) return null;
+      const out = tr.addReading(r);
+      if (out.kind === 'duplicate' || out.kind === 'skip') return out;
 
-    // Arrancar background location task con foreground service (mantiene GPS activo con pantalla apagada)
-    if (bgStatus === 'granted') {
-      bgLocationBuffer = [];
-      try { await AsyncStorage.removeItem(BG_BUFFER_KEY); } catch {}
-      try {
-        await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, {
-          accuracy: Location.Accuracy.BestForNavigation,
-          distanceInterval: 8,
-          timeInterval: 3000,
-          foregroundService: {
-            notificationTitle: 'CORRR — Carrera en curso',
-            notificationBody: 'Registrando tu recorrido...',
-            notificationColor: '#FF6600',
-          },
-          pausesUpdatesAutomatically: false,
-          showsBackgroundLocationIndicator: true,
-        });
-      } catch (e) {
-        console.warn('[BG Location] No se pudo iniciar:', e);
-      }
-    }
-
-    /** Single location handler used everywhere — foreground watcher, resume, appState */
-    const handleLocationUpdate = (loc: Location.LocationObject) => {
-      const newCoord = { latitude: loc.coords.latitude, longitude: loc.coords.longitude };
-      const now = loc.timestamp ?? Date.now();
-      const accuracy = loc.coords.accuracy ?? 999;
-      const speed = loc.coords.speed ?? -1;
-      const prev = pathRef.current.length > 0 ? pathRef.current[pathRef.current.length - 1] : null;
-
-      // ── Distancia OFICIAL por velocidad GPS (Doppler) ───────────────────
-      // Integramos la velocidad que reporta el chip (speed × dt) en CADA lectura
-      // (no solo las aceptadas), inmune al zigzag de drift que infla la posición.
-      // Parado: speed≈0 → 0 metros (la distancia no sube en un semáforo). El
-      // método viejo (posición) se sigue acumulando aparte en distancePosDelta
-      // solo para comparar en el resumen. dt>6s = hubo un corte (pausa/lock);
-      // ese hueco lo cuenta el buffer de background, no aquí (evita fantasmas).
-      {
-        const rawDt = lastRawTimestampRef.current > 0 ? (now - lastRawTimestampRef.current) / 1000 : 0;
-        lastRawTimestampRef.current = now;
-        if (rawDt > 0 && rawDt <= MAX_DOPPLER_DT_S && speed >= 0 && accuracy <= MAX_ACCURACY_M) {
-          const spd = Math.min(speed, MAX_SPEED_MPS);
-          // Con la carrera auto-pausada NO se acumula distancia. Este bloque va
-          // antes del chequeo de auto-pausa (a propósito: alimenta la ventana de
-          // velocidades), así que sin este guard los km seguían subiendo con la
-          // carrera "parada" — el usuario veía el contador avanzar en pausa.
-          if (spd >= MIN_MOVING_MPS && !isAutoPausedRef.current) {
-            setDistance(d => d + (spd * rawDt) / 1000 * DOPPLER_CALIBRATION);
-          }
-          // Alimentamos la ventana de velocidades SOLO con lecturas de accuracy
-          // buena: una lectura mala no debe poder "desbloquear" el anti-drift.
-          recentDopplerSpeedsRef.current.push(spd);
-          if (recentDopplerSpeedsRef.current.length > DOPPLER_MOVING_WINDOW) {
-            recentDopplerSpeedsRef.current.shift();
-          }
-        }
-      }
-
-      rawReadingsRef.current += 1;
-      const inWarmup =
-        pathRef.current.length < WARMUP_POINTS && rawReadingsRef.current <= WARMUP_MAX_READINGS;
-      const result = filterGpsPoint(newCoord, prev, now, lastLocationTimestamp.current, accuracy, speed, inWarmup);
-
-      if (result.action === 'skip') {
-        // Bad point — don't update timestamp so next point measures from last good one
-        return;
-      }
-
-      if (result.action === 'teleport') {
-        // Phone slept or lost GPS — start new visual segment
-        if (pathRef.current.length > 1) {
-          setPathSegments(segs => [...segs, [...pathRef.current]]);
-        }
-        pathRef.current = [newCoord];
-        setCurrentPath([newCoord]);
-        lastLocationTimestamp.current = now;
-        // Don't bridge across a teleport jump — the runner didn't walk that
-        // line. Drop the anchor so the next point starts a fresh segment.
-        lastClaimedCellRef.current = null;
-        return;
-      }
-
-      // 'accept' — good point
       lastGoodPointRef.current = Date.now();
-      lastLocationTimestamp.current = now;
-      fullPathRef.current.push(newCoord);
-      pathRef.current = [...pathRef.current, newCoord];
-      setCurrentPath([...pathRef.current]);
-
-      // Distancia por POSICIÓN, la misma que ya se acumulaba en segundo plano.
-      // Faltaba aquí, y ese hueco es lo que rompía las carreras: con la
-      // pantalla encendida solo contaba el método Doppler, que se queda a cero
-      // cuando el móvil no reporta velocidad fiable o cuando la precisión pasa
-      // de 18 m (habitual entre edificios). Resultado: gente corriendo 14
-      // minutos con 60 metros contados, y carreras reales descartadas por
-      // "demasiado corta".
-      //
-      // result.distKm ya viene limpio: el filtro descarta coordenadas
-      // inválidas, ignora el jitter por debajo de 6 m manteniendo el ancla, y
-      // corta los teletransportes. Es el mismo recorrido del que salen las
-      // celdas, así que distancia y territorio por fin cuentan lo mismo — que
-      // es justo lo que el anti-trampas comparaba y no le cuadraba.
-      if (result.distKm > 0) setDistancePosDelta(d => d + result.distKm);
-
-      // Auto-pause silencioso: si estamos auto-pausados, este punto solo cuenta
-      // si demuestra movimiento real (>5m de la última posición o >1.5 km/h).
-      // Si hay movimiento → reanudamos solos y dejamos que el punto procese
-      // normalmente. Si no → saltamos todo (no distancia, no celdas, no tiempo).
-      if (isAutoPausedRef.current) {
-        const movedEnough = result.distKm > 0.005 || result.speedKmh > 1.5;
-        if (!movedEnough) return;
-        // Reanudar: descongelar timer + actualizar lastMovementTime
-        isAutoPausedRef.current = false;
+      if (out.kind === 'teleport') {
+        // Hueco sin puntos (túnel, señal perdida): tramo visual nuevo.
+        if (pathRef.current.length > 1) {
+          const done = [...pathRef.current];
+          setPathSegments(segs => [...segs, done]);
+        }
+        pathRef.current = [out.coord];
+        setCurrentPath([out.coord]);
+      } else {
+        pathRef.current = [...pathRef.current, out.coord];
+        setCurrentPath([...pathRef.current]);
+        // Velocidad con EMA: un spike aislado de deriva apenas mueve la aguja.
+        if (out.moved) setCurrentSpeed(prev => prev * 0.7 + out.speedKmh * 0.3);
+        if (out.cellsChanged) setClaimedCellsTick(t => t + 1);
+      }
+      if (out.resumed) {
         setIsAutoPaused(false);
         if (pauseStartedAtRef.current) {
           pausedAccumulatedRef.current += Date.now() - pauseStartedAtRef.current;
           pauseStartedAtRef.current = null;
         }
-        lastMovementTime.current = Date.now();
       }
-
-      // Anti-drift: actualizamos rolling window y chequeamos si el usuario
-      // está realmente quieto (todas las últimas lecturas dentro de 15m).
-      // Si lo está, NO claimemos celdas, NO sumamos distancia, NO refrescamos
-      // lastMovementTime → el auto-pause acabará disparándose a los 20s.
-      // El punto se descarta por completo, ni siquiera entra en pathRef.
-      recentCoordsRef.current.push(newCoord);
-      if (recentCoordsRef.current.length > STATIONARY_WINDOW * 2) {
-        recentCoordsRef.current.shift();
-      }
-      // El chip dice que hay movimiento sostenido → no estamos quietos aunque
-      // el bounding box sea pequeño (caminante lento, curva, acera estrecha).
-      const dopplerMoving =
-        recentDopplerSpeedsRef.current.filter(s => s >= MIN_MOVING_MPS).length >= DOPPLER_MOVING_MIN_HITS;
-      if (isStationary(recentCoordsRef.current) && !dopplerMoving) {
-        return;
-      }
-
-      // Grid (v2): claim the cell this point falls in, plus every cell on the
-      // line from the previous one (line bridge) — keeps the trail continuous
-      // even when the GPS skips cells. The Set lives in a ref so updates don't
-      // re-render; the tick state forces a render when the count changes.
-      const cell = coordToCell(newCoord.latitude, newCoord.longitude);
-      let addedCell = false;
-      const prevCell = lastClaimedCellRef.current;
-      const bridge = prevCell ? cellLine(prevCell.x, prevCell.y, cell.x, cell.y) : [cell];
-      if (bridge.length > MAX_BRIDGE_CELLS) {
-        // Outlier — no claim, rompemos cadena para que la siguiente lectura
-        // empiece limpia y no tienda otro puente largo.
-        lastClaimedCellRef.current = null;
-      } else {
-        for (const bc of bridge) {
-          const k = cellKey(bc.x, bc.y);
-          if (!claimedCellsRef.current.has(k)) {
-            claimedCellsRef.current.add(k);
-            addedCell = true;
-          }
-        }
-        lastClaimedCellRef.current = cell;
-        if (addedCell) setClaimedCellsTick(t => t + 1);
-      }
-
-      if (result.distKm > 0) {
-        // Método VIEJO (validación): suma de saltos de posición. La distancia
-        // oficial la lleva la integración por velocidad de arriba.
-        setDistancePosDelta(d => d + result.distKm);
-        lastMovementTime.current = Date.now(); // Runner is moving
-      }
-      // Velocidad con EMA (exponential moving average) en vez de mostrar el
-      // valor instantáneo. Antes, un spike de drift (p.ej. 5m de drift en 1s
-      // = 18 km/h) se veía tal cual durante 1s — confuso. Con alpha=0.3 el
-      // display se va suavizando hacia el nuevo valor y un spike aislado
-      // apenas mueve la aguja. En caminata sostenida converge en 5-6 puntos.
-      if (result.speedKmh >= 0) {
-        setCurrentSpeed(prev => prev * 0.7 + result.speedKmh * 0.3);
-      }
+      setDistance(tr.distanceKm);
+      setDistancePosDelta(tr.positionKm);
       setSpeedWarning(false);
 
-      // Center map on current position with heading (direction of movement)
-      const heading = loc.coords.heading;
-      if (heading != null && heading >= 0 && result.speedKmh > 2) {
-        // Moving: rotate map to face direction of travel
-        mapRef.current?.animateCamera({
-          center: newCoord,
-          heading: heading,
-          pitch: 45,
-          zoom: 17,
-        }, { duration: 500 });
-      } else {
-        // Standing still or no heading: just center without rotation
-        mapRef.current?.animateCamera({
-          center: newCoord,
-          pitch: 0,
-          zoom: 17,
-        }, { duration: 500 });
+      if (live && out.kind === 'accept' && !loopDetected && pathRef.current.length >= 10) {
+        if (checkLoop(pathRef.current)) closeLoop([...pathRef.current]);
       }
+      return out;
+    };
 
-      // Check for closed loop
-      if (!loopDetected && pathRef.current.length >= 10) {
-        if (checkLoop(pathRef.current)) {
-          closeLoop([...pathRef.current]);
-        }
+    const handleLocationUpdate = (loc: Location.LocationObject) => {
+      const out = handleReading(toReading(loc), true);
+      if (!out || out.kind !== 'accept') return;
+      const heading = loc.coords.heading;
+      if (heading != null && heading >= 0 && out.speedKmh > 2) {
+        // Moving: rotate map to face direction of travel
+        mapRef.current?.animateCamera({ center: out.coord, heading, pitch: 45, zoom: 17 }, { duration: 500 });
+      } else {
+        mapRef.current?.animateCamera({ center: out.coord, pitch: 0, zoom: 17 }, { duration: 500 });
       }
     };
 
+    // Todo listo ANTES de pedirle nada al GPS: un punto que llegara antes se
+    // quedaba sin nadie que lo procesara. Y la carrera cuenta como empezada ya,
+    // para que STOP responda aunque el GPS tarde en dar la primera posición.
     isRunningRef.current = true;
     handleLocationUpdateRef.current = handleLocationUpdate;
-    locationRef.current = await Location.watchPositionAsync(
-      { accuracy: Location.Accuracy.BestForNavigation, distanceInterval: 8, timeInterval: 3000 },
-      handleLocationUpdate,
-    );
+    handleReadingRef.current = handleReading;
+    bgReadingsListener = readings => {
+      for (const r of readings) handleReadingRef.current(r, false);
+    };
+
+    // Centrar mapa en posición actual al iniciar. Si el GPS tarda o falla, la
+    // carrera sigue: antes una excepción aquí cortaba la función con el
+    // cronómetro ya en marcha, sin registrar nada y con STOP sin responder.
+    try {
+      const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      mapRef.current?.animateToRegion({
+        latitude: loc.coords.latitude,
+        longitude: loc.coords.longitude,
+        latitudeDelta: 0.02,
+        longitudeDelta: 0.02,
+      }, 800);
+    } catch (err) {
+      console.warn('[startRun] sin posición inicial:', err);
+    }
+
+    await startBackgroundUpdates();
+
+    try {
+      locationRef.current = await Location.watchPositionAsync(
+        { accuracy: Location.Accuracy.BestForNavigation, distanceInterval: 8, timeInterval: 3000 },
+        handleLocationUpdate,
+      );
+    } catch (err) {
+      console.warn('[startRun] no se pudo vigilar la posición:', err);
+    }
   };
 
   const pauseRun = async () => {
     setIsPaused(true);
     // Manual pause overrides any auto-pause that may have been active.
-    isAutoPausedRef.current = false;
+    trackerRef.current?.pause();
     setIsAutoPaused(false);
     pauseStartedAtRef.current = Date.now();
     if (autoPauseTimer.current) { clearInterval(autoPauseTimer.current); autoPauseTimer.current = null; }
@@ -2240,84 +1692,38 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       const isTask = await TaskManager.isTaskRegisteredAsync(BACKGROUND_LOCATION_TASK);
       if (isTask) await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
     } catch {}
-    bgLocationBuffer = [];
     try { await AsyncStorage.removeItem(BG_BUFFER_KEY); } catch {}
   };
 
   const resumeRun = async () => {
     setIsPaused(false);
-    isAutoPausedRef.current = false;
     setIsAutoPaused(false);
     // Accumulate the paused duration so the timer math skips over it.
     if (pauseStartedAtRef.current) {
       pausedAccumulatedRef.current += Date.now() - pauseStartedAtRef.current;
       pauseStartedAtRef.current = null;
     }
-    lastMovementTime.current = Date.now();
+    // Lo andado en pausa no cuenta: el primer punto empieza tramo nuevo.
+    trackerRef.current?.resume(Date.now());
     await activateScreenAwake();
-    // Reiniciar auto-pause silencioso (20s sin movimiento → auto-pause)
-    if (autoPauseTimer.current) clearInterval(autoPauseTimer.current);
-    autoPauseTimer.current = setInterval(() => {
-      if (!isRunningRef.current) return;
-      if (isAutoPausedRef.current) return;
-      // Mientras no se haya aceptado NINGÚN punto todavía, el GPS sigue
-      // fijando: no estás quieto, es que aún no hay señal lo bastante buena.
-      // Sin este guard la carrera se auto-pausaba a los 20s nada más arrancar,
-      // porque lastMovementTime solo se refresca con puntos aceptados.
-      if (pathRef.current.length === 0) return;
-      const stillFor = (Date.now() - lastMovementTime.current) / 1000;
-      if (stillFor >= 20) {
-        isAutoPausedRef.current = true;
-        setIsAutoPaused(true);
-        pauseStartedAtRef.current = Date.now();
-        setCurrentSpeed(0);
-      } else if (stillFor >= 6) {
-        // Sin movimiento real reciente → la velocidad mostrada se desvanece
-        // hacia 0 en vez de quedar congelada en el último valor. La EMA de
-        // velocidad solo se actualiza en puntos ACEPTADOS; al parar, los puntos
-        // de drift caen bajo el suelo de ruido y se descartan, así que sin esto
-        // la aguja se queda clavada en los km/h que llevabas. Independiente del
-        // GPS: este intervalo corre cada 3s pase lo que pase. Desde 10 km/h
-        // baja 10→6→3.6→… y llega a ~0 antes del auto-pause de los 20s.
-        setCurrentSpeed(prev => (prev < 0.5 ? 0 : prev * 0.6));
-      }
-    }, 3000);
+    startAutoPauseTimer();
+    // El aviso de señal se paraba en la pausa y no volvía a arrancar.
+    lastGoodPointRef.current = Date.now();
+    startGpsWatchTimer();
     // Recompute from Date.now() each tick — self-healing against missed ticks
     // while the JS thread is suspended (screen off, doze mode).
     timerRef.current = setInterval(() => setRunTime(computeRunTime()), 1000);
 
-    // Reiniciar background task
-    try {
-      const bgRunning = await TaskManager.isTaskRegisteredAsync(BACKGROUND_LOCATION_TASK);
-      if (!bgRunning) {
-        // getBackgroundPermissionsAsync (NO request): al reanudar, el permiso
-        // ya se concedió al iniciar la carrera. Si fue revocado a mitad, NO
-        // podemos lanzar el diálogo del sistema sin divulgación previa
-        // (política Play); seguimos solo-foreground.
-        const { status } = await Location.getBackgroundPermissionsAsync();
-        if (status === 'granted') {
-          bgLocationBuffer = [];
-          try { await AsyncStorage.removeItem(BG_BUFFER_KEY); } catch {}
-          await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, {
-            accuracy: Location.Accuracy.BestForNavigation,
-            distanceInterval: 8,
-            timeInterval: 3000,
-            foregroundService: {
-              notificationTitle: 'CORRR — Carrera en curso',
-              notificationBody: 'Registrando tu recorrido...',
-              notificationColor: '#FF6600',
-            },
-            pausesUpdatesAutomatically: false,
-            showsBackgroundLocationIndicator: true,
-          });
-        }
-      }
-    } catch {}
+    await startBackgroundUpdates();
 
-    locationRef.current = await Location.watchPositionAsync(
-      { accuracy: Location.Accuracy.BestForNavigation, distanceInterval: 8, timeInterval: 3000 },
-      handleLocationUpdateRef.current,
-    );
+    try {
+      locationRef.current = await Location.watchPositionAsync(
+        { accuracy: Location.Accuracy.BestForNavigation, distanceInterval: 8, timeInterval: 3000 },
+        handleLocationUpdateRef.current,
+      );
+    } catch (err) {
+      console.warn('[resumeRun] no se pudo vigilar la posición:', err);
+    }
   };
 
   const stopRun = async () => {
@@ -2328,7 +1734,6 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     isRunningRef.current = false;
     setIsRunning(false);
     setIsPaused(false);
-    isAutoPausedRef.current = false;
     setIsAutoPaused(false);
     // Freeze the final time before clearing the timer refs.
     setRunTime(computeRunTime());
@@ -2336,18 +1741,20 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     pauseStartedAtRef.current = null;
     pausedAccumulatedRef.current = 0;
     if (autoPauseTimer.current) { clearInterval(autoPauseTimer.current); autoPauseTimer.current = null; }
+    if (gpsWatchTimer.current) { clearInterval(gpsWatchTimer.current); gpsWatchTimer.current = null; }
+    setGpsWeak(false);
     deactivateScreenAwake();
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
     // Limpiar también la ref del watcher para que si se reentra (bug futuro),
     // no intentemos remover un subscription ya cerrado. Antes solo se llamaba
     // .remove() pero la ref quedaba colgando.
     if (locationRef.current) { locationRef.current.remove(); locationRef.current = null; }
+    bgReadingsListener = null;
     // Parar background task si estaba activo
     try {
       const isTask = await TaskManager.isTaskRegisteredAsync(BACKGROUND_LOCATION_TASK);
       if (isTask) await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
     } catch {}
-    bgLocationBuffer = [];
     try { await AsyncStorage.removeItem(BG_BUFFER_KEY); } catch {}
 
     // Si no cerró loop durante la carrera, comprobar si está cerca del inicio al parar
@@ -2364,107 +1771,26 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       }
     }
 
-    // Flood-fill de las regiones encerradas por el recorrido. SOLO se ejecuta si
-    // de verdad se cerró un loop (loopClosedRef, puesto por closeLoop tanto en la
-    // detección mid-run como en el auto-cierre de arriba). Antes corría SIEMPRE
-    // "por si el detector falló", pero eso permitía rellenos fantasma: un salto
-    // GPS podía encerrar una región sin que hubiera un loop real → flood-fill
-    // rellenaba una cuña enorme que el usuario nunca corrió (ver bug del "diagonal"
-    // en Barcelona). Gatearlo al loop real elimina esa clase sin nerfear loops
-    // legítimos (que sí disparan la detección). Trade-off menor: un loop real que
-    // el detector no pille no rellenará su interior — caso raro y preferible.
-    // Rellenar el INTERIOR del loop con flood-fill SIEMPRE que se cerró un loop
-    // (con o sin gaps). fillEnclosedCells es auto-limitado: solo reclama celdas
-    // topológicamente ENCERRADAS por el rastro real (el rastro con sus puentes
-    // cellLine). Si el rastro cierra → rellena el interior; si está roto (gaps
-    // con teleport) → no rellena nada de más. NUNCA infla (a diferencia del
-    // convexHull, que era el verdadero fantasma y ya no se usa). Estas celdas
-    // se mandan al backend → al reabrir el interior sigue cerrado (consistente).
-    if (loopClosedRef.current) {
-      // Rellenar SOLO los circuitos que de verdad se cerraron.
-      //
-      // Antes esto tomaba el recorrido ENTERO como un polígono. Un polígono se
-      // cierra solo, uniendo el último punto con el primero, así que si salías
-      // de A y acababas en B —lejos— esa línea recta imaginaria cerraba la
-      // figura y se reclamaba TODA el área entre tu ruta y esa diagonal.
-      // Territorio por el que nunca se pasó.
-      //
-      // Y saltaba casi siempre: basta volver a menos de 30 m de cualquier punto
-      // anterior para dar el recorrido por "cerrado", y en una carrera larga
-      // por ciudad eso ocurre seguro (cruzas tu propia ruta, vuelves por una
-      // calle paralela...). Medido en producción: ocho carreras infladas entre
-      // 2 y 5,4 veces, y una de 16 km que dibujaba una cuña maciza en lugar de
-      // un recorrido.
-      //
-      // Ahora se buscan los tramos cerrados de verdad: pares de puntos a menos
-      // de 30 m entre sí con al menos 200 m de recorrido por medio. Cada uno es
-      // un circuito real y se rellena su polígono. Lo que quede fuera —la ida
-      // hasta el circuito, o la vuelta a casa después— es una cola abierta que
-      // no encierra nada, y no aporta ni una celda.
-      const path = fullPathRef.current;
-      if (path.length >= 8) {
-        // Distancia acumulada, para medir el recorrido entre dos puntos sin
-        // tener que recorrer el tramo cada vez.
-        const cum: number[] = [0];
-        for (let k = 1; k < path.length; k++) {
-          cum[k] = cum[k - 1] + getDistance(path[k - 1], path[k]);
-        }
-
-        const loops: Coord[][] = [];
-        let from = 0;
-        for (let j = 1; j < path.length; j++) {
-          for (let i = from; i < j; i++) {
-            const perimeter = cum[j] - cum[i];
-            // Al crecer i el perímetro solo puede encoger: si ya es corto,
-            // ninguno de los siguientes servirá.
-            if (perimeter < LOOP_MIN_PERIMETER_M) break;
-            // Un "circuito" de más de 10 km casi siempre es el recorrido
-            // entero cerrándose contra sí mismo, que es lo que evitamos.
-            if (perimeter > 10000) continue;
-            if (getDistance(path[i], path[j]) < LOOP_CLOSE_DIST_M) {
-              loops.push(path.slice(i, j + 1));
-              from = j; // tramo consumido
-              break;
-            }
-          }
-        }
-
-        for (const loop of loops) {
-          let minCX = Infinity, maxCX = -Infinity, minCY = Infinity, maxCY = -Infinity;
-          for (const pt of loop) {
-            const c = coordToCell(pt.latitude, pt.longitude);
-            if (c.x < minCX) minCX = c.x; if (c.x > maxCX) maxCX = c.x;
-            if (c.y < minCY) minCY = c.y; if (c.y > maxCY) maxCY = c.y;
-          }
-          // Tope por circuito: 200x200 celdas son 2x2 km, ya un circuito
-          // enorme. Si sale mayor, algo va mal en el GPS.
-          const w = maxCX - minCX + 1, h = maxCY - minCY + 1;
-          if (w * h > 40000) continue;
-          for (let cy = minCY; cy <= maxCY; cy++) {
-            for (let cx = minCX; cx <= maxCX; cx++) {
-              const k = cellKey(cx, cy);
-              if (claimedCellsRef.current.has(k)) continue;
-              const lat = (cy + 0.5) * CELL_LAT_DEG;
-              const lng = (cx + 0.5) * CELL_LNG_DEG;
-              if (pointInPolygon(lat, lng, loop)) claimedCellsRef.current.add(k);
-            }
-          }
-        }
-      }
-      // El flood-fill topológico remata huecos interiores. Nunca inventa: solo
-      // reclama lo que el rastro encierra por completo.
-      const filledCells = fillEnclosedCells(claimedCellsRef.current);
-      if (filledCells.size !== claimedCellsRef.current.size) {
-        claimedCellsRef.current = filledCells;
-      }
+    // Rellenar SOLO los circuitos que de verdad se cerraron (RunTracker.finish):
+    // nunca a través de un hueco, nunca la diagonal imaginaria de A a B.
+    const tracker = trackerRef.current;
+    let loopsFound = 0;
+    if (tracker) {
+      loopsFound = tracker.finish().loops;
+      claimedCellsRef.current = tracker.cells;
       setClaimedCellsTick(t => t + 1);
     }
+    // La distancia de la carrera: la que se veía en pantalla y la que se
+    // guarda. Antes el resumen enseñaba la de velocidad y se guardaba el mayor
+    // de los dos métodos, así que el resumen y el historial no cuadraban.
+    const runDistanceKm = tracker ? tracker.distanceKm : Math.max(distance, distancePosDelta);
+    const runPosKm = tracker ? tracker.positionKm : distancePosDelta;
 
     // 10 pts/km (v1.7 economy). The final total here is a client-side ESTIMATE
     // that assumes every claimed cell is new (1 pt each). The backend recomputes
     // authoritative points (knows which are robbed → 2 pts) and applies streak +
     // PB multipliers — we use res.points (returned by saveRun) in the summary modal.
-    const kmPoints = pathRef.current.length >= 2 ? Math.round(distance * 10) : 0;
+    const kmPoints = Math.round(runDistanceKm * 10);
     const cellCount = claimedCellsRef.current.size;
     const estimatedCellPoints = cellCount; // assume all new (1 pt each)
     const finalPoints = totalPoints + kmPoints + estimatedCellPoints;
@@ -2482,12 +1808,9 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     // Si falla cualquiera de los dos, descartamos la carrera y avisamos.
     const MIN_CELLS_FOR_VALID_RUN = 5;
     const MIN_DISTANCE_KM_FOR_VALID_RUN = 0.05; // 50m
-    // Máximo de ambos métodos: no descartamos una carrera real si el método
-    // nuevo (velocidad) infracuenta en este móvil mientras lo validamos.
-    const distanceForValidity = Math.max(distance, distancePosDelta);
     const isValidRun =
       cellCount >= MIN_CELLS_FOR_VALID_RUN &&
-      distanceForValidity >= MIN_DISTANCE_KM_FOR_VALID_RUN;
+      runDistanceKm >= MIN_DISTANCE_KM_FOR_VALID_RUN;
 
     if (isValidRun) {
       const closedZones = conqueredZones.filter(z => z.area > 0);
@@ -2506,11 +1829,11 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         // decidir si la carrera es válida. Guardar solo el Doppler era
         // incoherente: una carrera podía pasar la validación por posición y
         // registrarse luego con los kilómetros del método que había fallado.
-        distanceKm: distanceForValidity,
+        distanceKm: runDistanceKm,
         durationSecs: runTime,
         points: finalPoints, // client estimate — backend ignores and recomputes
         loopBonus: totalPoints, // legacy: preview de bonos de loop (backend lo clampa)
-        loopClosed: loopClosedRef.current, // v1.10.10: el backend calcula el bono autoritativo
+        loopClosed: loopClosedRef.current || loopsFound > 0, // v1.10.10: el backend calcula el bono autoritativo
         xp: earnedXP,
         zonesCount,
         zones: closedZones.map(z => ({ coords: z.coords, area: z.area, points: z.points })),
@@ -2557,8 +1880,8 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         setSavingRun(false);
         setRunSummary({
           visible: true,
-          distance,
-          distancePosDelta,
+          distance: runDistanceKm,
+          distancePosDelta: runPosKm,
           time: runTime,
           points: authPoints,
           xp: authXP,
@@ -2580,7 +1903,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         // La frase se elige UNA vez aquí, no en cada render: si no, cambiaría
         // sola mientras el usuario mira la tarjeta.
         setShareCard({
-          distance, time: runTime, points: authPoints,
+          distance: runDistanceKm, time: runTime, points: authPoints,
           cells: cellCount,
           runnerName: user?.username ?? 'Corredor',
           phrase: randomSharePhrase(steals.length > 0),
@@ -2642,8 +1965,8 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         setSavingRun(false);
         setRunSummary({
           visible: true,
-          distance,
-          distancePosDelta,
+          distance: runDistanceKm,
+          distancePosDelta: runPosKm,
           time: runTime,
           points: finalPoints,
           xp: earnedXP,
@@ -2667,7 +1990,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     mapRef.current?.animateCamera({ heading: 0, pitch: 0 }, { duration: 500 });
 
     // Carrera inválida (muy corta): aviso breve, sin LoadingScreen ni resumen.
-    if (!isValidRun && (cellCount > 0 || distanceForValidity > 0)) {
+    if (!isValidRun && (cellCount > 0 || runDistanceKm > 0)) {
       Alert.alert(
         'Carrera demasiado corta',
         'No has cubierto suficiente distancia. La carrera no se ha guardado.',
@@ -2696,7 +2019,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
   return (
     <View style={styles.container}>
       <ZonePopup
-        visible={popup.visible}
+        visible={popup.visible && popupReady}
         type={popup.type}
         points={popup.points}
         rivalName={popup.rivalName}
@@ -2849,7 +2172,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
           pestaña a Perfil/Stats/Ranking). Encadenándolos, primero se ve la
           cartela y al cerrarla aparece el resumen, que es además el orden
           narrativo correcto. Si no hubo cartela, sale directo. */}
-      {runSummary?.visible && !popup.visible && (
+      {runSummary?.visible && summaryReady && (
         <Modal transparent visible animationType="fade" statusBarTranslucent>
           <View style={styles.summaryOverlay}>
             <View style={styles.summaryCard}>
