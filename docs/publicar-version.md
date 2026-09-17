@@ -33,7 +33,9 @@ el resto se hace a mano en Xcode, App Store Connect, Play Console y Railway.
    llega un correo de que está procesada.
 2. **Crear la versión.** [App Store Connect](https://appstoreconnect.apple.com)
    → Apps → CORRR → pestaña **Distribución** → **+** junto a "App para iOS" →
-   escribir el número (X.Y.Z).
+   escribir **exactamente el número de la build** (el X.Y.Z que sale en
+   TestFlight como "X.Y.Z (N)"). Si no coincide, la tienda enseña un número y la
+   app lleva otro dentro: la 1.11.6 (build 13) se publicó como "1.11.7".
 3. **Rellenar.**
    - **Novedades de esta versión**: el texto preparado.
    - **Compilación** → **Añadir compilación** → la build nueva (comprobar el número).
