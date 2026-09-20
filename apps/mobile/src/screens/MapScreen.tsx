@@ -210,6 +210,46 @@ function rasterizePolygonToCells(polygon: { latitude: number; longitude: number 
   return cells;
 }
 
+/** Huella del conjunto de celdas de un dueño, para saber si ha cambiado.
+ *  No depende del orden y no crea cadenas enormes: con 5.000 celdas, comparar
+ *  dos cadenas de 50 KB costaría más que lo que queremos ahorrar. */
+function cellsFingerprint(cells: { x: number; y: number }[]): string {
+  let mezcla = 0;
+  let suma = 0;
+  for (const c of cells) {
+    const h = (c.x * 73856093) ^ (c.y * 19349663);
+    mezcla ^= h;
+    suma = (suma + h) | 0;
+  }
+  return `${cells.length}:${mezcla}:${suma}`;
+}
+
+/** Caja visible en coordenadas de celda, redondeada hacia fuera a bloques.
+ *
+ *  El redondeo es lo que hace que mover el mapa un poco no dispare ningún
+ *  recálculo: mientras sigas dentro del mismo bloque, la caja es la misma, la
+ *  huella de cada dueño es la misma y los polígonos se reutilizan tal cual.
+ *  BLOQUE = 64 celdas ≈ 640 m, y el margen evita que el territorio aparezca de
+ *  golpe justo al borde de la pantalla. */
+const VIEW_BLOCK = 64;
+const VIEW_MARGIN = 0.4;
+function visibleCellBox(region: { latitude: number; longitude: number; latitudeDelta: number; longitudeDelta: number }) {
+  const halfLat = (region.latitudeDelta / 2) * (1 + VIEW_MARGIN);
+  const halfLng = (region.longitudeDelta / 2) * (1 + VIEW_MARGIN);
+  const sw = coordToCell(region.latitude - halfLat, region.longitude - halfLng);
+  const ne = coordToCell(region.latitude + halfLat, region.longitude + halfLng);
+  const bloque = (v: number, arriba: boolean) =>
+    (arriba ? Math.ceil((v + 1) / VIEW_BLOCK) : Math.floor(v / VIEW_BLOCK)) * VIEW_BLOCK;
+  return {
+    x0: bloque(sw.x, false), x1: bloque(ne.x, true),
+    y0: bloque(sw.y, false), y1: bloque(ne.y, true),
+  };
+}
+type CellBox = ReturnType<typeof visibleCellBox>;
+const sameBox = (a: CellBox | null, b: CellBox) =>
+  !!a && a.x0 === b.x0 && a.x1 === b.x1 && a.y0 === b.y0 && a.y1 === b.y1;
+const inBox = (b: CellBox, x: number, y: number) => x >= b.x0 && x <= b.x1 && y >= b.y0 && y <= b.y1;
+
 /** Union an array of cells into one (or several disjoint) outlined polygons.
  *  Used to render a territory as a single mass — no internal lines between
  *  adjacent cells, just one stroke around the perimeter of each connected
@@ -644,6 +684,15 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
   const trackerRef = useRef<RunTracker | null>(null);
   const handleReadingRef = useRef<(r: GpsReading, live: boolean) => ReadingOutcome | null>(() => null);
   const [remoteCells, setRemoteCells] = useState<RemoteCell[]>([]);
+  /** Zona de la que se calculan y dibujan los territorios. El servidor manda
+   *  bastante más de lo que cabe en pantalla (redondea a casillas de 1,3 km
+   *  para poder reutilizar la respuesta entre usuarios), y calcular la forma de
+   *  todo eso era trabajo tirado: con mucha gente en el mapa, medio segundo de
+   *  tirón cada vez que mueves el dedo. */
+  const [viewBox, setViewBox] = useState<CellBox | null>(null);
+  /** Polígonos ya calculados por dueño. Al mover el mapa, los dueños cuyas
+   *  celdas no han cambiado se reutilizan en vez de recalcularse. */
+  const unionCacheRef = useRef(new Map<string, { firma: string; polys: UnionedPolygon[] }>());
   const [selectedZone, setSelectedZone] = useState<RemoteZone | null>(null);
   // Modal de "aviso destacado" (prominent disclosure) que Google Play exige
   // mostrar ANTES de invocar el diálogo del sistema para
@@ -1144,6 +1193,23 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     return () => clearInterval(id);
   }, [isRunning]);
 
+  /** Une las celdas de un dueño en polígonos, reutilizando el resultado si ese
+   *  dueño no ha cambiado. Unir es lo caro de todo el mapa. */
+  const unionCached = (clave: string, cells: { x: number; y: number }[]): UnionedPolygon[] => {
+    const firma = cellsFingerprint(cells);
+    const guardado = unionCacheRef.current.get(clave);
+    if (guardado && guardado.firma === firma) return guardado.polys;
+    const polys = unionCellsToPolygons(cells);
+    unionCacheRef.current.set(clave, { firma, polys });
+    // Tope de memoria: con muchos dueños vistos a lo largo de una sesión, la
+    // caché crecería sin freno. Al pasarse, se tira la entrada más antigua.
+    if (unionCacheRef.current.size > 60) {
+      const vieja = unionCacheRef.current.keys().next().value;
+      if (vieja !== undefined) unionCacheRef.current.delete(vieja);
+    }
+    return polys;
+  };
+
   // Pre-computed unions of cells per owner. Rebuilt only when remoteCells or
   // this-run claims change — polygon-clipping is too expensive to do per render.
   const myCellsUnion = useMemo(() => {
@@ -1151,19 +1217,22 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     const seen = new Set<string>();
     for (const c of remoteCells) {
       if (!c.is_mine) continue;
+      if (viewBox && !inBox(viewBox, c.cell_x, c.cell_y)) continue;
       const k = cellKey(c.cell_x, c.cell_y);
       if (seen.has(k)) continue;
       seen.add(k);
       myCells.push({ x: c.cell_x, y: c.cell_y });
     }
+    // Las celdas de la carrera en curso van SIEMPRE, se esté mirando donde se
+    // esté: es el rastro que el corredor está viendo pintarse en directo.
     claimedCellsRef.current.forEach(k => {
       if (seen.has(k)) return;
       seen.add(k);
       const [xs, ys] = k.split(',');
       myCells.push({ x: parseInt(xs, 10), y: parseInt(ys, 10) });
     });
-    return unionCellsToPolygons(myCells);
-  }, [remoteCells, claimedCellsTick]);
+    return unionCached('yo', myCells);
+  }, [remoteCells, claimedCellsTick, viewBox]);
 
   /** Rival cells grouped by owner_id → one merged polygon per owner. Each carries
    *  the owner metadata so taps still resolve to the rival info modal. */
@@ -1171,6 +1240,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     const byOwner = new Map<string, { ownerId: string; ownerName: string | undefined; ownerWarCry: string | null | undefined; ownerAvatar: string | null | undefined; cells: { x: number; y: number }[] }>();
     for (const c of remoteCells) {
       if (c.is_mine) continue;
+      if (viewBox && !inBox(viewBox, c.cell_x, c.cell_y)) continue;
       const entry = byOwner.get(c.owner_id);
       if (entry) entry.cells.push({ x: c.cell_x, y: c.cell_y });
       else byOwner.set(c.owner_id, {
@@ -1186,9 +1256,9 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       ownerName: o.ownerName,
       ownerWarCry: o.ownerWarCry,
       ownerAvatar: o.ownerAvatar,
-      polygons: unionCellsToPolygons(o.cells),
+      polygons: unionCached(o.ownerId, o.cells),
     }));
-  }, [remoteCells]);
+  }, [remoteCells, viewBox]);
 
   const stolenCheckDone = useRef(false);
   const checkForStolenZones = async (zones: RemoteZone[]) => {
@@ -2466,6 +2536,10 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
           toolbarEnabled={false}
           onRegionChangeComplete={(region) => {
             currentDelta.current = { latDelta: region.latitudeDelta, lngDelta: region.longitudeDelta };
+            // Solo se recalcula si el encuadre sale del bloque actual: mover el
+            // mapa un poco no rehace ningún polígono.
+            const caja = visibleCellBox(region);
+            setViewBox(prev => (sameBox(prev, caja) ? prev : caja));
             // Comprobar si está demasiado lejos para mostrar zonas
             // El aviso tiene que usar EL MISMO umbral que decide borrar las
             // celdas. Usaba el de las zonas (0.15) mientras el borrado usa el
@@ -2513,11 +2587,14 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
               const ownerColor = getRivalColor(rival.ownerId);
               return (
                 <Polygon
-                  // Key incluye polygonGeneration: cuando termina una carrera
-                  // bumpea y TODOS los polígonos se remontan limpios. El
-                  // outer.length adicional cubre cambios incrementales
-                  // durante la carrera (cuando la generación no cambia).
-                  key={`rival-${polygonGeneration}-${rival.ownerId}-${polyIdx}-${p.outer.length}`}
+                  // La clave YA NO lleva el número de puntos del contorno.
+                  // Con él, cualquier cambio en el territorio de un rival
+                  // destruía su dibujo y creaba otro; con cientos en pantalla,
+                  // eso es lo que hacía que refrescar diera tirones. Ahora el
+                  // dibujo se queda y solo se le cambian las coordenadas.
+                  // polygonGeneration sigue: al terminar una carrera bumpea y
+                  // se remonta todo limpio de una vez.
+                  key={`rival-${polygonGeneration}-${rival.ownerId}-${polyIdx}`}
                   coordinates={p.outer}
                   holes={p.holes.length > 0 ? p.holes : undefined}
                   fillColor={`${ownerColor}80`}
@@ -2549,12 +2626,10 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
           )}
           {polygonsVisible && myCellsUnion.map((p, i) => (
             <Polygon
-              // Key incluye polygonGeneration: bumpea al terminar una carrera
-              // y fuerza remount limpio de todos los polígonos (RN-Maps no
-              // puede aferrarse a una instancia anterior con coords zombies).
-              // outer.length cubre cambios incrementales durante el run sin
-              // necesidad de bumpear la generación cada tick.
-              key={`mine-${polygonGeneration}-${i}-${p.outer.length}`}
+              // Sin el número de puntos en la clave: durante una carrera el
+              // territorio crece en cada celda nueva, y rehacer el dibujo
+              // entero cada vez era el tirón más gordo del mapa en marcha.
+              key={`mine-${polygonGeneration}-${i}`}
               coordinates={p.outer}
               holes={p.holes.length > 0 ? p.holes : undefined}
               fillColor={`${colors.orange}80`}
