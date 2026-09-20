@@ -164,6 +164,7 @@ export async function importNewWorkouts(userId: string): Promise<ImportedWorkout
           zones: [],
           claimedCells: run.cells,
           source: 'healthkit',
+          diag: run.diag,
           externalId: w.uuid,
           startedAt: new Date(startMs).toISOString(),
           endedAt: new Date(endMs).toISOString(),

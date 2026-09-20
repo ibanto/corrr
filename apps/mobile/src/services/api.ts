@@ -185,6 +185,12 @@ interface CellRunPayload extends RunPayload {
   source?: 'app' | 'healthkit';
   // UUID del entreno en Salud: el servidor lo usa para no importarlo dos veces.
   externalId?: string;
+  // Cifras técnicas de la carrera, SIN coordenadas (RunTracker.diag): cuántas
+  // lecturas hubo, el salto más largo, en cuántos trozos quedó el recorrido y
+  // cuántos circuitos se rellenaron o se descartaron. Sirven para entender
+  // después por qué una carrera reclamó lo que reclamó, sin guardar por dónde
+  // ha ido nadie.
+  diag?: Record<string, number>;
   // Cuándo se corrió de verdad (ISO). Con esto el servidor da cada celda a
   // quien pasó por ella más tarde, no a quien guardó más tarde.
   startedAt?: string;

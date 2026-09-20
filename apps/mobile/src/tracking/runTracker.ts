@@ -221,6 +221,14 @@ export const SPEED_FADE_AFTER_S = 6;
 export const LOOP_CLOSE_DIST_M = 30;
 export const LOOP_MIN_PERIMETER_M = 200;
 export const STOP_CLOSE_DIST_M = 50;
+// Distancia máxima entre dos puntos SEGUIDOS dentro de un circuito para
+// fiarnos de él. Corriendo, con una lectura cada pocos segundos, dos puntos
+// seguidos caen a menos de 60 m; si hay más, ahí el GPS se cortó y la "recta"
+// entre ellos no es una calle: es una línea inventada. Rellenar el interior de
+// un circuito así es lo que pintaba cuñas enormes en diagonal atravesando
+// manzanas (KarolK 20-sep: 4,7 km² con 13 km; Ibanto ese mismo día: una banda
+// maciza de 530×430 m con 1,34 km).
+export const MAX_LOOP_EDGE_M = 60;
 
 // Hueco sin lecturas (túnel, pérdida de señal): al volver la señal lejos, se
 // suma la línea recta SOLO si encaja con alguien andando o corriendo y venías
@@ -336,6 +344,19 @@ export function findClosedLoops(path: Coord[]): Coord[][] {
   return loops;
 }
 
+/** ¿Es un circuito de verdad o hay un corte del GPS dentro?
+ *
+ *  Un circuito cerrado de verdad son puntos seguidos, uno cada pocos segundos.
+ *  Si entre dos puntos seguidos hay un salto largo, ese tramo no se ha corrido:
+ *  es una línea recta que el GPS se ha saltado, y todo lo que "encierra" contra
+ *  el resto del recorrido es territorio que nadie ha pisado. */
+export function isTrustworthyLoop(loop: Coord[]): boolean {
+  for (let i = 1; i < loop.length; i++) {
+    if (getDistance(loop[i - 1], loop[i]) > MAX_LOOP_EDGE_M) return false;
+  }
+  return true;
+}
+
 /** Añade a `cells` las celdas cuyo centro cae dentro del circuito. */
 export function claimLoopInterior(loop: Coord[], cells: Set<string>): void {
   let minCX = Infinity, maxCX = -Infinity, minCY = Infinity, maxCY = -Infinity;
@@ -388,6 +409,27 @@ export class RunTracker {
   autoPaused = false;
   /** Timestamp del último movimiento real, para la auto-pausa. */
   lastMovementAt: number;
+  /** Cifras técnicas de la carrera, SIN coordenadas: sirven para entender por
+   *  qué una carrera reclamó lo que reclamó sin guardar por dónde fue nadie.
+   *  Se mandan al servidor junto con la carrera. */
+  readonly diag = {
+    /** Lecturas que llegaron del GPS. */
+    readings: 0,
+    /** Lecturas aceptadas (las que pintan rastro). */
+    accepted: 0,
+    /** Trozos del recorrido: más de uno = el GPS se cortó. */
+    segments: 1,
+    /** Metros del mayor salto entre dos puntos seguidos. */
+    maxStepM: 0,
+    /** Saltos de más de MAX_LOOP_EDGE_M metros. */
+    longSteps: 0,
+    /** Celdas del rastro, antes de rellenar circuitos. */
+    trailCells: 0,
+    /** Circuitos cerrados que se rellenaron. */
+    loopsFilled: 0,
+    /** Circuitos descartados por tener un corte dentro. */
+    loopsSkipped: 0,
+  };
 
   private lastCell: { x: number; y: number } | null = null;
   private lastRawTs = 0;
@@ -450,6 +492,7 @@ export class RunTracker {
     }
 
     this.rawReadings += 1;
+    this.diag.readings = this.rawReadings;
     const inWarmup = this.accepted < WARMUP_POINTS && this.rawReadings <= WARMUP_MAX_READINGS;
 
     if (this.gapPending && this.lastPoint) {
@@ -484,8 +527,12 @@ export class RunTracker {
     }
 
     // ── accept ────────────────────────────────────────────────────────────
+    const stepM = result.distKm * 1000;
+    if (stepM > this.diag.maxStepM) this.diag.maxStepM = Math.round(stepM);
+    if (stepM > MAX_LOOP_EDGE_M) this.diag.longSteps += 1;
     this.lastAcceptedTs = r.timestamp;
     this.accepted += 1;
+    this.diag.accepted = this.accepted;
     this.segments[this.segments.length - 1].push(coord);
     const outcome = {
       kind: 'accept' as const, coord, cellsChanged: false, moved: false,
@@ -546,6 +593,7 @@ export class RunTracker {
 
   private startSegment(coord: Coord, ts: number, resumed = false): ReadingOutcome {
     this.segments.push([coord]);
+    this.diag.segments = this.segments.length;
     this.lastAcceptedTs = ts;
     this.lastCell = null; // no se tiende puente sobre un hueco
     this.recentCoords = [];
@@ -581,6 +629,7 @@ export class RunTracker {
    *  cuántos había. */
   finish(): { loops: number } {
     let loops = 0;
+    this.diag.trailCells = this.cells.size;
     const first = this.segments[0][0];
     this.segments.forEach((seg, idx) => {
       let pts = seg;
@@ -591,15 +640,23 @@ export class RunTracker {
         if (getDistance(first, last) < STOP_CLOSE_DIST_M) pts = [...pts, first];
       }
       for (const loop of findClosedLoops(pts)) {
+        // Un circuito con un corte del GPS dentro no se rellena: esa recta no
+        // es una calle. Los kilómetros del tramo sí cuentan; el territorio no.
+        if (!isTrustworthyLoop(loop)) { this.diag.loopsSkipped += 1; continue; }
         claimLoopInterior(loop, this.cells);
         loops++;
+        this.diag.loopsFilled += 1;
       }
     });
-    if (loops > 0) {
-      // El flood fill remata huecos interiores. Nunca inventa: solo reclama lo
-      // que el rastro encierra por completo.
-      fillEnclosedCells(this.cells).forEach(k => this.cells.add(k));
-    }
+    // Aquí había un flood fill sobre TODAS las celdas de la carrera, que
+    // rellenaba cualquier hueco rodeado por el rastro. Parecía seguro y no lo
+    // era: al perder el GPS un rato la carrera queda partida en trozos, y la
+    // ida, la vuelta y el hueco juntos rodean manzanas enteras que nadie ha
+    // pisado. Se rellenaban igual, porque el flood fill no distingue un trozo
+    // de otro (KarolK 20-sep: 4,7 km² en una carrera de 13 km; Ibanto ese
+    // mismo día: una banda maciza de 530×430 m corriendo 1,34 km en zigzag).
+    // Ahora solo se rellena el interior de los circuitos que se han cerrado de
+    // verdad, uno a uno.
     return { loops };
   }
 }

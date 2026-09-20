@@ -1863,6 +1863,9 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         // Con la hora real el servidor detecta si una carrera del Apple Watch
         // importada después es esta misma, grabada a la vez con el reloj.
         source: 'app',
+        // Cifras técnicas, sin coordenadas: para poder entender después por qué
+        // una carrera reclamó lo que reclamó (ver RunTracker.diag).
+        diag: tracker ? { ...tracker.diag } : undefined,
         startedAt: new Date(runStartedAtMs).toISOString(),
         endedAt: new Date(runEndedAtMs).toISOString(),
       }).then(async (res) => {

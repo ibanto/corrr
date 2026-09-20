@@ -245,6 +245,12 @@ async function initDB() {
   // idempotencia: la app puede reintentar la importación sin duplicar nada.
   await db.query(`ALTER TABLE runs ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'app'`).catch(() => {});
   await db.query(`ALTER TABLE runs ADD COLUMN IF NOT EXISTS external_id TEXT`).catch(() => {});
+  // Cifras técnicas de cada carrera, SIN coordenadas: lecturas, salto más
+  // largo, trozos del recorrido, circuitos rellenados o descartados. Sirven
+  // para entender por qué una carrera reclamó lo que reclamó (cuñas en
+  // diagonal de sep-2026) sin guardar por dónde ha ido nadie, que sería otra
+  // categoría de dato personal y obligaría a cambiar la política.
+  await db.query(`ALTER TABLE runs ADD COLUMN IF NOT EXISTS diag JSONB`).catch(() => {});
   await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS runs_user_external_id_uniq ON runs(user_id, external_id) WHERE external_id IS NOT NULL`).catch(() => {});
 
   await db.query(`ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS total_points INT DEFAULT 0`);
@@ -2015,7 +2021,7 @@ app.post('/runs', {
   // `points` (legacy) is the client's estimate. We recompute authoritatively
   // server-side below using loopBonus + cellPoints + kmPoints * multipliers.
   const { distanceKm, durationSecs, points: clientPointsEstimate, loopBonus, loopClosed, zonesCount, zones, claimedCells,
-          source, externalId, startedAt, endedAt } = req.body ?? {};
+          source, externalId, startedAt, endedAt, diag } = req.body ?? {};
 
   // Sanitización + límites anti-cheat. Aunque la lógica de puntos se
   // recomputa server-side, valores absurdos en los inputs (carreras de
@@ -2026,6 +2032,17 @@ app.post('/runs', {
   //   - claimedCells: máx 50.000 celdas (~500 km de territorio, holgado).
   //   - zones: máx 200.
   const isFiniteNum = (v: any) => typeof v === 'number' && Number.isFinite(v);
+
+  // `diag` viene del móvil: se guarda solo si son números y son pocos, para
+  // que nadie pueda meter ahí texto libre ni un objeto enorme.
+  let diagSafe: Record<string, number> | null = null;
+  if (diag && typeof diag === 'object' && !Array.isArray(diag)) {
+    const pares = Object.entries(diag)
+      .filter(([k, v]) => /^[a-zA-Z]{1,20}$/.test(k) && isFiniteNum(v))
+      .slice(0, 20)
+      .map(([k, v]) => [k, Math.round(v as number)]);
+    if (pares.length > 0) diagSafe = Object.fromEntries(pares);
+  }
   if (!isFiniteNum(distanceKm) || distanceKm < 0 || distanceKm > 100) {
     return reply.status(400).send({ error: 'distanceKm fuera de rango (0-100 km)' });
   }
@@ -2157,12 +2174,13 @@ app.post('/runs', {
     // importada, la del entreno, no la de la importación (como con Strava).
     const { rows } = await client.query(
       `INSERT INTO runs (user_id, distance_km, duration_secs, points, zones_count, flagged_reason,
-                         started_at, ended_at, created_at, source, external_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7::timestamptz,$8::timestamptz,$9::timestamptz,$10,$11) RETURNING id`,
+                         started_at, ended_at, created_at, source, external_id, diag)
+       VALUES ($1,$2,$3,$4,$5,$6,$7::timestamptz,$8::timestamptz,$9::timestamptz,$10,$11,$12::jsonb) RETURNING id`,
       [userId, distanceKm, durationSecs, clientPointsEstimate || 0, zonesCount, flaggedReason,
        new Date(runStartMs).toISOString(), new Date(runEndMs).toISOString(),
        new Date(isImport ? runEndMs : nowMs).toISOString(),
-       isImport ? 'healthkit' : 'app', isImport ? externalId : null]
+       isImport ? 'healthkit' : 'app', isImport ? externalId : null,
+       diagSafe ? JSON.stringify(diagSafe) : null]
     );
     const runId = rows[0].id;
 

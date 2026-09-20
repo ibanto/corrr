@@ -205,6 +205,41 @@ scenario('Circuito cerrado de 200 × 150 m', check => {
   check('rellena el interior', tr.cells.size >= area * 0.8, `${tr.cells.size} celdas (área ${area})`);
 });
 
+scenario('Zigzag para robar con el GPS cortado a mitad (Ibanto, 20-sep)', check => {
+  // Lo que pasó de verdad: zigzag por las calles de una manzana para robar
+  // celdas, con un corte del GPS en medio. La app reclamó una banda MACIZA de
+  // 530 × 430 m con 1,34 km corridos: la ida, la vuelta y el hueco rodeaban la
+  // manzana entera y el relleno se la quedó.
+  const tr = new RunTracker(T0);
+  const a = route(BCN, [
+    { eastM: 0, northM: 120 }, { eastM: 110, northM: 0 }, { eastM: 0, northM: -120 },
+    { eastM: 110, northM: 0 }, { eastM: 0, northM: 120 },
+  ], { t0: T0, kmh: 10 });
+  // Se pierde la señal y vuelve 150 m más allá, cerrando contra el principio.
+  const b = route(offset(BCN, 220, 0), [{ eastM: -220, northM: 0 }], { t0: lastTs(a) + 60_000, kmh: 10 });
+  feed(tr, a);
+  feed(tr, b);
+  tr.finish();
+  const manzana = (220 * 120) / (CELL_SIZE_M * CELL_SIZE_M);
+  check('no se queda la manzana entera', tr.cells.size < manzana * 0.5, `${tr.cells.size} celdas (manzana ${Math.round(manzana)})`);
+  check('los kilómetros sí cuentan', tr.distanceKm > 0.6, km(tr.distanceKm));
+});
+
+scenario('Circuito con un corte del GPS dentro (la cuña de KarolK)', check => {
+  // Carrera larga que vuelve cerca del inicio, con un tramo sin señal. Antes
+  // rellenaba el triángulo entre la ruta y la recta del hueco: 4,7 km² con
+  // 13 km corridos.
+  const tr = new RunTracker(T0);
+  const a = route(BCN, [{ eastM: 900, northM: 0 }, { eastM: 0, northM: 700 }], { t0: T0, kmh: 11 });
+  // Vuelta a casa sin señal: reaparece a 40 m del inicio.
+  const b = route(offset(BCN, 40, 0), [{ eastM: 0, northM: 60 }], { t0: lastTs(a) + 240_000, kmh: 11 });
+  feed(tr, a);
+  feed(tr, b);
+  tr.finish();
+  const triangulo = (900 * 700) / 2 / (CELL_SIZE_M * CELL_SIZE_M);
+  check('no reclama el triángulo del hueco', tr.cells.size < triangulo * 0.15, `${tr.cells.size} celdas (triángulo ${Math.round(triangulo)})`);
+});
+
 scenario('Pausa manual: lo andado en pausa no cuenta', check => {
   const tr = new RunTracker(T0);
   const a = route(BCN, [{ eastM: 300, northM: 0 }], { t0: T0, kmh: 10 });

@@ -5,6 +5,8 @@ export interface ImportedRun {
   distanceKm: number;
   cells: { x: number; y: number }[];
   loopClosed: boolean;
+  /** Cifras técnicas, sin coordenadas (ver RunTracker.diag). */
+  diag: Record<string, number>;
 }
 
 /** Una ruta grabada fuera de CORRR (el Apple Watch) pasa por EXACTAMENTE las
@@ -27,5 +29,5 @@ export function processImportedRoute(readings: GpsReading[]): ImportedRun {
     const [x, y] = k.split(',').map(Number);
     return { x, y };
   });
-  return { distanceKm: tracker.distanceKm, cells, loopClosed: loops > 0 };
+  return { distanceKm: tracker.distanceKm, cells, loopClosed: loops > 0, diag: { ...tracker.diag } };
 }
