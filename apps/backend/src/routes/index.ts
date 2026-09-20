@@ -1,6 +1,9 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
+import compress from '@fastify/compress';
 import rateLimit from '@fastify/rate-limit';
+import sharp from 'sharp';
+import heicConvert from 'heic-convert';
 import { Pool } from 'pg';
 import * as dotenv from 'dotenv';
 import { hash, verify } from 'argon2';
@@ -18,6 +21,48 @@ import { SUPABASE_ROOT_CA } from '../db/supabase-ca.js';
  */
 function secureToken(): string {
   return randomBytes(32).toString('hex');
+}
+
+/** Miniatura del avatar, como data URI.
+ *
+ *  Las fotos de perfil se guardan enteras, tal cual salen de la cámara (solo
+ *  se les baja la calidad al subirlas): medidas en producción, hasta 2,3 MB y
+ *  587 KB de media. El mapa las mandaba así, una por corredor visible, en CADA
+ *  refresco — megas por cada vez que alguien mueve el dedo, y creciendo con el
+ *  número de usuarios. En pantalla se ven como un círculo de 40 px, así que
+ *  128 px sobran y ocupan unos pocos KB.
+ *
+ *  Devuelve null si la imagen no se puede leer; quien llama decide qué hacer. */
+const AVATAR_THUMB_PX = 128;
+async function makeAvatarThumb(dataUri: string | null | undefined): Promise<string | null> {
+  if (!dataUri) return null;
+  const comma = dataUri.indexOf(',');
+  const base64 = comma >= 0 ? dataUri.slice(comma + 1) : dataUri;
+  const original = Buffer.from(base64, 'base64');
+
+  const shrink = (input: Buffer) =>
+    sharp(input, { failOn: 'none' })
+      .rotate() // respeta la orientación EXIF; si no, las fotos verticales salen tumbadas
+      .resize(AVATAR_THUMB_PX, AVATAR_THUMB_PX, { fit: 'cover' })
+      .jpeg({ quality: 70 })
+      .toBuffer();
+
+  try {
+    const out = await shrink(original);
+    return `data:image/jpeg;base64,${out.toString('base64')}`;
+  } catch {
+    // Las fotos del iPhone llegan en HEIC aunque la app las etiquete como JPEG
+    // (medido: 2,3 MB la mayor). Eso no lo lee ni sharp ni Android, así que
+    // aquí se convierte a JPEG de verdad. Tarda ~1 s, pero es una sola vez por
+    // usuario: después queda guardada.
+    try {
+      const jpeg = await heicConvert({ buffer: original, format: 'JPEG', quality: 0.9 });
+      const out = await shrink(Buffer.from(jpeg));
+      return `data:image/jpeg;base64,${out.toString('base64')}`;
+    } catch {
+      return null;
+    }
+  }
 }
 
 /** "hoy a las 8:15", "ayer a las 19:40" o "el 12 de septiembre a las 8:15",
@@ -143,6 +188,12 @@ const resend = new Resend(process.env.RESEND_API_KEY || '');
 
 app.register(cors, { origin: '*' });
 
+// Las respuestas iban sin comprimir. La del mapa es la peor: miles de celdas
+// con el mismo nombre de dueño repetido en cada una, que en gzip se queda en
+// una fracción. No hace falta tocar la app: iOS y Android ya piden compresión
+// en cada petición. Por debajo de 1 KB no compensa.
+app.register(compress, { global: true, threshold: 1024, encodings: ['gzip', 'deflate'] });
+
 // Rate limiting global con override más estricto en endpoints sensibles
 // (login / forgot-password / reset-password) para mitigar brute force y spam
 // de emails. Sin esto, un atacante podía probar passwords sin límite o
@@ -251,6 +302,9 @@ async function initDB() {
   // Push tokens + avatar
   await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS push_token TEXT`);
   await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT`);
+  // La foto entera (hasta 2,3 MB medidos) solo hace falta en el perfil. El
+  // mapa manda la miniatura, que es lo que se ve: un círculo de 40 px.
+  await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_thumb TEXT`);
 
   // Strava tokens
   await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS google_id TEXT`);
@@ -921,7 +975,12 @@ app.put('/users/me', { preHandler: requireAuth }, async (req: any, reply) => {
 
   if (displayName !== undefined) { updates.push(`display_name = $${idx++}`); values.push(displayName); }
   if (city !== undefined) { updates.push(`city = $${idx++}`); values.push(city); }
-  if (avatarUrl !== undefined) { updates.push(`avatar_url = $${idx++}`); values.push(avatarUrl); }
+  if (avatarUrl !== undefined) {
+    updates.push(`avatar_url = $${idx++}`); values.push(avatarUrl);
+    // La miniatura se rehace con la foto nueva; si falla, se borra para que el
+    // mapa la vuelva a intentar en vez de enseñar la del avatar anterior.
+    updates.push(`avatar_thumb = $${idx++}`); values.push(await makeAvatarThumb(avatarUrl));
+  }
   if (firstName !== undefined) { updates.push(`first_name = $${idx++}`); values.push(firstName); }
   if (surname !== undefined) { updates.push(`surname = $${idx++}`); values.push(surname); }
   if (warCry !== undefined) { updates.push(`war_cry = $${idx++}`); values.push(warCry); }
@@ -2546,10 +2605,25 @@ app.get('/cells/viewport', { preHandler: requireAuth }, async (req: any, reply) 
   let owners: Record<string, { avatar: string | null }> = {};
   if (ownerIds.length > 0) {
     const av = await db.query(
-      `SELECT id, avatar_url FROM users WHERE id = ANY($1::uuid[]) AND avatar_url IS NOT NULL`,
+      `SELECT id, avatar_thumb, avatar_url FROM users WHERE id = ANY($1::uuid[]) AND avatar_url IS NOT NULL`,
       [ownerIds],
     );
-    for (const o of av.rows) owners[o.id] = { avatar: o.avatar_url };
+    for (const o of av.rows) {
+      let thumb: string | null = o.avatar_thumb;
+      if (!thumb) {
+        // Primera vez que se ve a este corredor desde el cambio: se genera la
+        // miniatura y se guarda, así solo pasa una vez por usuario. Si la foto
+        // no se puede leer, se manda la original (como antes) para no dejar a
+        // nadie sin foto por un fallo nuestro.
+        thumb = await makeAvatarThumb(o.avatar_url);
+        if (thumb) {
+          await db.query(`UPDATE users SET avatar_thumb = $1 WHERE id = $2`, [thumb, o.id]);
+        } else {
+          req.log.warn({ userId: o.id }, 'no se pudo hacer la miniatura del avatar');
+        }
+      }
+      owners[o.id] = { avatar: thumb ?? o.avatar_url };
+    }
   }
 
   // "Es mía" se calcula aquí, no en SQL: así el caché sirve a todos.
