@@ -16,7 +16,7 @@ import {
   AppState,
   DeviceEventEmitter,
 } from 'react-native';
-import { checkForUpdates, CURRENT_VERSION } from './src/utils/checkForUpdates';
+import { checkForUpdates, storeUrl, CURRENT_VERSION } from './src/utils/checkForUpdates';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 import { Ionicons } from '@expo/vector-icons';
@@ -93,6 +93,10 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [stolenPopup, setStolenPopup] = useState<{ visible: boolean; rivalName?: string; points?: number }>({ visible: false });
   const [podium, setPodium] = useState<Podium | null>(null);
+  // Versión por debajo de la mínima: la app se bloquea hasta actualizar. El
+  // territorio es compartido, así que una versión con el reparto de celdas
+  // roto le estropea el mapa a todos, no solo a quien la tiene.
+  const [updateRequired, setUpdateRequired] = useState(false);
   const [pendingFriends, setPendingFriends] = useState(0);
 
   // Escuchar notificaciones push (te han robado una zona)
@@ -152,9 +156,12 @@ export default function App() {
   // reintentamos al activar la app, que es cuando es útil para el usuario.
   // Modo silent: no decimos nada si no hay update ni si la red falla.
   useEffect(() => {
-    checkForUpdates(CURRENT_VERSION, true);
+    const comprobar = async () => {
+      if ((await checkForUpdates(CURRENT_VERSION, true)) === 'required') setUpdateRequired(true);
+    };
+    comprobar();
     const sub = AppState.addEventListener('change', (state) => {
-      if (state === 'active') checkForUpdates(CURRENT_VERSION, true);
+      if (state === 'active') comprobar();
     });
     return () => sub.remove();
   }, []);
@@ -295,6 +302,26 @@ export default function App() {
     });
   }, []);
 
+  // Versión inservible: pantalla completa, sin salida. Va ANTES que todo lo
+  // demás —incluso que la carga de sesión— para que no se pueda correr con
+  // ella.
+  if (updateRequired) {
+    return (
+      <View style={styles.splash}>
+        <StatusBar barStyle="light-content" backgroundColor={colors.bg} />
+        <Text style={styles.splashLogo}>CORRR</Text>
+        <Text style={styles.bloqueoTitulo}>Toca actualizar</Text>
+        <Text style={styles.bloqueoTexto}>
+          Esta versión ya no puede registrar carreras: repartía mal el territorio y le
+          ensuciaba el mapa a todo el mundo. Actualiza y sigues donde lo dejaste.
+        </Text>
+        <TouchableOpacity style={styles.bloqueoBoton} onPress={() => Linking.openURL(storeUrl())}>
+          <Text style={styles.bloqueoBotonTexto}>ACTUALIZAR</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
   // Pantalla de carga mientras restauramos sesión
   if (loading) {
     return (
@@ -412,6 +439,19 @@ const styles = StyleSheet.create({
   splashLogo: {
     fontSize: 48, fontWeight: '900', color: colors.orange, letterSpacing: 4,
   },
+  bloqueoTitulo: {
+    color: colors.textPrimary, fontSize: 22, fontWeight: '900',
+    marginTop: 28, letterSpacing: 1,
+  },
+  bloqueoTexto: {
+    color: colors.textSecondary, fontSize: 15, lineHeight: 22,
+    textAlign: 'center', marginTop: 12, paddingHorizontal: 32,
+  },
+  bloqueoBoton: {
+    backgroundColor: colors.orange, borderRadius: 16,
+    paddingVertical: 16, paddingHorizontal: 48, marginTop: 28,
+  },
+  bloqueoBotonTexto: { color: '#fff', fontSize: 16, fontWeight: '900', letterSpacing: 1 },
   root: { flex: 1, backgroundColor: colors.bg },
   safeArea: { flex: 1, backgroundColor: colors.bg, paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight ?? 32) + 12 : 0 },
   screen: { flex: 1 },

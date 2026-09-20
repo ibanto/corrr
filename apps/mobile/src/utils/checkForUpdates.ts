@@ -42,24 +42,38 @@ function isNewerVersion(latest: string, current: string): boolean {
  *  silent=false → siempre da feedback (botón manual): muestra "estás al
  *    día" o "no se pudo comprobar" para que el usuario sepa que ha pasado
  *    algo tras pulsar. */
-export async function checkForUpdates(currentVersion: string, silent: boolean): Promise<void> {
-  let data: { latestVersion?: string; updateUrl?: string };
+/** Qué hacer tras comprobar la versión:
+ *  - 'required': la versión es tan vieja que el servidor la da por
+ *    inservible. La app tiene que bloquearse hasta actualizar.
+ *  - 'none': seguir con normalidad (con o sin aviso, según el caso).
+ *
+ *  El bloqueo existe porque el territorio es COMPARTIDO: una versión con un
+ *  fallo en el reparto de celdas no solo se perjudica a sí misma, le ensucia
+ *  el mapa a todos los demás. Hasta ahora el servidor mandaba una versión
+ *  mínima y la app se la saltaba: solo avisaba. */
+export type UpdateOutcome = 'none' | 'required';
+
+export async function checkForUpdates(currentVersion: string, silent: boolean): Promise<UpdateOutcome> {
+  let data: { latestVersion?: string; minVersion?: string; updateUrl?: string };
   try {
     const res = await fetch(VERSION_ENDPOINT);
     data = await res.json();
   } catch {
     if (!silent) Alert.alert('Sin conexión', 'No se pudo comprobar si hay actualizaciones. Inténtalo de nuevo más tarde.');
-    return;
+    return 'none';
   }
   if (!data.latestVersion) {
     if (!silent) Alert.alert('Error', 'El servidor no devolvió información de versión.');
-    return;
+    return 'none';
   }
+  // Versión por debajo del mínimo: la app se bloquea. Sin Alert aquí; lo
+  // enseña App.tsx a pantalla completa, que no se puede esquivar.
+  if (data.minVersion && isNewerVersion(data.minVersion, currentVersion)) return 'required';
   if (isNewerVersion(data.latestVersion, currentVersion)) {
     // En modo auto (silent), no re-mostramos el aviso si ya salió esta sesión.
     // Evita el bucle de "Nueva versión disponible" en cada foreground cuando
     // el backend anuncia una versión que todavía no está disponible en Play.
-    if (silent && autoUpdatePromptShown) return;
+    if (silent && autoUpdatePromptShown) return 'none';
     if (silent) autoUpdatePromptShown = true;
     // Sin dirección de tienda no ofrecemos botón de actualizar. Pasa en iOS
     // mientras la app no está publicada: el servidor no manda updateUrl
@@ -83,4 +97,12 @@ export async function checkForUpdates(currentVersion: string, silent: boolean): 
   } else if (!silent) {
     Alert.alert('Estás al día', `Tienes la última versión (${currentVersion}).`);
   }
+  return 'none';
+}
+
+/** Dirección de la tienda que toca, para el bloqueo por versión mínima. */
+export function storeUrl(): string {
+  return Platform.OS === 'ios'
+    ? 'https://apps.apple.com/es/app/corrr-conquista-tu-ciudad/id6805088892'
+    : 'https://play.google.com/store/apps/details?id=app.corrr';
 }
