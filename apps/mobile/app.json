@@ -3,7 +3,7 @@
     "name": "CORRR",
     "slug": "mobile",
     "scheme": "corrr",
-    "version": "1.11.8",
+    "version": "1.11.9",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
