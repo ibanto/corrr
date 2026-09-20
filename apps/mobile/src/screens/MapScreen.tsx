@@ -559,33 +559,6 @@ function polygonArea(coords: Coord[]): number {
   return Math.abs(area) * 111 * 111 * Math.cos(coords[0].latitude * Math.PI / 180) / 2;
 }
 
-/** Convex hull (Andrew's monotone chain) — used for zone polygon when path has gaps */
-function convexHull(points: Coord[]): Coord[] {
-  if (points.length < 3) return points;
-  const pts = [...points].sort((a, b) => a.longitude - b.longitude || a.latitude - b.latitude);
-  const cross = (o: Coord, a: Coord, b: Coord) =>
-    (a.longitude - o.longitude) * (b.latitude - o.latitude) -
-    (a.latitude - o.latitude) * (b.longitude - o.longitude);
-
-  // Lower hull
-  const lower: Coord[] = [];
-  for (const p of pts) {
-    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0)
-      lower.pop();
-    lower.push(p);
-  }
-  // Upper hull
-  const upper: Coord[] = [];
-  for (let i = pts.length - 1; i >= 0; i--) {
-    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], pts[i]) <= 0)
-      upper.pop();
-    upper.push(pts[i]);
-  }
-  // Remove last point of each half because it repeats
-  lower.pop();
-  upper.pop();
-  return [...lower, ...upper];
-}
 
 /** Una fila del desglose de puntos del resumen post-carrera. `highlight` pinta
  *  el valor en naranja (para multiplicadores, que son lo "premium"). */
@@ -1282,50 +1255,47 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     } catch {}
   };
 
-  const checkLoop = (path: Coord[]) => {
-    // Unir todos los segmentos + path actual
-    const allPoints = [...pathSegments.flat(), ...path];
-    if (allPoints.length < 10) return false;
-    const current = allPoints[allPoints.length - 1];
-    // Antes esto solo miraba el punto de INICIO: "¿he vuelto a menos de 30m de
-    // donde arranqué?". Eso deja fuera el caso más común de todos — sales de
-    // casa, das una vuelta cerrada y sigues (o paras) en otro sitio: el
-    // circuito está cerrado de verdad, pero como acabas lejos del inicio no se
-    // marcaba como loop y el interior nunca se rellenaba (solo el perímetro).
-    // Ahora el cierre se detecta contra CUALQUIER punto anterior del recorrido,
-    // exigiendo los mismos 200m de recorrido entre ambos para que un ida y
-    // vuelta corto o estar parado no cuenten como circuito. El comportamiento
-    // viejo es un subconjunto de éste (el inicio es un punto anterior más), así
-    // que no se pierde ninguna detección que ya funcionase.
+  /** Con qué punto anterior se cierra el circuito, o -1 si no se cierra.
+   *
+   *  Solo dentro del tramo ACTUAL. Antes se buscaba el cierre contra todos los
+   *  puntos de la carrera, saltando por encima de los huecos del GPS: un tramo
+   *  perdido "cerraba" contra la ida y la zona se quedaba manzanas por las que
+   *  nadie había pasado. Por un hueco no se sabe por dónde se fue.
+   *
+   *  El cierre se busca contra CUALQUIER punto anterior, no solo el inicio:
+   *  sales de casa, das una vuelta cerrada y sigues; el circuito está cerrado
+   *  aunque acabes lejos. Los 200 m de recorrido entre los dos puntos evitan
+   *  que un ida y vuelta corto o estar parado cuenten como circuito.
+   */
+  const findLoopStart = (path: Coord[]): number => {
+    if (path.length < 10) return -1;
+    const current = path[path.length - 1];
     let travelled = 0;
-    for (let i = allPoints.length - 1; i > 0; i--) {
-      travelled += getDistance(allPoints[i - 1], allPoints[i]);
+    for (let i = path.length - 1; i > 0; i--) {
+      travelled += getDistance(path[i - 1], path[i]);
       if (travelled < LOOP_MIN_PERIMETER_M) continue;
-      if (getDistance(allPoints[i - 1], current) < LOOP_CLOSE_DIST_M) return true;
+      if (getDistance(path[i - 1], current) < LOOP_CLOSE_DIST_M) return i - 1;
     }
-    return false;
+    return -1;
   };
+
+  const checkLoop = (path: Coord[]) => findLoopStart(path) >= 0;
 
   const closeLoop = async (path: Coord[]) => {
     setLoopDetected(true);
 
-    // Unir todos los segmentos + path actual para tener la ruta completa
-    const allPoints = [...pathSegments.flat(), ...path];
-
-    // If we have multiple segments (gaps from sleep), use convex hull
-    // to avoid diagonal lines between disconnected segments.
-    // Single continuous path: use Douglas-Peucker to preserve actual route shape.
-    const hasGaps = pathSegments.length > 0;
-    let snapped: Coord[];
-
-    if (hasGaps) {
-      // Multiple segments: convex hull gives the outer perimeter of all points
-      // without the ugly diagonal lines between gap endpoints
-      snapped = convexHull(allPoints);
-    } else {
-      // Single continuous path: simplify preserving shape
-      snapped = simplifyPath(allPoints, 0.00003); // ~3m tolerancia
-    }
+    // La zona es EL CIRCUITO que se ha cerrado, no toda la carrera.
+    //
+    // Antes, si el GPS se había cortado alguna vez, esto usaba la envolvente
+    // convexa de todos los puntos: la figura más pequeña que los envuelve,
+    // cruzando manzanas en diagonal. Con ella se robaban zonas rivales por las
+    // que no se había pasado, y el contorno guardado no se parecía al
+    // recorrido (Ibanto, 20-sep: un lado recto de 343 m atravesando el
+    // Eixample). Ahora se usa el tramo del recorrido que cierra el circuito,
+    // simplificado a 3 m, que es por donde se ha corrido de verdad.
+    const inicio = findLoopStart(path);
+    const loopPath = inicio >= 0 ? path.slice(inicio) : path;
+    const snapped = simplifyPath(loopPath, 0.00003); // ~3m tolerancia
 
     // Asegurar que el polígono está cerrado
     if (snapped.length >= 3) {
@@ -1336,14 +1306,11 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       }
     }
 
-    // El relleno del INTERIOR del loop ya NO se rasteriza aquí desde `snapped`.
-    // El fantasma lo causaba el convexHull (reclama la envolvente convexa, área
-    // jamás pisada). Ahora el interior lo rellena stopRun con fillEnclosedCells
-    // sobre las celdas REALMENTE pisadas (el rastro + sus puentes cellLine):
-    // es un flood-fill desde fuera, SEGURO — solo reclama lo topológicamente
-    // encerrado por el rastro, funciona con gaps si el rastro está conectado, y
-    // nunca infla. Ver stopRun. (`snapped` se sigue usando abajo para el polígono
-    // de zona / robo / área, no para reclamar celdas.)
+    // Las celdas NO salen de aquí. El territorio lo decide RunTracker.finish()
+    // al terminar la carrera: rellena el interior de cada circuito cerrado de
+    // verdad, nunca a través de un hueco del GPS. `snapped` se usa solo para el
+    // polígono de la zona (sistema antiguo): el área, el robo de zonas rivales
+    // y lo que se guarda en la tabla de zonas.
 
     const area = polygonArea(snapped);
 
