@@ -17,6 +17,14 @@ Notifications.setNotificationHandler({
   }),
 });
 
+/** Se emite cuando llega una notificación o el usuario la pulsa: el mapa mira
+ *  el buzón al momento en vez de esperar al sondeo de cada 45 s. */
+export const CHECK_TAUNTS_EVENT = 'corrr:check-taunts';
+
+/** Se emite con `true` mientras hay una carrera en marcha: la app esconde el
+ *  menú inferior para que no se pueda cambiar de pestaña corriendo. */
+export const RUN_TABS_EVENT = 'corrr:run-active';
+
 /** Registra el dispositivo para push notifications y envía el token al backend. */
 export async function registerForPushNotifications(): Promise<string | null> {
   if (!Device.isDevice) {

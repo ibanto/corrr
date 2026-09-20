@@ -27,6 +27,7 @@ import {
   LOOP_CLOSE_DIST_M, LOOP_MIN_PERIMETER_M,
 } from '../tracking/runTracker';
 import { RUNS_IMPORTED_EVENT } from '../services/healthkit';
+import { CHECK_TAUNTS_EVENT, RUN_TABS_EVENT } from '../services/notifications';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import polygonClipping from 'polygon-clipping';
@@ -163,18 +164,6 @@ const MAX_DELTA_FOR_ZONES = 0.15;
 // aquí, y hay que probarlo en Android y en iPhone.
 const MAX_DELTA_FOR_CELLS = 0.05;
 
-/** Returns the 4 corners of a cell as a polygon path (counter-clockwise). */
-function cellToCorners(x: number, y: number): { latitude: number; longitude: number }[] {
-  const lng = x * CELL_LNG_DEG;
-  const lat = y * CELL_LAT_DEG;
-  return [
-    { latitude: lat, longitude: lng },
-    { latitude: lat, longitude: lng + CELL_LNG_DEG },
-    { latitude: lat + CELL_LAT_DEG, longitude: lng + CELL_LNG_DEG },
-    { latitude: lat + CELL_LAT_DEG, longitude: lng },
-  ];
-}
-
 /** Ray-casting point-in-polygon. */
 function pointInPolygonLatLng(lat: number, lng: number, poly: { latitude: number; longitude: number }[]): boolean {
   let inside = false;
@@ -259,13 +248,35 @@ const inBox = (b: CellBox, x: number, y: number) => x >= b.x0 && x <= b.x1 && y 
 type UnionedPolygon = { outer: { latitude: number; longitude: number }[]; holes: { latitude: number; longitude: number }[][] };
 function unionCellsToPolygons(cells: { x: number; y: number }[]): UnionedPolygon[] {
   if (cells.length === 0) return [];
-  // polygon-clipping uses [lng, lat] ordering.
-  const ringInput: number[][][][] = cells.map(c => {
-    const corners = cellToCorners(c.x, c.y);
-    // Ensure ring is closed and follows polygon-clipping convention (first === last).
-    const ring = corners.map(p => [p.longitude, p.latitude]);
-    ring.push(ring[0]);
-    return [ring];
+  // Las celdas seguidas de una misma fila se mandan como UN rectángulo, no
+  // como veinte cuadraditos. La figura que sale es exactamente la misma, pero
+  // unir cuesta mucho menos: con el territorio de un corredor de 47.000
+  // celdas, 575 ms → 22 ms (403 rectángulos en vez de 47.000 cuadrados). Eso
+  // era lo que dejaba la app colgada al robarle a alguien con mucho terreno.
+  const porFila = new Map<number, number[]>();
+  for (const c of cells) {
+    const fila = porFila.get(c.y);
+    if (fila) fila.push(c.x);
+    else porFila.set(c.y, [c.x]);
+  }
+  // polygon-clipping usa [lng, lat].
+  const ringInput: number[][][][] = [];
+  const rect = (x0: number, y0: number, x1: number, y1: number) => {
+    const oeste = x0 * CELL_LNG_DEG, este = x1 * CELL_LNG_DEG;
+    const sur = y0 * CELL_LAT_DEG, norte = y1 * CELL_LAT_DEG;
+    ringInput.push([[[oeste, sur], [este, sur], [este, norte], [oeste, norte], [oeste, sur]]]);
+  };
+  porFila.forEach((xs, y) => {
+    xs.sort((a, b) => a - b);
+    let inicio = xs[0];
+    let anterior = xs[0];
+    for (let i = 1; i < xs.length; i++) {
+      if (xs[i] === anterior + 1) { anterior = xs[i]; continue; }
+      if (xs[i] === anterior) continue; // repetida
+      rect(inicio, y, anterior + 1, y + 1);
+      inicio = anterior = xs[i];
+    }
+    rect(inicio, y, anterior + 1, y + 1);
   });
   let union;
   try {
@@ -1203,6 +1214,14 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     return () => clearInterval(id);
   }, [isRunning]);
 
+  // Y sin esperar al sondeo cuando llega o se pulsa una notificación: pulsar
+  // el aviso y que no salga nada hasta medio minuto después es lo que hacía
+  // que pareciera que la app no se enteraba.
+  useEffect(() => {
+    const sub = DeviceEventEmitter.addListener(CHECK_TAUNTS_EVENT, () => { checkUnreadTaunts(); });
+    return () => sub.remove();
+  }, []);
+
   /** Une las celdas de un dueño en polígonos, reutilizando el resultado si ese
    *  dueño no ha cambiado. Unir es lo caro de todo el mapa. */
   const unionCached = (clave: string, cells: { x: number; y: number }[]): UnionedPolygon[] => {
@@ -1507,6 +1526,14 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     fgDisclosureResolveRef.current?.(false);
     fgDisclosureResolveRef.current = null;
   };
+
+  // Mientras corres mirando el mapa, el menú de abajo se esconde: la pantalla
+  // de carrera a pantalla completa ya lo tapaba, y al abrir el mapa volvía a
+  // aparecer. Cambiar de pestaña en plena carrera no lleva a nada bueno — el
+  // sitio para parar es el botón PARAR.
+  useEffect(() => {
+    DeviceEventEmitter.emit(RUN_TABS_EVENT, isRunning);
+  }, [isRunning]);
 
   // Aviso físico al quedarse sin señal. Corriendo no se mira la pantalla: el
   // cartel solo lo ve quien ya sospecha algo. Dos vibraciones largas al

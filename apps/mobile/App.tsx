@@ -31,6 +31,7 @@ import PerfilScreen from './src/screens/PerfilScreen';
 import { registerForPushNotifications } from './src/services/notifications';
 import { importNewWorkouts, RUNS_IMPORTED_EVENT } from './src/services/healthkit';
 import ZonePopup, { PopupType } from './src/components/ZonePopup';
+import { CHECK_TAUNTS_EVENT, RUN_TABS_EVENT } from './src/services/notifications';
 import PodioModal from './src/components/PodioModal';
 import type { Podium } from './src/services/api';
 import * as Notifications from 'expo-notifications';
@@ -97,12 +98,31 @@ export default function App() {
   // territorio es compartido, así que una versión con el reparto de celdas
   // roto le estropea el mapa a todos, no solo a quien la tiene.
   const [updateRequired, setUpdateRequired] = useState(false);
+  /** Carrera en marcha: el menú de abajo se esconde. */
+  const [runActive, setRunActive] = useState(false);
   const [pendingFriends, setPendingFriends] = useState(0);
 
-  // Escuchar notificaciones push (te han robado una zona)
+  // El mapa avisa de cuándo hay una carrera en marcha, para esconder el menú
+  // de abajo: la pantalla de carrera ya lo tapaba, pero al abrir el mapa
+  // durante la carrera volvía a aparecer y se podía cambiar de pestaña.
   useEffect(() => {
-    const sub = Notifications.addNotificationReceivedListener(notification => {
-      const data = notification.request.content.data as any;
+    const sub = DeviceEventEmitter.addListener(RUN_TABS_EVENT, (activa: boolean) => setRunActive(!!activa));
+    return () => sub.remove();
+  }, []);
+
+  // Notificaciones push: "te han robado una zona".
+  //
+  // Antes solo se escuchaba la notificación que LLEGA con la app abierta. Si
+  // la app estaba cerrada o en segundo plano —lo normal— y pulsabas la
+  // notificación, la app abría el mapa y no pasaba nada: el aviso no salía
+  // hasta que el sondeo del buzón se disparaba, cada 45 segundos. De ahí el
+  // "tienes que navegar por el menú un rato hasta que salta".
+  //
+  // Ahora hay tres puertas: la notificación que llega con la app abierta, el
+  // toque sobre ella, y el arranque en frío desde la notificación (la app
+  // estaba cerrada del todo).
+  useEffect(() => {
+    const mostrar = (data: any) => {
       if (data?.type === 'zone_stolen') {
         setStolenPopup({
           visible: true,
@@ -110,8 +130,19 @@ export default function App() {
           points: data.points ?? 0,
         });
       }
-    });
-    return () => sub.remove();
+      // Sea del tipo que sea, el buzón puede tener algo esperando: que lo
+      // mire YA en vez de esperar al siguiente sondeo.
+      DeviceEventEmitter.emit(CHECK_TAUNTS_EVENT);
+    };
+
+    const recibida = Notifications.addNotificationReceivedListener(n => mostrar(n.request.content.data));
+    const pulsada = Notifications.addNotificationResponseReceivedListener(r => mostrar(r.notification.request.content.data));
+    // Arranque en frío: la app se ha abierto pulsando la notificación.
+    Notifications.getLastNotificationResponseAsync()
+      .then(r => { if (r) mostrar(r.notification.request.content.data); })
+      .catch(() => {});
+
+    return () => { recibida.remove(); pulsada.remove(); };
   }, []);
 
   // Al montar, intentar restaurar sesión guardada
@@ -397,7 +428,7 @@ export default function App() {
           )}
         </View>
       </SafeAreaView>
-      <SafeAreaView style={styles.tabBarSafe}>
+      <SafeAreaView style={[styles.tabBarSafe, runActive && styles.oculto]}>
         <View style={styles.tabBar}>
           {TABS.map(tab => {
             const isActive = activeTab === tab.key;
@@ -459,6 +490,7 @@ const styles = StyleSheet.create({
   // detrás para que sus modales puedan presentarse.
   overlayScreen: { backgroundColor: colors.bg },
   tabBarSafe: { backgroundColor: colors.bgCard },
+  oculto: { display: 'none' },
   tabBar: {
     flexDirection: 'row', backgroundColor: colors.bgCard,
     borderTopWidth: 1, borderTopColor: colors.border,
