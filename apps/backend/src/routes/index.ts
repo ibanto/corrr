@@ -1118,6 +1118,98 @@ app.get('/ranking/cities', async (req, reply) => {
   return reply.send(rows);
 });
 
+/** Inicio de la semana del podio: el sábado a las 00:00 de España.
+ *  El pop-up sale los sábados, así que la semana va de sábado a sábado: lo que
+ *  se enseña es lo conseguido desde el sábado anterior. En la semana del
+ *  cambio de hora el corte se mueve una hora; da igual para un podio. */
+export function podiumWeekStart(nowMs: number = Date.now()): Date {
+  const tz = 'Europe/Madrid';
+  const offsetMs = (at: number) => {
+    const m = new Date(at)
+      .toLocaleString('en-US', { timeZone: tz, timeZoneName: 'longOffset' })
+      .match(/GMT([+-])(\d{2}):(\d{2})/);
+    if (!m) return 0;
+    return (m[1] === '-' ? -1 : 1) * (parseInt(m[2], 10) * 60 + parseInt(m[3], 10)) * 60_000;
+  };
+  const shift = offsetMs(nowMs);
+  // Con el desfase sumado, los getUTC* dan el día y la hora de España.
+  const local = new Date(nowMs + shift);
+  const daysSinceSaturday = (local.getUTCDay() + 1) % 7; // sábado = 0
+  const localMidnight = Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate())
+    - daysSinceSaturday * 86_400_000;
+  return new Date(localMidnight - offsetMs(localMidnight - shift));
+}
+
+/** Podio para el pop-up de los sábados: los tres mejores de la semana y los
+ *  tres de siempre, en España y en tu ciudad.
+ *
+ *  Va en una sola llamada —y no reutilizando /ranking/global— porque el
+ *  pop-up sale nada más abrir la app: cuatro peticiones ahí dentro competirían
+ *  con la carga del mapa justo cuando más se nota. */
+app.get('/ranking/podium', { preHandler: requireAuth }, async (req: any, reply) => {
+  const since = podiumWeekStart();
+
+  const { rows: me } = await db.query(`SELECT city FROM users WHERE id = $1`, [req.userId]);
+  const city: string | null = me[0]?.city?.trim() || null;
+
+  const cacheKey = `podium:${city ? city.toLowerCase() : '-'}`;
+  const cached = getRankingCache(cacheKey);
+  if (cached) return reply.send(cached);
+
+  // Semana: se suman los puntos de las carreras de los últimos días. Para una
+  // carrera importada del reloj cuenta CUÁNDO SE CORRIÓ (started_at), no
+  // cuándo se importó, igual que en el historial.
+  const weekQuery = (filterCity: boolean) => db.query(
+    `SELECT u.id AS user_id, u.display_name, u.city, u.avatar_thumb,
+            SUM(r.points)::int AS points
+       FROM runs r
+       JOIN users u ON u.id = r.user_id
+      WHERE COALESCE(r.started_at, r.created_at) >= $1
+        ${filterCity ? 'AND LOWER(u.city) = LOWER($2)' : ''}
+      GROUP BY u.id, u.display_name, u.city, u.avatar_thumb
+     HAVING SUM(r.points) > 0
+      ORDER BY points DESC
+      LIMIT 3`,
+    filterCity ? [since, city] : [since],
+  );
+
+  const allTimeQuery = (filterCity: boolean) => db.query(
+    `SELECT u.id AS user_id, u.display_name, u.city, u.avatar_thumb,
+            COALESCE(s.total_points, 0)::int AS points
+       FROM user_stats s
+       JOIN users u ON u.id = s.user_id
+      WHERE COALESCE(s.total_points, 0) > 0
+        ${filterCity ? 'AND LOWER(u.city) = LOWER($1)' : ''}
+      ORDER BY points DESC
+      LIMIT 3`,
+    filterCity ? [city] : [],
+  );
+
+  const [weekSpain, allTimeSpain, weekCity, allTimeCity] = await Promise.all([
+    weekQuery(false),
+    allTimeQuery(false),
+    city ? weekQuery(true) : Promise.resolve({ rows: [] as any[] }),
+    city ? allTimeQuery(true) : Promise.resolve({ rows: [] as any[] }),
+  ]);
+
+  const clean = (rows: any[]) => rows.map(r => ({
+    userId: r.user_id,
+    name: r.display_name,
+    city: r.city,
+    points: r.points,
+    avatar: r.avatar_thumb ?? null,
+  }));
+
+  const payload = {
+    weekStart: since.toISOString(),
+    city,
+    week: { spain: clean(weekSpain.rows), city: clean(weekCity.rows) },
+    allTime: { spain: clean(allTimeSpain.rows), city: clean(allTimeCity.rows) },
+  };
+  setRankingCache(cacheKey, payload);
+  return reply.send(payload);
+});
+
 app.get('/challenges', async (req, reply) => {
   const { rows } = await db.query('SELECT * FROM challenges WHERE ends_at > NOW() ORDER BY difficulty ASC');
   // Map to frontend Challenge interface
