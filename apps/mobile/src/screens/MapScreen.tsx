@@ -16,6 +16,7 @@ import {
   Platform,
   ActivityIndicator,
   Dimensions,
+  Vibration,
 } from 'react-native';
 import MapView, { Polygon, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import * as Location from 'expo-location';
@@ -739,6 +740,15 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
   // el final —cuando la carrera se descarta por "demasiado corta" y se pierde.
   // Esto lo dice en cuanto pasan 25 segundos sin una lectura utilizable.
   const [gpsWeak, setGpsWeak] = useState(false);
+  /** Durante la carrera se puede cambiar entre la pantalla de datos (tiempo,
+   *  km, frase) y el mapa, para ver por dónde vas. En el mapa, el botón de
+   *  empezar se convierte en los controles de la carrera. */
+  const [showRunMap, setShowRunMap] = useState(false);
+  /** Si ya hemos avisado de que no hay señal, para vibrar solo en los cambios
+   *  y no cada vez que el vigilante comprueba. */
+  const gpsWarnedRef = useRef(false);
+  /** El zoom de la cámara se fija una sola vez por carrera (ver más abajo). */
+  const runCameraSetRef = useRef(false);
   const lastGoodPointRef = useRef<number>(0);
   const gpsWatchTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const [currentSpeed, setCurrentSpeed] = useState(0);
@@ -1498,6 +1508,21 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     fgDisclosureResolveRef.current = null;
   };
 
+  // Aviso físico al quedarse sin señal. Corriendo no se mira la pantalla: el
+  // cartel solo lo ve quien ya sospecha algo. Dos vibraciones largas al
+  // perderla y una corta al recuperarla, que se notan con el móvil en el
+  // brazo o en el bolsillo.
+  useEffect(() => {
+    if (!isRunning) { gpsWarnedRef.current = false; return; }
+    if (gpsWeak && !gpsWarnedRef.current) {
+      gpsWarnedRef.current = true;
+      Vibration.vibrate([0, 600, 300, 600]);
+    } else if (!gpsWeak && gpsWarnedRef.current) {
+      gpsWarnedRef.current = false;
+      Vibration.vibrate(250);
+    }
+  }, [gpsWeak, isRunning]);
+
   // Vigilante de señal: si llevamos 25 s sin una lectura GPS utilizable, la
   // carrera no está registrando nada y hay que decirlo. Sin esto el usuario
   // ve el cronómetro correr y se entera al final, cuando ya la ha perdido.
@@ -1609,6 +1634,8 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     setIsRunning(true);
     lastGoodPointRef.current = Date.now();
     setGpsWeak(false);
+    setShowRunMap(false);
+    runCameraSetRef.current = false;
     setRunTime(0);
     runStartTimeRef.current = Date.now();
     pauseStartedAtRef.current = null;
@@ -1685,12 +1712,18 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     const handleLocationUpdate = (loc: Location.LocationObject) => {
       const out = handleReading(toReading(loc), true);
       if (!out || out.kind !== 'accept') return;
+      // El mapa sigue al corredor. El zoom se fija UNA vez, en el primer
+      // punto: antes se imponía en cada lectura, así que si abrías el mapa a
+      // mitad de carrera y te alejabas para ver el barrio, el siguiente punto
+      // te devolvía al zoom 17.
       const heading = loc.coords.heading;
+      const zoom = runCameraSetRef.current ? undefined : 17;
+      runCameraSetRef.current = true;
       if (heading != null && heading >= 0 && out.speedKmh > 2) {
-        // Moving: rotate map to face direction of travel
-        mapRef.current?.animateCamera({ center: out.coord, heading, pitch: 45, zoom: 17 }, { duration: 500 });
+        // En marcha, el mapa gira hacia donde vas.
+        mapRef.current?.animateCamera({ center: out.coord, heading, pitch: 45, ...(zoom ? { zoom } : {}) }, { duration: 500 });
       } else {
-        mapRef.current?.animateCamera({ center: out.coord, pitch: 0, zoom: 17 }, { duration: 500 });
+        mapRef.current?.animateCamera({ center: out.coord, pitch: 0, ...(zoom ? { zoom } : {}) }, { duration: 500 });
       }
     };
 
@@ -1740,6 +1773,8 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     if (autoPauseTimer.current) { clearInterval(autoPauseTimer.current); autoPauseTimer.current = null; }
     if (gpsWatchTimer.current) { clearInterval(gpsWatchTimer.current); gpsWatchTimer.current = null; }
     setGpsWeak(false);
+    setShowRunMap(false);
+    runCameraSetRef.current = false;
     deactivateScreenAwake();
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
     if (locationRef.current) { locationRef.current.remove(); locationRef.current = null; }
@@ -1802,6 +1837,8 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     if (autoPauseTimer.current) { clearInterval(autoPauseTimer.current); autoPauseTimer.current = null; }
     if (gpsWatchTimer.current) { clearInterval(gpsWatchTimer.current); gpsWatchTimer.current = null; }
     setGpsWeak(false);
+    setShowRunMap(false);
+    runCameraSetRef.current = false;
     deactivateScreenAwake();
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
     // Limpiar también la ref del watcher para que si se reentra (bug futuro),
@@ -2710,7 +2747,9 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
 
         {/* Anti-trampa: aviso velocidad excesiva */}
         {gpsWeak && (
-          <View style={styles.gpsBanner}>
+          // Corriendo, las cifras ocupan la franja de abajo: el aviso sube
+          // para no quedar debajo de ellas.
+          <View style={[styles.gpsBanner, isRunning && styles.gpsBannerSobreCifras]}>
             <Ionicons name="warning" size={18} color="#FFB300" />
             <Text style={styles.gpsBannerText}>
               Sin señal GPS suficiente — no se está registrando
@@ -2754,7 +2793,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
           de pausa/stop. Ahora todo cabe holgado y los controles van dentro
           del propio modal. */}
       <Modal
-        visible={isRunning}
+        visible={isRunning && !showRunMap}
         transparent={false}
         animationType="fade"
         statusBarTranslucent
@@ -2783,7 +2822,28 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
                 </Text>
               </View>
             )}
+            <TouchableOpacity
+              style={styles.verMapaBtn}
+              onPress={() => setShowRunMap(true)}
+              activeOpacity={0.8}
+              accessibilityLabel="Ver el mapa"
+            >
+              <Ionicons name="map" size={18} color={colors.orange} />
+              <Text style={styles.verMapaText}>MAPA</Text>
+            </TouchableOpacity>
           </View>
+
+          {/* El cartel de sin señal vivía solo en el mapa, y el mapa está
+              tapado por esta pantalla durante toda la carrera: nadie lo veía.
+              Aquí sí, junto al aviso que ahora también se nota vibrando. */}
+          {gpsWeak && (
+            <View style={styles.gpsBannerRun}>
+              <Ionicons name="warning" size={18} color="#FFB300" />
+              <Text style={styles.gpsBannerText}>
+                Sin señal GPS — no se está registrando
+              </Text>
+            </View>
+          )}
 
           {/* Stats apilados verticales. flex:1 reparte espacio uniformemente
               entre los 3 bloques sin que se solapen con el botón de abajo. */}
@@ -2855,14 +2915,39 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
           </View>
         )}
 
-        {/* Solo botón INICIAR cuando NO se corre. Los controles de carrera
-            (pause/stop/resume) ahora viven dentro del Modal de Strava-mode
-            para que no se solapen con las parciales. */}
         {!isRunning && (
           <TouchableOpacity style={styles.startBtn} onPress={startRun}>
             <Ionicons name="play" size={18} color="#fff" />
             <Text style={styles.startBtnText}>INICIAR CARRERA</Text>
           </TouchableOpacity>
+        )}
+
+        {/* Corriendo y mirando el mapa: donde estaba INICIAR van los mandos de
+            la carrera. Parar es el botón grande; al lado, pausar y volver a
+            los datos. */}
+        {isRunning && showRunMap && (
+          <View style={styles.runMapControls}>
+            <TouchableOpacity
+              style={styles.runMapSideBtn}
+              onPress={isPaused ? resumeRun : pauseRun}
+              activeOpacity={0.85}
+              accessibilityLabel={isPaused ? 'Reanudar' : 'Pausar'}
+            >
+              <Ionicons name={isPaused ? 'play' : 'pause'} size={22} color={colors.textPrimary} />
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.runMapStopBtn} onPress={stopRun} activeOpacity={0.85}>
+              <Ionicons name="stop" size={20} color="#fff" />
+              <Text style={styles.startBtnText}>PARAR</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.runMapSideBtn}
+              onPress={() => setShowRunMap(false)}
+              activeOpacity={0.85}
+              accessibilityLabel="Ver los datos de la carrera"
+            >
+              <Ionicons name="stats-chart" size={20} color={colors.textPrimary} />
+            </TouchableOpacity>
+          </View>
         )}
       </View>
 
@@ -3085,6 +3170,7 @@ const styles = StyleSheet.create({
     alignSelf: 'center', marginTop: spacing.sm,
   },
   gpsBannerText: { fontSize: 13, fontWeight: '700', color: '#FFB300', flexShrink: 1 },
+  gpsBannerSobreCifras: { marginBottom: 72 },
   speedBanner: {
     position: 'absolute', top: spacing.md, left: spacing.md, right: spacing.md,
     backgroundColor: 'rgba(255,59,48,0.15)', borderRadius: radius.full,
@@ -3176,6 +3262,34 @@ const styles = StyleSheet.create({
   runControlsInModal: {
     width: '100%',
     alignItems: 'stretch',
+  },
+  // Botón "MAPA" de la pantalla de carrera: discreto, arriba a la derecha.
+  verMapaBtn: {
+    marginLeft: 'auto', flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingVertical: 8, paddingHorizontal: 14,
+    borderRadius: radius.full, borderWidth: 1, borderColor: colors.orange,
+  },
+  verMapaText: { color: colors.orange, fontSize: 12, fontWeight: '800', letterSpacing: 1 },
+  // Mismo aviso de "sin señal" que en el mapa, dentro de la pantalla de
+  // carrera, que es la que se ve mientras corres.
+  gpsBannerRun: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    alignSelf: 'center', marginTop: spacing.sm,
+    paddingVertical: 8, paddingHorizontal: 14,
+    borderRadius: radius.full, backgroundColor: 'rgba(255,179,0,0.15)',
+    borderWidth: 1, borderColor: '#FFB300',
+  },
+  // Mandos de la carrera cuando estás mirando el mapa: parar en grande, y a
+  // los lados pausar y volver a los datos.
+  runMapControls: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  runMapSideBtn: {
+    width: 56, height: 56, borderRadius: 28,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: colors.bgCardAlt, borderWidth: 1, borderColor: colors.border,
+  },
+  runMapStopBtn: {
+    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+    height: 56, borderRadius: radius.full, backgroundColor: colors.danger,
   },
   // Botón pill PAUSAR ancho — estilo Strava.
   pausePillBtn: {
