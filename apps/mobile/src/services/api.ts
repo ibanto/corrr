@@ -20,6 +20,25 @@ interface RankingEntry {
   isCurrentUser?: boolean;
 }
 
+/** Una línea del podio (aviso de los sábados). */
+export interface PodiumEntry {
+  userId: string;
+  name: string;
+  city: string | null;
+  points: number;
+  /** Miniatura en data URI, o null si no tiene foto. */
+  avatar: string | null;
+}
+
+export interface Podium {
+  /** Sábado desde el que cuenta la semana, en ISO. */
+  weekStart: string;
+  /** La ciudad del usuario, o null si no la ha puesto. */
+  city: string | null;
+  week: { spain: PodiumEntry[]; city: PodiumEntry[] };
+  allTime: { spain: PodiumEntry[]; city: PodiumEntry[] };
+}
+
 interface Challenge {
   id: string;
   title: string;
@@ -375,6 +394,16 @@ class ApiService {
       }));
     } catch {
       return MOCK_RANKING;
+    }
+  }
+
+  /** Podio para el aviso de los sábados. Devuelve null si falla: es un extra,
+   *  y no vale la pena molestar al usuario con un error por esto. */
+  async getPodium(): Promise<Podium | null> {
+    try {
+      return await this.request<Podium>('/ranking/podium');
+    } catch {
+      return null;
     }
   }
 

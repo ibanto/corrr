@@ -31,6 +31,8 @@ import PerfilScreen from './src/screens/PerfilScreen';
 import { registerForPushNotifications } from './src/services/notifications';
 import { importNewWorkouts, RUNS_IMPORTED_EVENT } from './src/services/healthkit';
 import ZonePopup, { PopupType } from './src/components/ZonePopup';
+import PodioModal from './src/components/PodioModal';
+import type { Podium } from './src/services/api';
 import * as Notifications from 'expo-notifications';
 
 type Tab = 'Mapa' | 'Stats' | 'Ranking' | 'Retos' | 'Perfil';
@@ -68,6 +70,20 @@ const LEGACY_SESSION_KEY = '@corrr_session'; // formato antiguo, solo para migra
 // CURRENT_VERSION ahora vive en src/utils/checkForUpdates.ts — no aquí —
 // para romper la dependencia circular App ↔ PerfilScreen que rompía el
 // botón "Buscar actualizaciones".
+/** El sábado de esta semana, como "2026-09-19".
+ *
+ *  Es la clave del aviso del podio: mientras no cambie, no se vuelve a
+ *  enseñar. Sale el sábado, y si ese día no abres la app, la primera vez que
+ *  la abras después — mejor que perderte la semana entera. */
+function saturdayOfThisWeek(now: Date = new Date()): string {
+  const d = new Date(now);
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() - ((d.getDay() + 1) % 7)); // domingo=0 … sábado=6
+  const mes = String(d.getMonth() + 1).padStart(2, '0');
+  const dia = String(d.getDate()).padStart(2, '0');
+  return `${d.getFullYear()}-${mes}-${dia}`;
+}
+
 interface User { id: string; username: string; email: string; city?: string; }
 interface Session { token: string; user: User; }
 
@@ -76,6 +92,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<Tab>('Mapa');
   const [loading, setLoading] = useState(true);
   const [stolenPopup, setStolenPopup] = useState<{ visible: boolean; rivalName?: string; points?: number }>({ visible: false });
+  const [podium, setPodium] = useState<Podium | null>(null);
   const [pendingFriends, setPendingFriends] = useState(0);
 
   // Escuchar notificaciones push (te han robado una zona)
@@ -168,6 +185,44 @@ export default function App() {
       if (state === 'active') importFromWatch();
     });
     return () => sub.remove();
+  }, [user?.id]);
+
+  // El podio de los sábados. Sale una vez por semana, la primera vez que
+  // abres la app en sábado (o cualquier día después, si ese sábado no la
+  // abriste): enseña quién manda en España y en tu ciudad, esta semana y de
+  // siempre. Solo se mira; de ahí no se va a ningún sitio.
+  //
+  // Se muestra con retardo a propósito: en iOS, montar un Modal mientras la
+  // app arranca o mientras se cierra otro hace que no se presente nunca
+  // (mismo motivo que `popupReady` y `summaryReady` en el mapa).
+  useEffect(() => {
+    if (!user?.id) return;
+    const userId = user.id;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const maybeShowPodium = async () => {
+      try {
+        const key = `corrr:podio:${userId}`;
+        const semana = saturdayOfThisWeek();
+        const visto = await AsyncStorage.getItem(key);
+        if (visto === semana) return;
+        const data = await api.getPodium();
+        if (!data || cancelled) return;
+        await AsyncStorage.setItem(key, semana);
+        timer = setTimeout(() => { if (!cancelled) setPodium(data); }, 1200);
+      } catch {}
+    };
+
+    maybeShowPodium();
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') maybeShowPodium();
+    });
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+      sub.remove();
+    };
   }, [user?.id]);
 
   const handleAuthenticated = async (token: string, userData: User) => {
@@ -280,6 +335,14 @@ export default function App() {
   return (
     <View style={styles.root}>
       <StatusBar barStyle="light-content" backgroundColor={colors.bg} />
+      {podium && (
+        <PodioModal
+          visible
+          podium={podium}
+          currentUserId={user?.id}
+          onClose={() => setPodium(null)}
+        />
+      )}
       <ZonePopup
         visible={stolenPopup.visible}
         type="stolen_from_you"
