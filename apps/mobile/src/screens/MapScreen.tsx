@@ -46,6 +46,22 @@ import { randomPhrase } from '../data/motivationalPhrases';
 // km/h al instante. Para dejar SOLO tiempo + km, basta con quitar el bloque.
 const USE_PHRASES_INSTEAD_OF_SPEED = true;
 
+/** Tamaño de la frase de la pantalla de carrera según lo larga que sea.
+ *
+ *  `adjustsFontSizeToFit` solo encoge si la caja tiene una altura que
+ *  respetar; aquí la frase crecía hacia abajo y las largas (hasta 47
+ *  caracteres: "A correr, que la vida es corta y la calle larga") se metían
+ *  debajo del botón de pausar. Con esto sale ya con el tamaño que le toca, y
+ *  el ajuste automático queda solo de red. */
+function phraseFontSize(frase: string): number {
+  const n = frase.length;
+  if (n <= 16) return 52;
+  if (n <= 24) return 44;
+  if (n <= 32) return 36;
+  if (n <= 42) return 30;
+  return 26;
+}
+
 /** Helper that picks the right taunt image for inbox display. The mode 'taunt'
  *  in our taunts table corresponds to the message set (1-10), 'response' to the
  *  response set (1-10). The 'robo_notif' mode has no taunt_id. */
@@ -2835,20 +2851,25 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
              - paddingBottom amplio para que el botón no quede por debajo de
                la nav bar de Android (Xiaomi, gestos, etc.). */}
         <View style={styles.runningScreen}>
+          {/* Una sola fila arriba: logo, el estado (pausa) en el centro y
+              MAPA a la derecha. Alto fijo para que aparecer o desaparecer el
+              badge no mueva nada de lo de abajo. */}
           <View style={styles.runningTop}>
             <Image
               source={require('../../assets/icon.png')}
               style={styles.runningLogo}
               resizeMode="contain"
             />
-            {(isPaused || isAutoPaused) && (
-              <View style={styles.pausedBadge}>
-                <Ionicons name="pause" size={14} color={colors.orange} />
-                <Text style={styles.pausedBadgeText}>
-                  {isAutoPaused && !isPaused ? 'AUTO-PAUSA' : 'PAUSADO'}
-                </Text>
-              </View>
-            )}
+            <View style={styles.runningTopCentro}>
+              {(isPaused || isAutoPaused) && (
+                <View style={styles.pausedBadge}>
+                  <Ionicons name="pause" size={14} color={colors.orange} />
+                  <Text style={styles.pausedBadgeText}>
+                    {isAutoPaused && !isPaused ? 'AUTO-PAUSA' : 'PAUSADO'}
+                  </Text>
+                </View>
+              )}
+            </View>
             <TouchableOpacity
               style={styles.verMapaBtn}
               onPress={() => setShowRunMap(true)}
@@ -2862,15 +2883,18 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
 
           {/* El cartel de sin señal vivía solo en el mapa, y el mapa está
               tapado por esta pantalla durante toda la carrera: nadie lo veía.
-              Aquí sí, junto al aviso que ahora también se nota vibrando. */}
-          {gpsWeak && (
-            <View style={styles.gpsBannerRun}>
-              <Ionicons name="warning" size={18} color="#FFB300" />
-              <Text style={styles.gpsBannerText}>
-                Sin señal GPS — no se está registrando
-              </Text>
-            </View>
-          )}
+              Va FLOTANDO sobre el contenido: si empujara, al aparecer y
+              desaparecer descolocaría el tiempo, la distancia y la frase. */}
+          <View style={styles.avisoSlot} pointerEvents="none">
+            {gpsWeak && (
+              <View style={styles.gpsBannerRun}>
+                <Ionicons name="warning" size={18} color="#FFB300" />
+                <Text style={styles.gpsBannerText}>
+                  Sin señal GPS — no se está registrando
+                </Text>
+              </View>
+            )}
+          </View>
 
           {/* Stats apilados verticales. flex:1 reparte espacio uniformemente
               entre los 3 bloques sin que se solapen con el botón de abajo. */}
@@ -2885,14 +2909,16 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
             </View>
             <View style={styles.statBlockBig}>
               {USE_PHRASES_INSTEAD_OF_SPEED ? (
-                <Text
-                  style={styles.motivationalPhrase}
-                  adjustsFontSizeToFit
-                  numberOfLines={5}
-                  minimumFontScale={0.25}
-                >
-                  {runPhrase}
-                </Text>
+                <View style={styles.phraseBox}>
+                  <Text
+                    style={[styles.motivationalPhrase, { fontSize: phraseFontSize(runPhrase) }]}
+                    adjustsFontSizeToFit
+                    numberOfLines={4}
+                    minimumFontScale={0.4}
+                  >
+                    {runPhrase}
+                  </Text>
+                </View>
               ) : (
                 <>
                   <Text style={styles.statBigLabel}>VELOCIDAD (KM/H)</Text>
@@ -3231,10 +3257,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
   },
   runningTop: {
+    flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
+    // Alto fijo: el badge de pausa aparece y desaparece solo, y sin esto
+    // arrastraba consigo el tiempo, la distancia y la frase.
+    height: 44,
     marginBottom: spacing.md,
   },
+  runningTopCentro: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   // Stack vertical de stats. flex:1 → ocupa todo el alto restante entre
   // top y controles. justifyContent:'space-around' distribuye los 3
   // bloques con aire entre ellos.
@@ -3246,6 +3277,14 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
   },
   statBlockBig: { alignItems: 'center', gap: 4 },
+  // La frase vive en una caja de alto acotado: nunca puede crecer por debajo
+  // de los controles, pase lo que pase con el texto.
+  phraseBox: {
+    alignSelf: 'stretch',
+    maxHeight: 190,
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
   // Label arriba pequeño tipo Strava ("DISTANCIA (KM)").
   statBigLabel: {
     fontSize: 12,
@@ -3292,18 +3331,21 @@ const styles = StyleSheet.create({
   },
   // Botón "MAPA" de la pantalla de carrera: discreto, arriba a la derecha.
   verMapaBtn: {
-    marginLeft: 'auto', flexDirection: 'row', alignItems: 'center', gap: 6,
+    flexDirection: 'row', alignItems: 'center', gap: 6,
     paddingVertical: 8, paddingHorizontal: 14,
     borderRadius: radius.full, borderWidth: 1, borderColor: colors.orange,
   },
   verMapaText: { color: colors.orange, fontSize: 12, fontWeight: '800', letterSpacing: 1 },
   // Mismo aviso de "sin señal" que en el mapa, dentro de la pantalla de
   // carrera, que es la que se ve mientras corres.
+  // Hueco propio para el aviso, SIEMPRE presente aunque esté vacío: si
+  // apareciera y desapareciera empujando, movería el tiempo, la distancia y
+  // la frase cada vez que el GPS va y viene.
+  avisoSlot: { height: 38, alignItems: 'center', justifyContent: 'center' },
   gpsBannerRun: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
-    alignSelf: 'center', marginTop: spacing.sm,
     paddingVertical: 8, paddingHorizontal: 14,
-    borderRadius: radius.full, backgroundColor: 'rgba(255,179,0,0.15)',
+    borderRadius: radius.full, backgroundColor: 'rgba(255,179,0,0.18)',
     borderWidth: 1, borderColor: '#FFB300',
   },
   // Mandos de la carrera cuando estás mirando el mapa: parar en grande, y a
