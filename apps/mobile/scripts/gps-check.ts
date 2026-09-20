@@ -153,6 +153,29 @@ scenario('Sin señal 3 minutos en plena carrera (túnel, sin permiso de fondo)',
   check('no se inventan celdas en el hueco', components(tr.cells) === 2, `${components(tr.cells)} grupos`);
 });
 
+scenario('Mala señal entre edificios: el territorio no se agujerea', check => {
+  // Lo que le pasó a Ibanto el 20-sep: un tramo con precisión de 45 m (calle
+  // estrecha entre edificios altos) se descartaba entero. Los km se contaban
+  // por la línea recta del hueco, pero el rastro se quedaba sin celdas.
+  const tr = new RunTracker(T0);
+  const a = route(BCN, [{ eastM: 400, northM: 0 }], { t0: T0, kmh: 12, acc: 8 });
+  const b = route(endOf(a), [{ eastM: 120, northM: 0 }], { t0: lastTs(a), kmh: 12, acc: 45 });
+  const c = route(endOf(b), [{ eastM: 400, northM: 0 }], { t0: lastTs(b), kmh: 12, acc: 8 });
+  feed(tr, [...a, ...b, ...c]);
+  check('distancia ≈ 920 m', tr.distanceKm > 0.82 && tr.distanceKm < 1.02, km(tr.distanceKm));
+  check('el rastro sigue de una pieza', components(tr.cells) === 1, `${components(tr.cells)} grupos`);
+});
+
+scenario('Hueco largo sin señal: no se inventa el camino', check => {
+  const tr = new RunTracker(T0);
+  const a = route(BCN, [{ eastM: 300, northM: 0 }], { t0: T0, kmh: 12, acc: 8 });
+  // 350 m sin ninguna lectura: por ahí no se sabe si fue recto o dobló.
+  const c = route(offset(endOf(a), 350, 0), [{ eastM: 300, northM: 0 }], { t0: lastTs(a) + 105_000, kmh: 12, acc: 8 });
+  feed(tr, [...a, ...c]);
+  check('los km del hueco sí cuentan', tr.distanceKm > 0.85, km(tr.distanceKm));
+  check('no se pintan celdas por el hueco', components(tr.cells) === 2, `${components(tr.cells)} grupos`);
+});
+
 scenario('Semáforo: 60 s parado a mitad', check => {
   const tr = new RunTracker(T0);
   const a = route(BCN, [{ eastM: 300, northM: 0 }], { t0: T0, kmh: 10 });

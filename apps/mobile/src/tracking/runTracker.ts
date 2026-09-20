@@ -236,6 +236,14 @@ export const MAX_LOOP_EDGE_M = 60;
 // tramo entero, que es lo que pasaba. No pinta celdas por el hueco: no sabemos
 // por qué calle fuiste.
 export const GAP_MIN_KMH = 3;
+// Hueco corto (una calle entre edificios altos, un portal, un túnel de metro):
+// si al recuperar la señal estás a menos de esto y has tardado lo que se tarda
+// andando o corriendo, se pinta la línea recta entre los dos puntos. No es
+// exacto —no sabemos si doblaste una esquina— pero a esa distancia el error es
+// de unos metros, y tirar el tramo entero dejaba agujeros en el territorio de
+// carreras buenas (Ibanto, 20-sep: 350 m de mala señal = 35 celdas perdidas).
+// Por encima, el camino es una incógnita y no se pinta nada.
+export const GAP_BRIDGE_MAX_M = 150;
 
 /** ¿Las últimas N coordenadas caen todas dentro de un círculo de radius m? */
 export function isStationary(coords: Coord[]): boolean {
@@ -429,6 +437,19 @@ export class RunTracker {
     loopsFilled: 0,
     /** Circuitos descartados por tener un corte dentro. */
     loopsSkipped: 0,
+    /** Lecturas tiradas por mala precisión: el motivo nº1 de quedarse corto.
+     *  Entre edificios altos el GPS da 35-60 m y no pintamos nada. */
+    dropAccuracy: 0,
+    /** Lecturas tiradas por velocidad imposible (>30 km/h). */
+    dropSpeed: 0,
+    /** Lecturas tiradas por no haberse movido lo suficiente (ruido). */
+    dropNoise: 0,
+    /** Peor precisión aceptada, en metros. */
+    worstAccuracyM: 0,
+    /** Precisión de la peor lectura descartada, en metros. */
+    worstDroppedM: 0,
+    /** Huecos cortos que se han pintado en línea recta. */
+    gapsBridged: 0,
   };
 
   private lastCell: { x: number; y: number } | null = null;
@@ -505,7 +526,20 @@ export class RunTracker {
 
     const prev = this.lastPoint;
     const result = filterGpsPoint(coord, prev, r.timestamp, this.lastAcceptedTs, r.accuracy, r.speed, inWarmup);
-    if (result.action === 'skip') return { kind: 'skip' };
+    if (result.action === 'skip') {
+      // Por qué se tira. Sin esto, una carrera que "cuenta de menos" no se
+      // puede diagnosticar: solo se ve el agujero, no la causa.
+      const maxAcc = inWarmup ? WARMUP_ACCURACY_M : MAX_ACCURACY_M;
+      if (r.accuracy > maxAcc) {
+        this.diag.dropAccuracy += 1;
+        if (r.accuracy > this.diag.worstDroppedM) this.diag.worstDroppedM = Math.round(r.accuracy);
+      } else if (result.speedKmh > MAX_SPEED_KMH) {
+        this.diag.dropSpeed += 1;
+      } else {
+        this.diag.dropNoise += 1;
+      }
+      return { kind: 'skip' };
+    }
 
     if (result.action === 'teleport') {
       // Sin lecturas la app se auto-pausa a los 20 s (parado, el móvil no
@@ -521,6 +555,18 @@ export class RunTracker {
           this.positionKm += gapKm;
           this.lastMovementAt = r.timestamp;
           if (this.autoPaused) { this.autoPaused = false; resumed = true; }
+          // Hueco corto: se pinta el rastro en línea recta para no dejar el
+          // territorio agujereado. El puente sigue teniendo el tope de celdas
+          // de siempre, y un circuito que pase por aquí no se rellena (el
+          // salto es mayor que MAX_LOOP_EDGE_M): la cuña no vuelve.
+          if (gapKm * 1000 <= GAP_BRIDGE_MAX_M && this.lastCell) {
+            const destino = coordToCell(coord.latitude, coord.longitude);
+            const puente = cellLine(this.lastCell.x, this.lastCell.y, destino.x, destino.y);
+            if (puente.length <= MAX_BRIDGE_CELLS) {
+              for (const bc of puente) this.cells.add(cellKey(bc.x, bc.y));
+              this.diag.gapsBridged += 1;
+            }
+          }
         }
       }
       return this.startSegment(coord, r.timestamp, resumed);
@@ -533,6 +579,7 @@ export class RunTracker {
     this.lastAcceptedTs = r.timestamp;
     this.accepted += 1;
     this.diag.accepted = this.accepted;
+    if (r.accuracy > this.diag.worstAccuracyM) this.diag.worstAccuracyM = Math.round(r.accuracy);
     this.segments[this.segments.length - 1].push(coord);
     const outcome = {
       kind: 'accept' as const, coord, cellsChanged: false, moved: false,
