@@ -1192,19 +1192,33 @@ app.get('/ranking/podium', { preHandler: requireAuth }, async (req: any, reply) 
     city ? allTimeQuery(true) : Promise.resolve({ rows: [] as any[] }),
   ]);
 
-  const clean = (rows: any[]) => rows.map(r => ({
+  // Si alguien del podio aún no tiene miniatura, se hace aquí y se guarda:
+  // son como mucho doce filas y así el podio sale con fotos desde el primer
+  // sábado, sin esperar a que ese corredor aparezca en el mapa de alguien.
+  const thumbCache = new Map<string, string | null>();
+  const thumbOf = async (userId: string, thumb: string | null) => {
+    if (thumb) return thumb;
+    if (thumbCache.has(userId)) return thumbCache.get(userId)!;
+    const { rows } = await db.query(`SELECT avatar_url FROM users WHERE id = $1`, [userId]);
+    const hecha = await makeAvatarThumb(rows[0]?.avatar_url);
+    if (hecha) await db.query(`UPDATE users SET avatar_thumb = $1 WHERE id = $2`, [hecha, userId]);
+    thumbCache.set(userId, hecha);
+    return hecha;
+  };
+
+  const clean = async (rows: any[]) => Promise.all(rows.map(async r => ({
     userId: r.user_id,
     name: r.display_name,
     city: r.city,
     points: r.points,
-    avatar: r.avatar_thumb ?? null,
-  }));
+    avatar: await thumbOf(r.user_id, r.avatar_thumb ?? null),
+  })));
 
   const payload = {
     weekStart: since.toISOString(),
     city,
-    week: { spain: clean(weekSpain.rows), city: clean(weekCity.rows) },
-    allTime: { spain: clean(allTimeSpain.rows), city: clean(allTimeCity.rows) },
+    week: { spain: await clean(weekSpain.rows), city: await clean(weekCity.rows) },
+    allTime: { spain: await clean(allTimeSpain.rows), city: await clean(allTimeCity.rows) },
   };
   setRankingCache(cacheKey, payload);
   return reply.send(payload);
