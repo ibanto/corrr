@@ -26,13 +26,16 @@ import {
   CELL_LAT_DEG, CELL_LNG_DEG, coordToCell, cellKey, getDistance,
   LOOP_CLOSE_DIST_M, LOOP_MIN_PERIMETER_M,
 } from '../tracking/runTracker';
+import polygonClipping from 'polygon-clipping';
+import {
+  Tira, CellBox, UnionedPolygon, cellsToStrips, stripsFingerprint, pushClipped, unionStripsToPolygons,
+} from '../map/territory';
 import { RUNS_IMPORTED_EVENT } from '../services/healthkit';
 import { CHECK_TAUNTS_EVENT, RUN_TABS_EVENT } from '../services/notifications';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import polygonClipping from 'polygon-clipping';
 import { colors, spacing, radius } from '../theme';
-import { api, RemoteZone, RemoteCell, TauntInbox } from '../services/api';
+import { api, RemoteZone, MapTerritory, TauntInbox } from '../services/api';
 import ZonePopup, { PopupType } from '../components/ZonePopup';
 import ShareRunCard, { ShareRunData, ShareSteal } from '../components/ShareRunCard';
 import { randomSharePhrase } from '../data/sharePhrases';
@@ -180,6 +183,8 @@ const MAX_DELTA_FOR_ZONES = 0.15;
 // aquí, y hay que probarlo en Android y en iPhone.
 const MAX_DELTA_FOR_CELLS = 0.05;
 
+const TERRITORIO_VACIO: MapTerritory = { duenos: [], tiras: [] };
+
 /** Ray-casting point-in-polygon. */
 function pointInPolygonLatLng(lat: number, lng: number, poly: { latitude: number; longitude: number }[]): boolean {
   let inside = false;
@@ -216,20 +221,6 @@ function rasterizePolygonToCells(polygon: { latitude: number; longitude: number 
   return cells;
 }
 
-/** Huella del conjunto de celdas de un dueño, para saber si ha cambiado.
- *  No depende del orden y no crea cadenas enormes: con 5.000 celdas, comparar
- *  dos cadenas de 50 KB costaría más que lo que queremos ahorrar. */
-function cellsFingerprint(cells: { x: number; y: number }[]): string {
-  let mezcla = 0;
-  let suma = 0;
-  for (const c of cells) {
-    const h = (c.x * 73856093) ^ (c.y * 19349663);
-    mezcla ^= h;
-    suma = (suma + h) | 0;
-  }
-  return `${cells.length}:${mezcla}:${suma}`;
-}
-
 /** Caja visible en coordenadas de celda, redondeada hacia fuera a bloques.
  *
  *  El redondeo es lo que hace que mover el mapa un poco no dispare ningún
@@ -241,7 +232,7 @@ const VIEW_BLOCK = 64;
 const VIEW_MARGIN = 0.6;
 /** Límites de lo que se ve: norte, sur, este y oeste en grados. */
 type VisibleBounds = { north: number; south: number; east: number; west: number };
-function visibleCellBox(b: VisibleBounds) {
+function visibleCellBox(b: VisibleBounds): CellBox {
   const margenLat = (b.north - b.south) * VIEW_MARGIN / 2;
   const margenLng = (b.east - b.west) * VIEW_MARGIN / 2;
   const sw = coordToCell(b.south - margenLat, b.west - margenLng);
@@ -253,68 +244,8 @@ function visibleCellBox(b: VisibleBounds) {
     y0: bloque(sw.y, false), y1: bloque(ne.y, true),
   };
 }
-type CellBox = ReturnType<typeof visibleCellBox>;
 const sameBox = (a: CellBox | null, b: CellBox) =>
   !!a && a.x0 === b.x0 && a.x1 === b.x1 && a.y0 === b.y0 && a.y1 === b.y1;
-const inBox = (b: CellBox, x: number, y: number) => x >= b.x0 && x <= b.x1 && y >= b.y0 && y <= b.y1;
-
-/** Union an array of cells into one (or several disjoint) outlined polygons.
- *  Used to render a territory as a single mass — no internal lines between
- *  adjacent cells, just one stroke around the perimeter of each connected
- *  component. Returns { outer, holes } for each polygon (RN-Maps's <Polygon>
- *  has a `holes` prop). */
-type UnionedPolygon = { outer: { latitude: number; longitude: number }[]; holes: { latitude: number; longitude: number }[][] };
-function unionCellsToPolygons(cells: { x: number; y: number }[]): UnionedPolygon[] {
-  if (cells.length === 0) return [];
-  // Las celdas seguidas de una misma fila se mandan como UN rectángulo, no
-  // como veinte cuadraditos. La figura que sale es exactamente la misma, pero
-  // unir cuesta mucho menos: con el territorio de un corredor de 47.000
-  // celdas, 575 ms → 22 ms (403 rectángulos en vez de 47.000 cuadrados). Eso
-  // era lo que dejaba la app colgada al robarle a alguien con mucho terreno.
-  const porFila = new Map<number, number[]>();
-  for (const c of cells) {
-    const fila = porFila.get(c.y);
-    if (fila) fila.push(c.x);
-    else porFila.set(c.y, [c.x]);
-  }
-  // polygon-clipping usa [lng, lat].
-  const ringInput: number[][][][] = [];
-  const rect = (x0: number, y0: number, x1: number, y1: number) => {
-    const oeste = x0 * CELL_LNG_DEG, este = x1 * CELL_LNG_DEG;
-    const sur = y0 * CELL_LAT_DEG, norte = y1 * CELL_LAT_DEG;
-    ringInput.push([[[oeste, sur], [este, sur], [este, norte], [oeste, norte], [oeste, sur]]]);
-  };
-  porFila.forEach((xs, y) => {
-    xs.sort((a, b) => a - b);
-    let inicio = xs[0];
-    let anterior = xs[0];
-    for (let i = 1; i < xs.length; i++) {
-      if (xs[i] === anterior + 1) { anterior = xs[i]; continue; }
-      if (xs[i] === anterior) continue; // repetida
-      rect(inicio, y, anterior + 1, y + 1);
-      inicio = anterior = xs[i];
-    }
-    rect(inicio, y, anterior + 1, y + 1);
-  });
-  let union;
-  try {
-    // polygon-clipping's overload signature is awkward — accepts variadic args
-    // but TS can't infer through `...rest as any`. The Function.apply form sidesteps
-    // the typing while doing the exact same thing at runtime.
-    union = (polygonClipping.union as any).apply(null, ringInput);
-  } catch {
-    return [];
-  }
-  const result: UnionedPolygon[] = [];
-  for (const poly of union as number[][][][]) {
-    if (!poly || poly.length === 0) continue;
-    const outer = poly[0].map((pt: number[]) => ({ latitude: pt[1], longitude: pt[0] }));
-    const holes = poly.slice(1).map((h: number[][]) => h.map((pt: number[]) => ({ latitude: pt[1], longitude: pt[0] })));
-    result.push({ outer, holes });
-  }
-  return result;
-}
-
 // El filtro GPS, la auto-pausa y el anti-deriva están en src/tracking/runTracker.ts.
 
 const MAP_STYLE = [
@@ -713,7 +644,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
   // está en src/tracking/runTracker.ts y se comprueba con `npm run test:gps`.
   const trackerRef = useRef<RunTracker | null>(null);
   const handleReadingRef = useRef<(r: GpsReading, live: boolean) => ReadingOutcome | null>(() => null);
-  const [remoteCells, setRemoteCells] = useState<RemoteCell[]>([]);
+  const [territorio, setTerritorio] = useState<MapTerritory>(TERRITORIO_VACIO);
   /** Zona de la que se calculan y dibujan los territorios. El servidor manda
    *  bastante más de lo que cabe en pantalla (redondea a casillas de 1,3 km
    *  para poder reutilizar la respuesta entre usuarios), y calcular la forma de
@@ -1009,7 +940,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     try {
       // Skip when zoomed out — would return thousands of cells and choke the map.
       if (currentDelta.current.latDelta > MAX_DELTA_FOR_CELLS) {
-        setRemoteCells([]);
+        setTerritorio(TERRITORIO_VACIO);
         return;
       }
       const useLat = lat ?? mapRegion.latitude;
@@ -1023,19 +954,20 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       // guardar). Con el mínimo, el refresh cubre un run típico.
       const halfLat = Math.max(currentDelta.current.latDelta / 2, 0.01);
       const halfLng = Math.max(currentDelta.current.lngDelta / 2, 0.01);
-      const { cells, owners } = await api.getCellsInViewport(
+      const t = await api.getMapTerritory(
         useLat + halfLat,
         useLat - halfLat,
         useLng + halfLng,
         useLng - halfLng,
       );
+      const owners = t.owners;
       // Acumulamos las fotos en vez de reemplazarlas: al moverte por el mapa
       // cada carga trae solo los dueños de ese encuadre, y no queremos perder
       // la foto de uno cuya zona acabas de dejar atrás.
       if (owners) {
         for (const [id, o] of Object.entries(owners)) ownerAvatarsRef.current[id] = o.avatar;
       }
-      setRemoteCells(cells);
+      setTerritorio(t);
     } catch {}
   };
 
@@ -1061,7 +993,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       let west  = (minX - pad) * CELL_LNG_DEG;
       // Radio mínimo ~1km, MISMO criterio que loadCells. Sin esto, la caja era
       // solo la de la carrera recién terminada (una vuelta de 200m ≈ 130m de
-      // caja) y como abajo hacemos setRemoteCells(cells) —que REEMPLAZA, no
+      // caja) y como abajo hacemos setTerritorio(t) —que REEMPLAZA, no
       // fusiona— todo el territorio conquistado antes que cayera fuera de esa
       // caja desaparecía del mapa al terminar de correr. Los datos seguían en
       // el servidor: era solo que dejábamos de pedirlos.
@@ -1077,11 +1009,12 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         east = centerLng + MIN_HALF_LNG;
         west = centerLng - MIN_HALF_LNG;
       }
-      const { cells, owners } = await api.getCellsInViewport(north, south, east, west);
+      const t = await api.getMapTerritory(north, south, east, west);
+      const owners = t.owners;
       if (owners) {
         for (const [id, o] of Object.entries(owners)) ownerAvatarsRef.current[id] = o.avatar;
       }
-      setRemoteCells(cells);
+      setTerritorio(t);
     } catch {
       await loadCells().catch(() => {});
     }
@@ -1242,11 +1175,11 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
 
   /** Une las celdas de un dueño en polígonos, reutilizando el resultado si ese
    *  dueño no ha cambiado. Unir es lo caro de todo el mapa. */
-  const unionCached = (clave: string, cells: { x: number; y: number }[]): UnionedPolygon[] => {
-    const firma = cellsFingerprint(cells);
+  const unionCached = (clave: string, tiras: Tira[]): UnionedPolygon[] => {
+    const firma = stripsFingerprint(tiras);
     const guardado = unionCacheRef.current.get(clave);
     if (guardado && guardado.firma === firma) return guardado.polys;
-    const polys = unionCellsToPolygons(cells);
+    const polys = unionStripsToPolygons(tiras);
     unionCacheRef.current.set(clave, { firma, polys });
     // Tope de memoria: con muchos dueños vistos a lo largo de una sesión, la
     // caché crecería sin freno. Al pasarse, se tira la entrada más antigua.
@@ -1257,55 +1190,54 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     return polys;
   };
 
-  // Pre-computed unions of cells per owner. Rebuilt only when remoteCells or
+  // Pre-computed unions of cells per owner. Rebuilt only when the territory or
   // this-run claims change — polygon-clipping is too expensive to do per render.
   const myCellsUnion = useMemo(() => {
-    const myCells: { x: number; y: number }[] = [];
-    const seen = new Set<string>();
-    for (const c of remoteCells) {
-      if (!c.is_mine) continue;
-      if (viewBox && !inBox(viewBox, c.cell_x, c.cell_y)) continue;
-      const k = cellKey(c.cell_x, c.cell_y);
-      if (seen.has(k)) continue;
-      seen.add(k);
-      myCells.push({ x: c.cell_x, y: c.cell_y });
+    const { duenos, tiras: plano } = territorio;
+    const tiras: Tira[] = [];
+    for (let i = 0; i < plano.length; i += 4) {
+      if (!duenos[plano[i]]?.mine) continue;
+      pushClipped(tiras, viewBox, plano[i + 1], plano[i + 2], plano[i + 3]);
     }
     // Las celdas de la carrera en curso van SIEMPRE, se esté mirando donde se
     // esté: es el rastro que el corredor está viendo pintarse en directo.
-    claimedCellsRef.current.forEach(k => {
-      if (seen.has(k)) return;
-      seen.add(k);
-      const [xs, ys] = k.split(',');
-      myCells.push({ x: parseInt(xs, 10), y: parseInt(ys, 10) });
-    });
-    return unionCached('yo', myCells);
-  }, [remoteCells, claimedCellsTick, viewBox]);
+    if (claimedCellsRef.current.size > 0) {
+      const enCurso: { x: number; y: number }[] = [];
+      claimedCellsRef.current.forEach(k => {
+        const ci = k.indexOf(',');
+        enCurso.push({ x: parseInt(k.slice(0, ci), 10), y: parseInt(k.slice(ci + 1), 10) });
+      });
+      for (const t of cellsToStrips(enCurso)) tiras.push(t);
+    }
+    return unionCached('yo', tiras);
+  }, [territorio, claimedCellsTick, viewBox]);
 
-  /** Rival cells grouped by owner_id → one merged polygon per owner. Each carries
+  /** Rival cells grouped by owner → one merged polygon per owner. Each carries
    *  the owner metadata so taps still resolve to the rival info modal. */
   const rivalCellsUnions = useMemo(() => {
-    const byOwner = new Map<string, { ownerId: string; ownerName: string | undefined; ownerWarCry: string | null | undefined; ownerAvatar: string | null | undefined; cells: { x: number; y: number }[] }>();
-    for (const c of remoteCells) {
-      if (c.is_mine) continue;
-      if (viewBox && !inBox(viewBox, c.cell_x, c.cell_y)) continue;
-      const entry = byOwner.get(c.owner_id);
-      if (entry) entry.cells.push({ x: c.cell_x, y: c.cell_y });
-      else byOwner.set(c.owner_id, {
-        ownerId: c.owner_id,
-        ownerName: c.owner_name,
-        ownerWarCry: c.owner_war_cry,
-        ownerAvatar: ownerAvatarsRef.current[c.owner_id] ?? null,
-        cells: [{ x: c.cell_x, y: c.cell_y }],
-      });
+    const { duenos, tiras: plano } = territorio;
+    const porDueno = new Map<number, Tira[]>();
+    for (let i = 0; i < plano.length; i += 4) {
+      const d = plano[i];
+      if (!duenos[d] || duenos[d].mine) continue;
+      let lista = porDueno.get(d);
+      if (!lista) { lista = []; porDueno.set(d, lista); }
+      pushClipped(lista, viewBox, plano[i + 1], plano[i + 2], plano[i + 3]);
     }
-    return Array.from(byOwner.values()).map(o => ({
-      ownerId: o.ownerId,
-      ownerName: o.ownerName,
-      ownerWarCry: o.ownerWarCry,
-      ownerAvatar: o.ownerAvatar,
-      polygons: unionCached(o.ownerId, o.cells),
-    }));
-  }, [remoteCells, viewBox]);
+    const out: { ownerId: string; ownerName: string | undefined; ownerWarCry: string | null | undefined; ownerAvatar: string | null | undefined; polygons: UnionedPolygon[] }[] = [];
+    porDueno.forEach((tiras, d) => {
+      if (tiras.length === 0) return;
+      const o = duenos[d];
+      out.push({
+        ownerId: o.id,
+        ownerName: o.name ?? undefined,
+        ownerWarCry: o.warCry,
+        ownerAvatar: ownerAvatarsRef.current[o.id] ?? null,
+        polygons: unionCached(o.id, tiras),
+      });
+    });
+    return out;
+  }, [territorio, viewBox]);
 
   const stolenCheckDone = useRef(false);
   const checkForStolenZones = async (zones: RemoteZone[]) => {
@@ -2008,7 +1940,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         // viewport tight de zoom 17) y VACIAR claimedCellsRef → el mapa post-
         // carrera queda IGUAL que al reabrir la app: solo la verdad del servidor,
         // sin el doble tono / solapes que dejaba la capa local (claimedCellsRef)
-        // encima de un remoteCells desactualizado. Antes NO vaciábamos para no
+        // encima de un territorio desactualizado. Antes NO vaciábamos para no
         // perder las celdas fuera del viewport, pero eso causaba el ruido visual;
         // al traer el área ENTERA del run, vaciar es seguro y consistente.
         await loadCellsForRunArea();

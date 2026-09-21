@@ -7,7 +7,7 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
-    "test:gps": "tsc -p scripts/tsconfig.gps.json && node node_modules/.cache/gps-check/scripts/gps-check.js",
+    "test:gps": "tsc -p scripts/tsconfig.gps.json && node node_modules/.cache/gps-check/scripts/map-check.js && node node_modules/.cache/gps-check/scripts/gps-check.js",
     "postinstall": "patch-package"
   },
   "dependencies": {

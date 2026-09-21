@@ -1,4 +1,5 @@
 import { API_BASE } from '../theme';
+import { cellsToTerritory, MapOwner, MapTerritory, RemoteCell } from '../map/territory';
 
 interface LoginResponse {
   accessToken: string;
@@ -100,16 +101,6 @@ interface RemoteZone {
 
 // ── Grid (v2) ────────────────────────────────────────────────────────────────
 interface Cell { x: number; y: number; }
-
-interface RemoteCell {
-  cell_x: number;
-  cell_y: number;
-  owner_id: string;
-  owner_name?: string;
-  owner_war_cry?: string | null;
-  claimed_at?: string;
-  is_mine: boolean;
-}
 
 interface ProfileData {
   id: string;
@@ -432,9 +423,14 @@ class ApiService {
   /** Las fotos de perfil vienen en `owners`, una por dueño, NO dentro de cada
    *  celda: se guardan como imagen en base64 (una llega a 2,3 MB) y repetirlas
    *  por fila hacía peticiones de decenas de MB. */
-  async getCellsInViewport(north: number, south: number, east: number, west: number): Promise<{ cells: RemoteCell[]; owners?: Record<string, { avatar: string | null }> }> {
-    const qs = `north=${north}&south=${south}&east=${east}&west=${west}`;
-    return this.request<{ cells: RemoteCell[]; owners?: Record<string, { avatar: string | null }> }>(`/cells/viewport?${qs}`);
+  async getMapTerritory(north: number, south: number, east: number, west: number): Promise<MapTerritory> {
+    const qs = `north=${north}&south=${south}&east=${east}&west=${west}&formato=tiras`;
+    const res = await this.request<(MapTerritory & { formato: 'tiras' }) | { cells: RemoteCell[]; owners?: Record<string, { avatar: string | null }> }>(`/cells/viewport?${qs}`);
+    if ('formato' in res && res.formato === 'tiras') return res;
+    // Servidor que aún no sabe de tiras: llegan celdas sueltas y se agrupan
+    // aquí, para que el mapa trabaje siempre con lo mismo.
+    const viejo = res as { cells?: RemoteCell[]; owners?: Record<string, { avatar: string | null }> };
+    return cellsToTerritory(viejo.cells ?? [], viejo.owners);
   }
 
   /** Listado paginado de todas las carreras del usuario. Usado por la pantalla
@@ -608,7 +604,7 @@ interface Friend {
 }
 
 export const api = new ApiService();
-export type { LoginResponse, RankingEntry, Challenge, Achievement, RunRecord, UserStats, MyStats, RemoteZone, ZonePayload, FriendRequest, Friend, Cell, RemoteCell, CellRunPayload, RunSaveResult, TauntInbox, ProfileData, ProfileUpdate };
+export type { LoginResponse, RankingEntry, Challenge, Achievement, RunRecord, UserStats, MyStats, RemoteZone, ZonePayload, FriendRequest, Friend, Cell, RemoteCell, MapOwner, MapTerritory, CellRunPayload, RunSaveResult, TauntInbox, ProfileData, ProfileUpdate };
 
 const MOCK_RANKING: RankingEntry[] = [
   { position: 1, username: 'Laura R.', city: 'Barcelona', points: 28480, zones: 87 },

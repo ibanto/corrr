@@ -2,12 +2,21 @@
   "compilerOptions": {
     "target": "ES2020",
     "module": "commonjs",
-    "lib": ["ES2020", "DOM"],
+    "lib": [
+      "ES2020",
+      "DOM"
+    ],
     "strict": true,
     "skipLibCheck": true,
     "types": [],
     "rootDir": "..",
-    "outDir": "../node_modules/.cache/gps-check"
+    "outDir": "../node_modules/.cache/gps-check",
+    "esModuleInterop": true
   },
-  "files": ["gps-check.ts", "../src/tracking/runTracker.ts"]
+  "files": [
+    "gps-check.ts",
+    "map-check.ts",
+    "../src/tracking/runTracker.ts",
+    "../src/map/territory.ts"
+  ]
 }
