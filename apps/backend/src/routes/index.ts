@@ -2665,8 +2665,26 @@ app.get('/zones/nearby', { preHandler: requireAuth }, async (req: any, reply) =>
 // que con menos aciertos, y ahí sí compensaría Redis.
 const VIEWPORT_TILE = 128;              // celdas por lado (≈1,3 km)
 const VIEWPORT_TTL_MS = 30_000;
-const VIEWPORT_CACHE_MAX = 300;
-const viewportCache = new Map<string, { rows: any[]; expires: number }>();
+// Tope de celdas por respuesta. Estaba en 5.000 y se quedó corto: con la
+// cuña de KarolK (47.000 celdas) en el Eixample, la casilla de la Sagrada
+// Família tenía 25.294, y como salían ordenadas por cell_x, las que pasaban
+// del tope eran las del este — el mapa cortaba todo el territorio con una
+// recta vertical en la longitud 2,17298 (Ibanto, 21-sep: "la diagonal que
+// cruza los edificios"). Ahora el tope es mucho más alto y, si se alcanza,
+// se quedan fuera las celdas MÁS LEJANAS al centro, no las del este.
+const VIEWPORT_MAX_CELLS = 40_000;
+// Menos entradas que antes y en formato compacto: una casilla densa son
+// decenas de miles de celdas, y como objetos sueltos ocuparían varios MB
+// cada una.
+const VIEWPORT_CACHE_MAX = 120;
+type ViewportEntry = {
+  expires: number;
+  /** 4 enteros por celda: x, y, índice del dueño, claimed_at en segundos. */
+  datos: Int32Array;
+  n: number;
+  duenos: { id: string; name: string | null; warCry: string | null }[];
+};
+const viewportCache = new Map<string, ViewportEntry>();
 
 app.get('/cells/viewport', { preHandler: requireAuth }, async (req: any, reply) => {
   const { north, south, east, west } = req.query as any;
@@ -2686,23 +2704,44 @@ app.get('/cells/viewport', { preHandler: requireAuth }, async (req: any, reply) 
   const y1 = Math.ceil((neCell.y + 1) / VIEWPORT_TILE) * VIEWPORT_TILE;
   const cacheKey = `${x0}:${x1}:${y0}:${y1}`;
 
-  let rows: any[];
-  const hit = viewportCache.get(cacheKey);
-  if (hit && hit.expires > Date.now()) {
-    rows = hit.rows;
-  } else {
-    // The PK on (cell_x, cell_y) supports the range scan. LIMIT prevents catastrophe
-    // when the user zooms way out — clients should detect that and skip the call.
+  let entry = viewportCache.get(cacheKey);
+  if (!entry || entry.expires <= Date.now()) {
+    // Ordenadas por cercanía al centro de la casilla: si algún día se llega
+    // al tope, lo que se pierde son los bordes, repartido, y no una franja
+    // entera del mapa. El centro es el de la casilla (no el de quien pide)
+    // para que la respuesta cacheada sirva igual a todos.
+    const cx = Math.round((x0 + x1) / 2);
+    const cy = Math.round((y0 + y1) / 2);
     const q = await db.query(
-      `SELECT c.cell_x, c.cell_y, c.owner_id, c.claimed_at,
+      `SELECT c.cell_x, c.cell_y, c.owner_id,
+              EXTRACT(EPOCH FROM c.claimed_at)::int AS claimed_s,
               u.display_name AS owner_name, u.war_cry AS owner_war_cry
        FROM cells c
        JOIN users u ON u.id = c.owner_id
        WHERE c.cell_x BETWEEN $1 AND $2 AND c.cell_y BETWEEN $3 AND $4
-       LIMIT 5000`,
-      [x0, x1, y0, y1]
+       ORDER BY (c.cell_x - $5) * (c.cell_x - $5) + (c.cell_y - $6) * (c.cell_y - $6)
+       LIMIT $7`,
+      [x0, x1, y0, y1, cx, cy, VIEWPORT_MAX_CELLS]
     );
-    rows = q.rows;
+    if (q.rows.length >= VIEWPORT_MAX_CELLS) {
+      req.log.warn({ cacheKey, tope: VIEWPORT_MAX_CELLS }, '[viewport] casilla recortada por el tope de celdas');
+    }
+    const indice = new Map<string, number>();
+    const duenos: ViewportEntry['duenos'] = [];
+    const datos = new Int32Array(q.rows.length * 4);
+    q.rows.forEach((r: any, i: number) => {
+      let d = indice.get(r.owner_id);
+      if (d === undefined) {
+        d = duenos.length;
+        indice.set(r.owner_id, d);
+        duenos.push({ id: r.owner_id, name: r.owner_name, warCry: r.owner_war_cry });
+      }
+      datos[i * 4] = r.cell_x;
+      datos[i * 4 + 1] = r.cell_y;
+      datos[i * 4 + 2] = d;
+      datos[i * 4 + 3] = r.claimed_s ?? 0;
+    });
+    entry = { expires: Date.now() + VIEWPORT_TTL_MS, datos, n: q.rows.length, duenos };
     if (viewportCache.size >= VIEWPORT_CACHE_MAX) {
       const now = Date.now();
       for (const [k, v] of viewportCache) if (v.expires <= now) viewportCache.delete(k);
@@ -2711,7 +2750,7 @@ app.get('/cells/viewport', { preHandler: requireAuth }, async (req: any, reply) 
         if (oldest !== undefined) viewportCache.delete(oldest);
       }
     }
-    viewportCache.set(cacheKey, { rows, expires: Date.now() + VIEWPORT_TTL_MS });
+    viewportCache.set(cacheKey, entry);
   }
 
   // Las fotos van APARTE, una por dueño, no repetidas en cada celda.
@@ -2725,7 +2764,7 @@ app.get('/cells/viewport', { preHandler: requireAuth }, async (req: any, reply) 
   //
   // Va fuera del caché de celdas a propósito: el caché guarda muchos encuadres
   // y no conviene tener la misma foto duplicada en cada uno.
-  const ownerIds = [...new Set(rows.map(r => r.owner_id))];
+  const ownerIds = entry.duenos.map(d => d.id);
   let owners: Record<string, { avatar: string | null }> = {};
   if (ownerIds.length > 0) {
     const av = await db.query(
@@ -2751,10 +2790,23 @@ app.get('/cells/viewport', { preHandler: requireAuth }, async (req: any, reply) 
   }
 
   // "Es mía" se calcula aquí, no en SQL: así el caché sirve a todos.
-  return reply.send({
-    cells: rows.map(r => ({ ...r, is_mine: r.owner_id === req.userId })),
-    owners,
-  });
+  // Se rehace el formato de siempre (una fila por celda) para que las
+  // versiones de la app que ya están en los móviles lo sigan entendiendo.
+  const { datos, n: total, duenos } = entry;
+  const cells = new Array(total);
+  for (let i = 0; i < total; i++) {
+    const d = duenos[datos[i * 4 + 2]];
+    cells[i] = {
+      cell_x: datos[i * 4],
+      cell_y: datos[i * 4 + 1],
+      owner_id: d.id,
+      claimed_at: new Date(datos[i * 4 + 3] * 1000).toISOString(),
+      owner_name: d.name,
+      owner_war_cry: d.warCry,
+      is_mine: d.id === req.userId,
+    };
+  }
+  return reply.send({ cells, owners });
 });
 
 /** Invalida el caché del mapa alrededor de unas celdas recién conquistadas.
