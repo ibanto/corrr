@@ -238,12 +238,14 @@ function cellsFingerprint(cells: { x: number; y: number }[]): string {
  *  BLOQUE = 64 celdas ≈ 640 m, y el margen evita que el territorio aparezca de
  *  golpe justo al borde de la pantalla. */
 const VIEW_BLOCK = 64;
-const VIEW_MARGIN = 0.4;
-function visibleCellBox(region: { latitude: number; longitude: number; latitudeDelta: number; longitudeDelta: number }) {
-  const halfLat = (region.latitudeDelta / 2) * (1 + VIEW_MARGIN);
-  const halfLng = (region.longitudeDelta / 2) * (1 + VIEW_MARGIN);
-  const sw = coordToCell(region.latitude - halfLat, region.longitude - halfLng);
-  const ne = coordToCell(region.latitude + halfLat, region.longitude + halfLng);
+const VIEW_MARGIN = 0.6;
+/** Límites de lo que se ve: norte, sur, este y oeste en grados. */
+type VisibleBounds = { north: number; south: number; east: number; west: number };
+function visibleCellBox(b: VisibleBounds) {
+  const margenLat = (b.north - b.south) * VIEW_MARGIN / 2;
+  const margenLng = (b.east - b.west) * VIEW_MARGIN / 2;
+  const sw = coordToCell(b.south - margenLat, b.west - margenLng);
+  const ne = coordToCell(b.north + margenLat, b.east + margenLng);
   const bloque = (v: number, arriba: boolean) =>
     (arriba ? Math.ceil((v + 1) / VIEW_BLOCK) : Math.floor(v / VIEW_BLOCK)) * VIEW_BLOCK;
   return {
@@ -1679,6 +1681,9 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     setGpsWeak(false);
     setShowRunMap(false);
     runCameraSetRef.current = false;
+    // Sin recorte hasta que el mapa vuelva a moverse: el encuadre guardado es
+    // el de la cámara de la carrera y cortaría el territorio recién ganado.
+    setViewBox(null);
     setRunTime(0);
     runStartTimeRef.current = Date.now();
     pauseStartedAtRef.current = null;
@@ -1818,6 +1823,9 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     setGpsWeak(false);
     setShowRunMap(false);
     runCameraSetRef.current = false;
+    // Sin recorte hasta que el mapa vuelva a moverse: el encuadre guardado es
+    // el de la cámara de la carrera y cortaría el territorio recién ganado.
+    setViewBox(null);
     deactivateScreenAwake();
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
     if (locationRef.current) { locationRef.current.remove(); locationRef.current = null; }
@@ -1882,6 +1890,9 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     setGpsWeak(false);
     setShowRunMap(false);
     runCameraSetRef.current = false;
+    // Sin recorte hasta que el mapa vuelva a moverse: el encuadre guardado es
+    // el de la cámara de la carrera y cortaría el territorio recién ganado.
+    setViewBox(null);
     deactivateScreenAwake();
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
     // Limpiar también la ref del watcher para que si se reentra (bug futuro),
@@ -2616,10 +2627,32 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
           toolbarEnabled={false}
           onRegionChangeComplete={(region) => {
             currentDelta.current = { latDelta: region.latitudeDelta, lngDelta: region.longitudeDelta };
-            // Solo se recalcula si el encuadre sale del bloque actual: mover el
-            // mapa un poco no rehace ningún polígono.
-            const caja = visibleCellBox(region);
-            setViewBox(prev => (sameBox(prev, caja) ? prev : caja));
+            // Qué parte del territorio se calcula y dibuja. Se piden al mapa sus
+            // límites REALES: con la cámara girada e inclinada de la carrera,
+            // el centro y el zoom no dicen lo que se ve, y la caja salía más
+            // pequeña de la cuenta — el territorio se cortaba en una recta
+            // vertical por su borde (Ibanto, 21-sep, junto a la Sagrada
+            // Família). Durante la carrera no se recorta nada: se dibuja todo
+            // lo cargado. Solo se recalcula si el encuadre sale del bloque
+            // actual, así que mover el mapa un poco no rehace ningún polígono.
+            if (!isRunning) {
+              const porRegion: VisibleBounds = {
+                north: region.latitude + region.latitudeDelta / 2,
+                south: region.latitude - region.latitudeDelta / 2,
+                east: region.longitude + region.longitudeDelta / 2,
+                west: region.longitude - region.longitudeDelta / 2,
+              };
+              const aplicar = (b: VisibleBounds) => {
+                const caja = visibleCellBox(b);
+                setViewBox(prev => (sameBox(prev, caja) ? prev : caja));
+              };
+              mapRef.current?.getMapBoundaries()
+                .then(({ northEast, southWest }) => aplicar({
+                  north: northEast.latitude, south: southWest.latitude,
+                  east: northEast.longitude, west: southWest.longitude,
+                }))
+                .catch(() => aplicar(porRegion));
+            }
             // Comprobar si está demasiado lejos para mostrar zonas
             // El aviso tiene que usar EL MISMO umbral que decide borrar las
             // celdas. Usaba el de las zonas (0.15) mientras el borrado usa el
