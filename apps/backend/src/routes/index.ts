@@ -11,6 +11,7 @@ import { SignJWT, jwtVerify } from 'jose';
 import { Resend } from 'resend';
 import { randomBytes } from 'crypto';
 import { SUPABASE_ROOT_CA } from '../db/supabase-ca.js';
+import { agruparEnTiras, Dueno } from '../services/tiras.js';
 
 /**
  * Genera un token criptográficamente seguro para email verification / reset
@@ -2686,6 +2687,71 @@ type ViewportEntry = {
 };
 const viewportCache = new Map<string, ViewportEntry>();
 
+// ── Formato "tiras" (app 1.11.10+) ───────────────────────────────────────────
+// En vez de una fila por celda, una fila por TIRA: celdas seguidas de un mismo
+// dueño en una misma fila del mapa ("de x0 a x1 en la fila y, todo de
+// Ibanto"). La casilla de la Sagrada Família son 25.294 celdas y 1.072 tiras.
+// Con eso no hace falta ningún tope: aunque una zona se llene entera, la
+// respuesta sigue siendo pequeña. Era el tope lo que cortaba el mapa con una
+// recta vertical (21-sep).
+//
+// El formato viejo se mantiene para las apps ya instaladas.
+type StripsEntry = {
+  expires: number;
+  /** 4 enteros por tira: índice del dueño, y, x0, x1. */
+  tiras: Int32Array;
+  n: number;
+  duenos: Dueno[];
+};
+const stripsCache = new Map<string, StripsEntry>();
+// Red de seguridad para la memoria del servidor, no un límite de uso: hoy hay
+// 95.000 celdas en TODA España (21-sep-2026). Si algún día una sola pantalla
+// llega a esto, avisa en el registro y hay que repensarlo (bajar el zoom
+// máximo con territorio, o tiras precalculadas en la base de datos).
+const STRIPS_MAX_CELLS = 400_000;
+
+/** Foto (miniatura) de cada dueño, una vez por dueño y no por celda. */
+async function ownerAvatars(ownerIds: string[], log: any): Promise<Record<string, { avatar: string | null }>> {
+  const owners: Record<string, { avatar: string | null }> = {};
+  if (ownerIds.length === 0) return owners;
+  const av = await db.query(
+    `SELECT id, avatar_thumb, avatar_url FROM users WHERE id = ANY($1::uuid[]) AND avatar_url IS NOT NULL`,
+    [ownerIds],
+  );
+  for (const o of av.rows) {
+    let thumb: string | null = o.avatar_thumb;
+    if (!thumb) {
+      // Primera vez que se ve a este corredor desde el cambio: se genera la
+      // miniatura y se guarda, así solo pasa una vez por usuario. Si la foto
+      // no se puede leer, se manda la original (como antes) para no dejar a
+      // nadie sin foto por un fallo nuestro.
+      thumb = await makeAvatarThumb(o.avatar_url);
+      if (thumb) {
+        await db.query(`UPDATE users SET avatar_thumb = $1 WHERE id = $2`, [thumb, o.id]);
+      } else {
+        log.warn({ userId: o.id }, 'no se pudo hacer la miniatura del avatar');
+      }
+    }
+    owners[o.id] = { avatar: thumb ?? o.avatar_url };
+  }
+  return owners;
+}
+
+async function loadStrips(x0: number, x1: number, y0: number, y1: number, log: any): Promise<StripsEntry> {
+  const q = await db.query(
+    `SELECT c.cell_x, c.cell_y, c.owner_id, u.display_name AS owner_name, u.war_cry AS owner_war_cry
+       FROM cells c
+       JOIN users u ON u.id = c.owner_id
+      WHERE c.cell_x BETWEEN $1 AND $2 AND c.cell_y BETWEEN $3 AND $4
+      LIMIT $5`,
+    [x0, x1, y0, y1, STRIPS_MAX_CELLS],
+  );
+  if (q.rows.length >= STRIPS_MAX_CELLS) {
+    log.warn({ x0, x1, y0, y1 }, '[viewport] casilla con más celdas de las esperables');
+  }
+  return { expires: Date.now() + VIEWPORT_TTL_MS, ...agruparEnTiras(q.rows) };
+}
+
 app.get('/cells/viewport', { preHandler: requireAuth }, async (req: any, reply) => {
   const { north, south, east, west } = req.query as any;
   const n = parseFloat(north), s = parseFloat(south);
@@ -2703,6 +2769,30 @@ app.get('/cells/viewport', { preHandler: requireAuth }, async (req: any, reply) 
   const y0 = Math.floor(swCell.y / VIEWPORT_TILE) * VIEWPORT_TILE;
   const y1 = Math.ceil((neCell.y + 1) / VIEWPORT_TILE) * VIEWPORT_TILE;
   const cacheKey = `${x0}:${x1}:${y0}:${y1}`;
+
+  if (String(req.query?.formato ?? '') === 'tiras') {
+    let st = stripsCache.get(cacheKey);
+    if (!st || st.expires <= Date.now()) {
+      st = await loadStrips(x0, x1, y0, y1, req.log);
+      if (stripsCache.size >= VIEWPORT_CACHE_MAX) {
+        const now = Date.now();
+        for (const [k, v] of stripsCache) if (v.expires <= now) stripsCache.delete(k);
+        if (stripsCache.size >= VIEWPORT_CACHE_MAX) {
+          const oldest = stripsCache.keys().next().value;
+          if (oldest !== undefined) stripsCache.delete(oldest);
+        }
+      }
+      stripsCache.set(cacheKey, st);
+    }
+    const avatares = await ownerAvatars(st.duenos.map(d => d.id), req.log);
+    return reply.send({
+      formato: 'tiras',
+      duenos: st.duenos.map(d => ({ id: d.id, name: d.name, warCry: d.warCry, mine: d.id === req.userId })),
+      // Plano: dueño, y, x0, x1, dueño, y, x0, x1…
+      tiras: Array.from(st.tiras),
+      owners: avatares,
+    });
+  }
 
   let entry = viewportCache.get(cacheKey);
   if (!entry || entry.expires <= Date.now()) {
@@ -2764,30 +2854,7 @@ app.get('/cells/viewport', { preHandler: requireAuth }, async (req: any, reply) 
   //
   // Va fuera del caché de celdas a propósito: el caché guarda muchos encuadres
   // y no conviene tener la misma foto duplicada en cada uno.
-  const ownerIds = entry.duenos.map(d => d.id);
-  let owners: Record<string, { avatar: string | null }> = {};
-  if (ownerIds.length > 0) {
-    const av = await db.query(
-      `SELECT id, avatar_thumb, avatar_url FROM users WHERE id = ANY($1::uuid[]) AND avatar_url IS NOT NULL`,
-      [ownerIds],
-    );
-    for (const o of av.rows) {
-      let thumb: string | null = o.avatar_thumb;
-      if (!thumb) {
-        // Primera vez que se ve a este corredor desde el cambio: se genera la
-        // miniatura y se guarda, así solo pasa una vez por usuario. Si la foto
-        // no se puede leer, se manda la original (como antes) para no dejar a
-        // nadie sin foto por un fallo nuestro.
-        thumb = await makeAvatarThumb(o.avatar_url);
-        if (thumb) {
-          await db.query(`UPDATE users SET avatar_thumb = $1 WHERE id = $2`, [thumb, o.id]);
-        } else {
-          req.log.warn({ userId: o.id }, 'no se pudo hacer la miniatura del avatar');
-        }
-      }
-      owners[o.id] = { avatar: thumb ?? o.avatar_url };
-    }
-  }
+  const owners = await ownerAvatars(entry.duenos.map(d => d.id), req.log);
 
   // "Es mía" se calcula aquí, no en SQL: así el caché sirve a todos.
   // Se rehace el formato de siempre (una fila por celda) para que las
@@ -2814,15 +2881,15 @@ app.get('/cells/viewport', { preHandler: requireAuth }, async (req: any, reply) 
  *  anterior hasta 30 segundos, que en un juego de robos se nota. */
 function invalidateViewportCache(cells: { x: number; y: number }[]) {
   if (cells.length === 0) return;
-  const tiles = new Set<string>();
-  for (const c of cells) {
-    tiles.add(`${Math.floor(c.x / VIEWPORT_TILE)}:${Math.floor(c.y / VIEWPORT_TILE)}`);
-  }
-  for (const key of [...viewportCache.keys()]) {
-    const [x0, , y0] = key.split(':').map(Number);
-    if (tiles.has(`${Math.floor(x0 / VIEWPORT_TILE)}:${Math.floor(y0 / VIEWPORT_TILE)}`)) {
-      viewportCache.delete(key);
-    }
+  // Cada entrada cubre un rectángulo de varias casillas (x0..x1, y0..y1). Antes
+  // solo se miraba la casilla de la esquina, y un robo en otra parte del
+  // rectángulo no lo borraba.
+  const toca = (key: string) => {
+    const [x0, x1, y0, y1] = key.split(':').map(Number);
+    return cells.some(c => c.x >= x0 && c.x <= x1 && c.y >= y0 && c.y <= y1);
+  };
+  for (const cache of [viewportCache, stripsCache] as Map<string, unknown>[]) {
+    for (const key of [...cache.keys()]) if (toca(key)) cache.delete(key);
   }
 }
 
