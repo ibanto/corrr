@@ -9,9 +9,12 @@ import * as dotenv from 'dotenv';
 import { hash, verify } from 'argon2';
 import { SignJWT, jwtVerify } from 'jose';
 import { Resend } from 'resend';
-import { randomBytes } from 'crypto';
+import { randomBytes, createHmac, timingSafeEqual } from 'crypto';
 import { SUPABASE_ROOT_CA } from '../db/supabase-ca.js';
 import { agruparEnTiras, Dueno } from '../services/tiras.js';
+import {
+  CAMPANA_REACTIVACION, ASUNTO_REACTIVACION, htmlReactivacion, textoReactivacion,
+} from '../services/emailReactivacion.js';
 
 /**
  * Genera un token criptográficamente seguro para email verification / reset
@@ -350,6 +353,20 @@ async function initDB() {
   // de minimización). Nulo en las cuentas anteriores a esta comprobación.
   await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS age_confirmed_at TIMESTAMPTZ`).catch(() => {});
   await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS sessions_valid_from TIMESTAMPTZ`).catch(() => {});
+  // Cuándo pidió el usuario no recibir más emails sobre CORRR (enlace de baja).
+  // Nulo = los recibe. No afecta a los de verificación ni de contraseña.
+  await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS email_baja_at TIMESTAMPTZ`).catch(() => {});
+  // Qué email de campaña se ha mandado a quién. La clave primaria impide
+  // mandar dos veces el mismo a la misma persona aunque se lance dos veces.
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS email_envios (
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      campana TEXT NOT NULL,
+      enviado_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (user_id, campana)
+    )
+  `).catch(() => {});
+  await db.query(`ALTER TABLE email_envios ENABLE ROW LEVEL SECURITY`).catch(() => {});
   // Motivo por el que una carrera quedó marcada como geométricamente inusual.
   // Nulo en las normales. Se guarda en vez de rechazar la carrera: ver el
   // bloque de anti-trampas en POST /runs.
@@ -907,10 +924,11 @@ app.get('/users/me/export', {
   config: { rateLimit: { max: 5, timeWindow: '1 hour' } },
 }, async (req: any, reply) => {
   const uid = req.userId;
-  const [perfil, stats, carreras, celdas, mensajes, amigos, logros] = await Promise.all([
+  const [perfil, stats, carreras, celdas, mensajes, amigos, logros, emails] = await Promise.all([
     db.query(`SELECT id, email, display_name, city, first_name, surname, war_cry,
                      shoe_brand, shoe_brand_other, birth_year, gender, usual_distance,
-                     weekly_frequency, email_verified, strava_athlete_id, created_at
+                     weekly_frequency, email_verified, strava_athlete_id, created_at,
+                     email_baja_at
               FROM users WHERE id = $1`, [uid]),
     db.query('SELECT * FROM user_stats WHERE user_id = $1', [uid]),
     db.query(`SELECT id, distance_km, duration_secs, points, zones_count, created_at
@@ -922,6 +940,8 @@ app.get('/users/me/export', {
     db.query(`SELECT id, sender_id, receiver_id, status, created_at
               FROM friendships WHERE sender_id = $1 OR receiver_id = $1`, [uid]),
     db.query('SELECT * FROM user_achievements WHERE user_id = $1', [uid]).catch(() => ({ rows: [] })),
+    db.query('SELECT campana, enviado_at FROM email_envios WHERE user_id = $1 ORDER BY enviado_at', [uid])
+      .catch(() => ({ rows: [] })),
   ]);
 
   reply.header('Content-Disposition', `attachment; filename="corrr-mis-datos.json"`);
@@ -935,6 +955,7 @@ app.get('/users/me/export', {
     mensajes: mensajes.rows,
     amistades: amigos.rows,
     logros: logros.rows,
+    emailsSobreCorrr: emails.rows,
   });
 });
 
@@ -3801,6 +3822,248 @@ app.get('/app/version', async (req: any, reply) => {
       ? (IOS_UPDATE_URL ? { updateUrl: IOS_UPDATE_URL } : {})
       : { updateUrl: ANDROID_UPDATE_URL }),
   });
+});
+
+// ── Emails sobre CORRR ───────────────────────────────────────────────────────
+// De momento uno solo: "Una vuelta basta", para quien se registró y no ha
+// salido nunca. Nada se envía solo: se lanza a mano desde
+// /admin/email/reactivacion, primero en prueba y luego por tandas.
+
+/** Margen antes de escribir a un recién registrado: al que se dio de alta
+ *  ayer no hace falta recordarle nada. */
+const DIAS_ANTES_DE_RECORDAR = 7;
+
+/** El plan gratis de Resend manda 100 al día, y cuentan también las
+ *  verificaciones y los cambios de contraseña: se deja hueco para esos. */
+const MAX_ENVIOS_POR_TANDA = 80;
+
+/** Enlace de baja firmado: no hay que guardar tokens y nadie puede dar de baja
+ *  a otro cambiando el id de la URL. Va firmado con el secreto de los JWT; si
+ *  algún día se rota, los enlaces viejos dejan de valer y la página remite a
+ *  hola@corrr.es, que también sirve para pedir la baja. */
+function firmaBaja(userId: string): string {
+  return createHmac('sha256', process.env.JWT_ACCESS_SECRET!)
+    .update(`baja-email:${userId}`)
+    .digest('base64url')
+    .slice(0, 32);
+}
+
+function firmaBajaValida(userId: string, firma: string): boolean {
+  const esperada = Buffer.from(firmaBaja(userId));
+  const recibida = Buffer.from(firma);
+  return esperada.length === recibida.length && timingSafeEqual(esperada, recibida);
+}
+
+function urlBajaEmail(userId: string): string {
+  return `${RAILWAY_URL}/email/baja?u=${encodeURIComponent(userId)}&t=${firmaBaja(userId)}`;
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** Id de los envíos de prueba: su enlace de baja enseña la página de
+ *  confirmación sin tocar la base de datos. */
+const USUARIO_PRUEBA = 'prueba';
+
+/** Quién recibe "Una vuelta basta". Un solo sitio para el recuento y el envío.
+ *  - Email verificado, o cuenta de Google (Google ya lo verificó y
+ *    /auth/google no marca email_verified). Sin verificar puede ser una
+ *    dirección mal escrita, de otra persona.
+ *  - Sin ninguna carrera, de ningún origen (app, Strava o Apple Watch).
+ *  - Fuera las cuentas de revisión de Apple (@corrr.es) y de Google (+googletest). */
+const SQL_PENDIENTES_REACTIVACION = `
+      (u.email_verified OR u.google_id IS NOT NULL)
+      AND u.email_baja_at IS NULL
+      AND u.created_at < NOW() - make_interval(days => ${DIAS_ANTES_DE_RECORDAR})
+      AND u.email NOT ILIKE '%@corrr.es'
+      AND u.email NOT ILIKE '%+googletest@%'
+      AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.user_id = u.id)
+      AND NOT EXISTS (SELECT 1 FROM email_envios e WHERE e.user_id = u.id AND e.campana = $1)`;
+
+function enviarReactivacion(para: string, nombre: string, urlBaja: string, asunto = ASUNTO_REACTIVACION) {
+  const datos = { nombre, urlAbrir: `${RAILWAY_URL}/app/abrir`, urlBaja };
+  return resend.emails.send({
+    from: 'CORRR <hola@corrr.es>',
+    to: para,
+    subject: asunto,
+    html: htmlReactivacion(datos),
+    text: textoReactivacion(datos),
+    // Gmail y Apple Mail enseñan un botón de baja con esto. El POST de un clic
+    // (RFC 8058) llega a /email/baja; el mailto es la alternativa.
+    headers: {
+      'List-Unsubscribe': `<${urlBaja}>, <mailto:hola@corrr.es?subject=Baja>`,
+      'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+    },
+  });
+}
+
+/** Botón de los emails: lleva a la ficha de CORRR en la tienda del móvil, que
+ *  con la app instalada ofrece "Abrir". Un enlace corrr:// no sirve aquí:
+ *  Gmail y la mayoría de clientes solo abren enlaces web. */
+app.get('/app/abrir', async (req: any, reply) => {
+  const ua = String(req.headers['user-agent'] ?? '');
+  const destino = /iPhone|iPad|iPod/i.test(ua) ? IOS_UPDATE_URL
+    : /Android/i.test(ua) ? ANDROID_UPDATE_URL
+    : 'https://corrr.es';
+  return reply.redirect(destino);
+});
+
+function paginaBaja(titulo: string, texto: string): string {
+  return `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>CORRR · Emails</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{background:#000;color:#fff;font-family:-apple-system,'Segoe UI',Roboto,sans-serif;
+         display:flex;flex-direction:column;align-items:center;justify-content:center;
+         min-height:100vh;padding:32px 16px;text-align:center}
+    img{width:160px;margin-bottom:28px}
+    h1{font-size:24px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px;color:#FF5500}
+    p{font-size:15px;color:#aaa;line-height:1.6;max-width:420px}
+    a{color:#fff}
+  </style></head><body>
+  <img src="https://ibanto.github.io/corrr/logo.png" alt="CORRR">
+  <h1>${titulo}</h1>
+  <p>${texto}</p>
+  </body></html>`;
+}
+
+async function darDeBajaEmail(req: any): Promise<boolean> {
+  const id = String(req.query?.u ?? '');
+  const firma = String(req.query?.t ?? '');
+  if (id !== USUARIO_PRUEBA && !UUID_RE.test(id)) return false;
+  if (!firmaBajaValida(id, firma)) return false;
+  if (id === USUARIO_PRUEBA) return true;
+  // COALESCE: si ya estaba de baja se conserva la fecha en que la pidió.
+  await db.query('UPDATE users SET email_baja_at = COALESCE(email_baja_at, NOW()) WHERE id = $1', [id]);
+  return true;
+}
+
+app.register(async (scope) => {
+  // El botón de baja de Gmail y Apple Mail hace un POST a esta URL con el
+  // cuerpo "List-Unsubscribe=One-Click" en form-urlencoded, que Fastify no
+  // sabe leer y rechazaría con un 415. Solo cuentan u y t de la URL, así que
+  // en estas dos rutas se acepta cualquier cuerpo y se descarta.
+  scope.addContentTypeParser('*', { parseAs: 'string' }, (_req, _body, done) => done(null, undefined));
+
+  // Un solo clic, sin botón de confirmar: la ley pide un procedimiento
+  // sencillo. Si un antivirus de correo abre el enlace por su cuenta, lo peor
+  // que pasa es que esa persona deja de recibir estos emails.
+  scope.get('/email/baja', async (req: any, reply) => {
+    try {
+      const ok = await darDeBajaEmail(req);
+      reply.type('text/html; charset=utf-8');
+      return ok
+        ? paginaBaja('Hecho',
+            'No te mandaremos más emails sobre CORRR. Los de tu cuenta (verificación y contraseña) te seguirán llegando. '
+            + 'Si ha sido sin querer, escríbenos a <a href="mailto:hola@corrr.es">hola@corrr.es</a>.')
+        : paginaBaja('Enlace no válido',
+            'No hemos podido darte de baja con este enlace. Escríbenos a '
+            + '<a href="mailto:hola@corrr.es?subject=Baja">hola@corrr.es</a> y lo hacemos a mano.');
+    } catch (err) {
+      console.error('[Email] Error en la baja:', err);
+      return reply.status(500).type('text/html; charset=utf-8').send(paginaBaja('Algo ha fallado',
+        'Vuelve a intentarlo en un rato o escríbenos a <a href="mailto:hola@corrr.es?subject=Baja">hola@corrr.es</a>.'));
+    }
+  });
+
+  scope.post('/email/baja', async (req: any, reply) => {
+    try {
+      const ok = await darDeBajaEmail(req);
+      return reply.status(ok ? 200 : 400).send({ ok });
+    } catch (err) {
+      console.error('[Email] Error en la baja (un clic):', err);
+      return reply.status(500).send({ ok: false });
+    }
+  });
+});
+
+/** GET: cuántos lo recibirían, sin enviar nada. */
+app.get('/admin/email/reactivacion', { preHandler: requireAdmin }, async (_req: any, reply) => {
+  const { rows } = await db.query(`
+    SELECT
+      COUNT(*)::int AS usuarios,
+      COUNT(*) FILTER (WHERE NOT EXISTS (SELECT 1 FROM runs r WHERE r.user_id = u.id))::int AS sin_carreras,
+      COUNT(*) FILTER (WHERE NOT EXISTS (SELECT 1 FROM runs r WHERE r.user_id = u.id)
+                         AND NOT (u.email_verified OR u.google_id IS NOT NULL))::int AS sin_carreras_sin_verificar,
+      COUNT(*) FILTER (WHERE NOT EXISTS (SELECT 1 FROM runs r WHERE r.user_id = u.id)
+                         AND u.created_at >= NOW() - make_interval(days => ${DIAS_ANTES_DE_RECORDAR}))::int AS sin_carreras_recientes,
+      COUNT(*) FILTER (WHERE u.email_baja_at IS NOT NULL)::int AS de_baja,
+      COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM email_envios e
+                                     WHERE e.user_id = u.id AND e.campana = $1))::int AS ya_enviados,
+      COUNT(*) FILTER (WHERE ${SQL_PENDIENTES_REACTIVACION})::int AS pendientes
+    FROM users u`, [CAMPANA_REACTIVACION]);
+  return reply.send({
+    campana: CAMPANA_REACTIVACION,
+    asunto: ASUNTO_REACTIVACION,
+    diasDeMargen: DIAS_ANTES_DE_RECORDAR,
+    maxPorTanda: MAX_ENVIOS_POR_TANDA,
+    ...rows[0],
+  });
+});
+
+/** POST { modo: 'prueba', para: 'tu@email' } → un envío de prueba, sin apuntar nada.
+ *  POST { modo: 'enviar', max?: 80 }        → una tanda a los pendientes. */
+app.post('/admin/email/reactivacion', { preHandler: requireAdmin }, async (req: any, reply) => {
+  const { modo, para, max } = req.body ?? {};
+
+  if (modo === 'prueba') {
+    if (typeof para !== 'string' || !para.includes('@')) return reply.status(400).send({ error: 'Falta "para"' });
+    const { rows } = await db.query('SELECT display_name FROM users WHERE email = $1', [para]);
+    const { data, error } = await enviarReactivacion(
+      para, rows[0]?.display_name ?? 'Corredor', urlBajaEmail(USUARIO_PRUEBA), `[PRUEBA] ${ASUNTO_REACTIVACION}`,
+    );
+    if (error) return reply.status(502).send({ error: error.message });
+    return reply.send({ ok: true, id: data?.id });
+  }
+
+  if (modo !== 'enviar') return reply.status(400).send({ error: 'modo tiene que ser "prueba" o "enviar"' });
+
+  const limite = Math.min(Math.max(1, Number(max) || MAX_ENVIOS_POR_TANDA), MAX_ENVIOS_POR_TANDA);
+  const { rows } = await db.query(
+    `SELECT u.id, u.email, u.display_name FROM users u
+      WHERE ${SQL_PENDIENTES_REACTIVACION}
+      ORDER BY u.created_at LIMIT $2`,
+    [CAMPANA_REACTIVACION, limite],
+  );
+
+  let enviados = 0;
+  let fallosSeguidos = 0;
+  const fallos: { userId: string; error: string }[] = [];
+  for (const u of rows) {
+    // Se apunta ANTES de enviar: si se lanzan dos tandas a la vez, la segunda
+    // choca con la clave primaria y no manda el mismo email dos veces.
+    const hueco = await db.query(
+      `INSERT INTO email_envios (user_id, campana) VALUES ($1, $2) ON CONFLICT DO NOTHING RETURNING user_id`,
+      [u.id, CAMPANA_REACTIVACION],
+    );
+    if (!hueco.rowCount) continue;
+
+    let error: string | null = null;
+    try {
+      const r = await enviarReactivacion(u.email, u.display_name ?? 'Corredor', urlBajaEmail(u.id));
+      if (r.error) error = r.error.message;
+    } catch (err) {
+      error = String(err);
+    }
+
+    if (error) {
+      // No salió: se quita la marca para que entre en la próxima tanda.
+      await db.query('DELETE FROM email_envios WHERE user_id = $1 AND campana = $2', [u.id, CAMPANA_REACTIVACION]);
+      fallos.push({ userId: u.id, error });
+      // Tres seguidos suele ser la cuota del día o la clave: el resto fallaría igual.
+      if (++fallosSeguidos >= 3) break;
+    } else {
+      enviados++;
+      fallosSeguidos = 0;
+    }
+    // Resend admite unas 2 peticiones por segundo.
+    await new Promise((r) => setTimeout(r, 600));
+  }
+
+  const quedan = await db.query(
+    `SELECT COUNT(*)::int AS n FROM users u WHERE ${SQL_PENDIENTES_REACTIVACION}`, [CAMPANA_REACTIVACION],
+  );
+  return reply.send({ enviados, fallos, quedan: quedan.rows[0].n });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
