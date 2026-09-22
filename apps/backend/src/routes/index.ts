@@ -3829,9 +3829,15 @@ app.get('/app/version', async (req: any, reply) => {
 // salido poco o nada. Nada se envía solo: se lanza a mano desde
 // /admin/email/reactivacion, primero en prueba y luego por tandas.
 
-/** Margen antes de escribir a un recién registrado: al que se dio de alta
- *  ayer no hace falta recordarle nada. */
-const DIAS_ANTES_DE_RECORDAR = 7;
+/** Días de calendario (hora de España) que tienen que pasar desde el alta
+ *  antes de escribirle: al que se registró ayer no hace falta recordarle
+ *  nada. Con 4, el día 22 entran los registrados hasta el 18 incluido. */
+const DIAS_DESDE_EL_ALTA = 4;
+const SQL_ALTA_CON_MARGEN = `(u.created_at AT TIME ZONE 'Europe/Madrid')::date
+        <= (NOW() AT TIME ZONE 'Europe/Madrid')::date - ${DIAS_DESDE_EL_ALTA}`;
+
+/** A quien ha guardado una carrera en estos últimos días no se le empuja. */
+const DIAS_SIN_CORRER = 7;
 
 /** El plan gratis de Resend manda 100 al día, y cuentan también las
  *  verificaciones y los cambios de contraseña: se deja hueco para esos. */
@@ -3875,18 +3881,19 @@ const FROM_REACTIVACION = `users u LEFT JOIN user_stats s ON s.user_id = u.id`;
  *    /auth/google no marca email_verified). Sin verificar puede ser una
  *    dirección mal escrita, de otra persona.
  *  - 100 puntos o menos, contando carreras de cualquier origen.
+ *  - Registrado hace al menos DIAS_DESDE_EL_ALTA días de calendario.
  *  - Nada de carreras en la última semana: a quien acaba de salir no hace
  *    falta empujarle.
  *  - Fuera las cuentas de revisión de Apple (@corrr.es) y de Google (+googletest). */
 const SQL_PENDIENTES_REACTIVACION = `
       (u.email_verified OR u.google_id IS NOT NULL)
       AND u.email_baja_at IS NULL
-      AND u.created_at < NOW() - make_interval(days => ${DIAS_ANTES_DE_RECORDAR})
+      AND ${SQL_ALTA_CON_MARGEN}
       AND u.email NOT ILIKE '%@corrr.es'
       AND u.email NOT ILIKE '%+googletest@%'
       AND COALESCE(s.total_points, 0) <= ${MAX_PUNTOS_REACTIVACION}
       AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.user_id = u.id
-                        AND r.created_at >= NOW() - make_interval(days => ${DIAS_ANTES_DE_RECORDAR}))
+                        AND r.created_at >= NOW() - make_interval(days => ${DIAS_SIN_CORRER}))
       AND NOT EXISTS (SELECT 1 FROM email_envios e WHERE e.user_id = u.id AND e.campana = $1)`;
 
 /** Qué versión del email le toca: 'poco' si tiene alguna carrera, 'nada' si no. */
@@ -4003,9 +4010,9 @@ app.get('/admin/email/reactivacion', { preHandler: requireAdmin }, async (_req: 
       COUNT(*) FILTER (WHERE ${pocos})::int AS con_pocos_puntos,
       COUNT(*) FILTER (WHERE ${pocos} AND NOT (u.email_verified OR u.google_id IS NOT NULL))::int AS fuera_sin_verificar,
       COUNT(*) FILTER (WHERE ${pocos}
-                         AND u.created_at >= NOW() - make_interval(days => ${DIAS_ANTES_DE_RECORDAR}))::int AS fuera_alta_reciente,
+                         AND NOT (${SQL_ALTA_CON_MARGEN}))::int AS fuera_alta_reciente,
       COUNT(*) FILTER (WHERE ${pocos} AND EXISTS (SELECT 1 FROM runs r WHERE r.user_id = u.id
-                         AND r.created_at >= NOW() - make_interval(days => ${DIAS_ANTES_DE_RECORDAR})))::int AS fuera_salio_esta_semana,
+                         AND r.created_at >= NOW() - make_interval(days => ${DIAS_SIN_CORRER})))::int AS fuera_salio_esta_semana,
       COUNT(*) FILTER (WHERE u.email_baja_at IS NOT NULL)::int AS de_baja,
       COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM email_envios e
                                      WHERE e.user_id = u.id AND e.campana = $1))::int AS ya_enviados,
@@ -4025,7 +4032,8 @@ app.get('/admin/email/reactivacion', { preHandler: requireAdmin }, async (_req: 
     campana: CAMPANA_REACTIVACION,
     asunto: ASUNTO_REACTIVACION,
     maxPuntos: MAX_PUNTOS_REACTIVACION,
-    diasDeMargen: DIAS_ANTES_DE_RECORDAR,
+    diasDesdeElAlta: DIAS_DESDE_EL_ALTA,
+    diasSinCorrer: DIAS_SIN_CORRER,
     maxPorTanda: MAX_ENVIOS_POR_TANDA,
     ...rows[0],
   });
