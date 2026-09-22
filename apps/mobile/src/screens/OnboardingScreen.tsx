@@ -643,6 +643,22 @@ export default function OnboardingScreen({ onAuthenticated, pendingStravaSignup,
             </TouchableOpacity>
           )}
 
+          {/* La ley (LSSI art. 21.2) deja escribir a los propios usuarios sobre
+              CORRR sin pedirles permiso aparte, pero solo si se les avisa y se
+              les deja negarse en el momento de darles de alta. Este es ese aviso;
+              la baja va en cada email. */}
+          {(mode === 'register' || mode === 'strava-signup') && (
+            <Text style={styles.emailNotice}>
+              Puede que te mandemos algún email sobre CORRR. Puedes darte de baja con un clic desde el propio email.{' '}
+              <Text
+                style={styles.emailNoticeLink}
+                onPress={() => Linking.openURL('https://ibanto.github.io/corrr/privacy.html')}
+              >
+                Política de privacidad
+              </Text>
+            </Text>
+          )}
+
           {/* Botón "Connect with Strava" — alternativa de auth. Solo visible en
               login y register normales. En strava-signup ya estamos dentro del
               flujo, no tiene sentido mostrarlo. Oculto mientras STRAVA_ENABLED
@@ -792,6 +808,8 @@ const styles = StyleSheet.create({
   checkboxOn: { backgroundColor: colors.orange, borderColor: colors.orange },
   ageText: { flex: 1, fontSize: 14, color: colors.textSecondary, lineHeight: 19 },
   ageStrong: { color: colors.textPrimary, fontWeight: '700' },
+  emailNotice: { fontSize: 12, color: colors.textMuted, lineHeight: 17, textAlign: 'center' },
+  emailNoticeLink: { color: colors.textSecondary, textDecorationLine: 'underline' },
   input: {
     backgroundColor: colors.bgCard, borderWidth: 1, borderColor: colors.border,
     borderRadius: radius.md, paddingHorizontal: spacing.md, paddingVertical: 14,
