@@ -4010,7 +4010,16 @@ app.get('/admin/email/reactivacion', { preHandler: requireAdmin }, async (_req: 
       COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM email_envios e
                                      WHERE e.user_id = u.id AND e.campana = $1))::int AS ya_enviados,
       COUNT(*) FILTER (WHERE ${SQL_PENDIENTES_REACTIVACION} AND ${SQL_VARIANTE_REACTIVACION} = 'nada')::int AS pendientes_sin_carreras,
-      COUNT(*) FILTER (WHERE ${SQL_PENDIENTES_REACTIVACION} AND ${SQL_VARIANTE_REACTIVACION} = 'poco')::int AS pendientes_con_poco
+      COUNT(*) FILTER (WHERE ${SQL_PENDIENTES_REACTIVACION} AND ${SQL_VARIANTE_REACTIVACION} = 'poco')::int AS pendientes_con_poco,
+      -- Efecto del email: de los que lo recibieron, cuántos han guardado una
+      -- carrera después (de cualquier origen) y cuántos se han dado de baja.
+      (SELECT COUNT(*)::int FROM email_envios e
+        WHERE e.campana = $1
+          AND EXISTS (SELECT 1 FROM runs r WHERE r.user_id = e.user_id AND r.created_at > e.enviado_at)
+      ) AS enviados_que_han_salido,
+      (SELECT COUNT(*)::int FROM email_envios e JOIN users b ON b.id = e.user_id
+        WHERE e.campana = $1 AND b.email_baja_at IS NOT NULL
+      ) AS enviados_de_baja
     FROM ${FROM_REACTIVACION}`, [CAMPANA_REACTIVACION]);
   return reply.send({
     campana: CAMPANA_REACTIVACION,
