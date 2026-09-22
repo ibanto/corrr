@@ -1,6 +1,8 @@
 /**
- * Email "Una vuelta basta": para quien se registró y todavía no ha salido
- * ninguna vez (0 carreras de cualquier origen).
+ * Email "Una vuelta basta": para quien se registró y ha salido poco o nada
+ * (100 puntos o menos). Dos versiones que solo cambian el arranque: a quien no
+ * tiene ninguna carrera no se le puede decir que su territorio es pequeño, y a
+ * quien ya salió no se le puede decir que no tiene zona.
  *
  * Es una comunicación comercial según la LSSI aunque CORRR sea gratis, así
  * que va con lo que exige el art. 21.2 para escribir a los propios usuarios:
@@ -15,7 +17,28 @@
 
 export const CAMPANA_REACTIVACION = 'una-vuelta-basta';
 export const ASUNTO_REACTIVACION = 'Una vuelta basta';
-const PREHEADER = 'Te uniste a CORRR y tu primera zona sigue sin dueño.';
+
+/** 'nada': ninguna carrera. 'poco': alguna, pero 100 puntos o menos. */
+export type Variante = 'nada' | 'poco';
+
+const TEXTOS: Record<Variante, {
+  preheader: string; intro: string; circuito: string; misiones: string; boton: string;
+}> = {
+  nada: {
+    preheader: 'Te uniste a CORRR y tu primera zona sigue sin dueño.',
+    intro: 'Te uniste a CORRR pero todavía no has reclamado tu primera zona.',
+    circuito: 'CORRR solo necesita que salgas y cierres un circuito.',
+    misiones: '// PRIMERA ZONA: ELIGE TU MISIÓN',
+    boton: 'Reclama tu primera zona',
+  },
+  poco: {
+    preheader: 'Ya saliste con CORRR. Tu territorio todavía cabe en una calle.',
+    intro: 'Ya has salido con CORRR, pero tu territorio todavía es pequeño.',
+    circuito: 'Cierra un circuito y todo lo que queda dentro es tuyo.',
+    misiones: '// SIGUIENTE ZONA: ELIGE TU MISIÓN',
+    boton: 'Amplía tu territorio',
+  },
+};
 
 const HERO_URL = 'https://ibanto.github.io/corrr/email/una-vuelta-basta.jpg';
 export const PRIVACIDAD_URL = 'https://ibanto.github.io/corrr/privacy.html';
@@ -28,6 +51,7 @@ export type DatosEmail = {
   nombre: string;
   urlAbrir: string;
   urlBaja: string;
+  variante: Variante;
 };
 
 function esc(s: string): string {
@@ -44,8 +68,9 @@ function mision(num: string, texto: string): string {
   <tr><td colspan="2" style="height:6px;line-height:6px;font-size:6px;">&nbsp;</td></tr>`;
 }
 
-export function htmlReactivacion({ nombre, urlAbrir, urlBaja }: DatosEmail): string {
+export function htmlReactivacion({ nombre, urlAbrir, urlBaja, variante }: DatosEmail): string {
   const n = esc(nombre.toUpperCase());
+  const t = TEXTOS[variante];
   return `<!DOCTYPE html>
 <html lang="es" xmlns="http://www.w3.org/1999/xhtml">
 <head>
@@ -57,7 +82,7 @@ export function htmlReactivacion({ nombre, urlAbrir, urlBaja }: DatosEmail): str
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono&family=Oswald:wght@500;600&display=swap" rel="stylesheet">
 </head>
 <body style="margin:0;padding:0;background:#000000;" bgcolor="#000000">
-<div style="display:none;max-height:0;overflow:hidden;opacity:0;color:#000000;">${PREHEADER}${'&#847;&zwnj;&nbsp;'.repeat(40)}</div>
+<div style="display:none;max-height:0;overflow:hidden;opacity:0;color:#000000;">${t.preheader}${'&#847;&zwnj;&nbsp;'.repeat(40)}</div>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#000000" style="background:#000000;">
 <tr><td align="center">
 <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;">
@@ -79,7 +104,7 @@ export function htmlReactivacion({ nombre, urlAbrir, urlBaja }: DatosEmail): str
 
         <tr><td style="font-family:${CONDENSADA};font-weight:600;font-size:20px;line-height:26px;color:#FFFFFF;text-transform:uppercase;padding-bottom:16px;">
           Hola, ${n},<br>
-          Te uniste a CORRR pero todavía no has reclamado tu primera zona.
+          ${t.intro}
         </td></tr>
 
         <tr><td bgcolor="${NARANJA}" style="background:${NARANJA};padding:14px 16px;">
@@ -90,10 +115,10 @@ export function htmlReactivacion({ nombre, urlAbrir, urlBaja }: DatosEmail): str
         </td></tr>
 
         <tr><td style="font-family:${CONDENSADA};font-weight:600;font-size:20px;line-height:26px;color:#FFFFFF;text-transform:uppercase;padding-top:18px;">
-          CORRR solo necesita que salgas y cierres un circuito.
+          ${t.circuito}
         </td></tr>
 
-        <tr><td style="font-family:${MONO};font-size:11px;letter-spacing:1px;color:${NARANJA};padding-top:6px;">// PRIMERA ZONA: ELIGE TU MISIÓN</td></tr>
+        <tr><td style="font-family:${MONO};font-size:11px;letter-spacing:1px;color:${NARANJA};padding-top:6px;">${t.misiones}</td></tr>
         ${linea}
 
         <tr><td>
@@ -112,7 +137,7 @@ export function htmlReactivacion({ nombre, urlAbrir, urlBaja }: DatosEmail): str
         </td></tr>
 
         <tr><td bgcolor="${NARANJA}" align="center" style="background:${NARANJA};">
-          <a href="${urlAbrir}" style="display:block;padding:16px 12px;font-family:${CONDENSADA};font-weight:600;font-size:21px;line-height:26px;color:#000000;text-decoration:none;text-transform:uppercase;letter-spacing:0.5px;">Reclama tu primera zona&nbsp;&rarr;</a>
+          <a href="${urlAbrir}" style="display:block;padding:16px 12px;font-family:${CONDENSADA};font-weight:600;font-size:21px;line-height:26px;color:#000000;text-decoration:none;text-transform:uppercase;letter-spacing:0.5px;">${t.boton}&nbsp;&rarr;</a>
         </td></tr>
 
       </table>
@@ -142,21 +167,22 @@ export function htmlReactivacion({ nombre, urlAbrir, urlBaja }: DatosEmail): str
 
 /** Versión en texto plano: la leen los clientes sin HTML y los filtros de spam
  *  la tienen en cuenta (un email solo HTML puntúa peor). */
-export function textoReactivacion({ nombre, urlAbrir, urlBaja }: DatosEmail): string {
+export function textoReactivacion({ nombre, urlAbrir, urlBaja, variante }: DatosEmail): string {
+  const t = TEXTOS[variante];
   return `Hola, ${nombre}:
 
-Te uniste a CORRR pero todavía no has reclamado tu primera zona.
+${t.intro}
 
-Da igual que corras o que camines: CORRR solo necesita que salgas y cierres un circuito.
+Da igual que corras o que camines. ${t.circuito}
 
-Primera zona, elige tu misión:
+Elige tu misión:
 01 · Una vuelta a la manzana
 02 · Un paseo al parque y vuelta
 03 · 10 minutos caminando después de comer
 
 Nada de maratones. Solo salir. Cerrar el círculo. Te está esperando.
 
-Reclama tu primera zona: ${urlAbrir}
+${t.boton}: ${urlAbrir}
 
 CORRR Crew
 Corre. Conquista. Domina.

@@ -13,7 +13,7 @@ import { randomBytes, createHmac, timingSafeEqual } from 'crypto';
 import { SUPABASE_ROOT_CA } from '../db/supabase-ca.js';
 import { agruparEnTiras, Dueno } from '../services/tiras.js';
 import {
-  CAMPANA_REACTIVACION, ASUNTO_REACTIVACION, htmlReactivacion, textoReactivacion,
+  CAMPANA_REACTIVACION, ASUNTO_REACTIVACION, htmlReactivacion, textoReactivacion, Variante,
 } from '../services/emailReactivacion.js';
 
 /**
@@ -3825,8 +3825,8 @@ app.get('/app/version', async (req: any, reply) => {
 });
 
 // ── Emails sobre CORRR ───────────────────────────────────────────────────────
-// De momento uno solo: "Una vuelta basta", para quien se registró y no ha
-// salido nunca. Nada se envía solo: se lanza a mano desde
+// De momento uno solo: "Una vuelta basta", para quien se registró y ha
+// salido poco o nada. Nada se envía solo: se lanza a mano desde
 // /admin/email/reactivacion, primero en prueba y luego por tandas.
 
 /** Margen antes de escribir a un recién registrado: al que se dio de alta
@@ -3863,11 +3863,20 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
  *  confirmación sin tocar la base de datos. */
 const USUARIO_PRUEBA = 'prueba';
 
+/** Hasta cuántos puntos se considera que alguien ha salido "poco". A 10
+ *  puntos por km más las celdas, 100 son unos pocos km en total. Cuentan
+ *  todos los puntos, también los 50 de completar el perfil. */
+const MAX_PUNTOS_REACTIVACION = 100;
+
+const FROM_REACTIVACION = `users u LEFT JOIN user_stats s ON s.user_id = u.id`;
+
 /** Quién recibe "Una vuelta basta". Un solo sitio para el recuento y el envío.
  *  - Email verificado, o cuenta de Google (Google ya lo verificó y
  *    /auth/google no marca email_verified). Sin verificar puede ser una
  *    dirección mal escrita, de otra persona.
- *  - Sin ninguna carrera, de ningún origen (app, Strava o Apple Watch).
+ *  - 100 puntos o menos, contando carreras de cualquier origen.
+ *  - Nada de carreras en la última semana: a quien acaba de salir no hace
+ *    falta empujarle.
  *  - Fuera las cuentas de revisión de Apple (@corrr.es) y de Google (+googletest). */
 const SQL_PENDIENTES_REACTIVACION = `
       (u.email_verified OR u.google_id IS NOT NULL)
@@ -3875,11 +3884,19 @@ const SQL_PENDIENTES_REACTIVACION = `
       AND u.created_at < NOW() - make_interval(days => ${DIAS_ANTES_DE_RECORDAR})
       AND u.email NOT ILIKE '%@corrr.es'
       AND u.email NOT ILIKE '%+googletest@%'
-      AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.user_id = u.id)
+      AND COALESCE(s.total_points, 0) <= ${MAX_PUNTOS_REACTIVACION}
+      AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.user_id = u.id
+                        AND r.created_at >= NOW() - make_interval(days => ${DIAS_ANTES_DE_RECORDAR}))
       AND NOT EXISTS (SELECT 1 FROM email_envios e WHERE e.user_id = u.id AND e.campana = $1)`;
 
-function enviarReactivacion(para: string, nombre: string, urlBaja: string, asunto = ASUNTO_REACTIVACION) {
-  const datos = { nombre, urlAbrir: `${RAILWAY_URL}/app/abrir`, urlBaja };
+/** Qué versión del email le toca: 'poco' si tiene alguna carrera, 'nada' si no. */
+const SQL_VARIANTE_REACTIVACION =
+  `CASE WHEN EXISTS (SELECT 1 FROM runs r WHERE r.user_id = u.id) THEN 'poco' ELSE 'nada' END`;
+
+function enviarReactivacion(
+  para: string, nombre: string, urlBaja: string, variante: Variante, asunto = ASUNTO_REACTIVACION,
+) {
+  const datos = { nombre, urlAbrir: `${RAILWAY_URL}/app/abrir`, urlBaja, variante };
   return resend.emails.send({
     from: 'CORRR <hola@corrr.es>',
     to: para,
@@ -3979,38 +3996,43 @@ app.register(async (scope) => {
 
 /** GET: cuántos lo recibirían, sin enviar nada. */
 app.get('/admin/email/reactivacion', { preHandler: requireAdmin }, async (_req: any, reply) => {
+  const pocos = `COALESCE(s.total_points, 0) <= ${MAX_PUNTOS_REACTIVACION}`;
   const { rows } = await db.query(`
     SELECT
       COUNT(*)::int AS usuarios,
-      COUNT(*) FILTER (WHERE NOT EXISTS (SELECT 1 FROM runs r WHERE r.user_id = u.id))::int AS sin_carreras,
-      COUNT(*) FILTER (WHERE NOT EXISTS (SELECT 1 FROM runs r WHERE r.user_id = u.id)
-                         AND NOT (u.email_verified OR u.google_id IS NOT NULL))::int AS sin_carreras_sin_verificar,
-      COUNT(*) FILTER (WHERE NOT EXISTS (SELECT 1 FROM runs r WHERE r.user_id = u.id)
-                         AND u.created_at >= NOW() - make_interval(days => ${DIAS_ANTES_DE_RECORDAR}))::int AS sin_carreras_recientes,
+      COUNT(*) FILTER (WHERE ${pocos})::int AS con_pocos_puntos,
+      COUNT(*) FILTER (WHERE ${pocos} AND NOT (u.email_verified OR u.google_id IS NOT NULL))::int AS fuera_sin_verificar,
+      COUNT(*) FILTER (WHERE ${pocos}
+                         AND u.created_at >= NOW() - make_interval(days => ${DIAS_ANTES_DE_RECORDAR}))::int AS fuera_alta_reciente,
+      COUNT(*) FILTER (WHERE ${pocos} AND EXISTS (SELECT 1 FROM runs r WHERE r.user_id = u.id
+                         AND r.created_at >= NOW() - make_interval(days => ${DIAS_ANTES_DE_RECORDAR})))::int AS fuera_salio_esta_semana,
       COUNT(*) FILTER (WHERE u.email_baja_at IS NOT NULL)::int AS de_baja,
       COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM email_envios e
                                      WHERE e.user_id = u.id AND e.campana = $1))::int AS ya_enviados,
-      COUNT(*) FILTER (WHERE ${SQL_PENDIENTES_REACTIVACION})::int AS pendientes
-    FROM users u`, [CAMPANA_REACTIVACION]);
+      COUNT(*) FILTER (WHERE ${SQL_PENDIENTES_REACTIVACION} AND ${SQL_VARIANTE_REACTIVACION} = 'nada')::int AS pendientes_sin_carreras,
+      COUNT(*) FILTER (WHERE ${SQL_PENDIENTES_REACTIVACION} AND ${SQL_VARIANTE_REACTIVACION} = 'poco')::int AS pendientes_con_poco
+    FROM ${FROM_REACTIVACION}`, [CAMPANA_REACTIVACION]);
   return reply.send({
     campana: CAMPANA_REACTIVACION,
     asunto: ASUNTO_REACTIVACION,
+    maxPuntos: MAX_PUNTOS_REACTIVACION,
     diasDeMargen: DIAS_ANTES_DE_RECORDAR,
     maxPorTanda: MAX_ENVIOS_POR_TANDA,
     ...rows[0],
   });
 });
 
-/** POST { modo: 'prueba', para: 'tu@email' } → un envío de prueba, sin apuntar nada.
+/** POST { modo: 'prueba', para: 'tu@email', variante?: 'nada'|'poco' } → un envío de prueba, sin apuntar nada.
  *  POST { modo: 'enviar', max?: 80 }        → una tanda a los pendientes. */
 app.post('/admin/email/reactivacion', { preHandler: requireAdmin }, async (req: any, reply) => {
-  const { modo, para, max } = req.body ?? {};
+  const { modo, para, max, variante } = req.body ?? {};
 
   if (modo === 'prueba') {
     if (typeof para !== 'string' || !para.includes('@')) return reply.status(400).send({ error: 'Falta "para"' });
     const { rows } = await db.query('SELECT display_name FROM users WHERE email = $1', [para]);
     const { data, error } = await enviarReactivacion(
-      para, rows[0]?.display_name ?? 'Corredor', urlBajaEmail(USUARIO_PRUEBA), `[PRUEBA] ${ASUNTO_REACTIVACION}`,
+      para, rows[0]?.display_name ?? 'Corredor', urlBajaEmail(USUARIO_PRUEBA),
+      variante === 'poco' ? 'poco' : 'nada', `[PRUEBA] ${ASUNTO_REACTIVACION}`,
     );
     if (error) return reply.status(502).send({ error: error.message });
     return reply.send({ ok: true, id: data?.id });
@@ -4020,7 +4042,8 @@ app.post('/admin/email/reactivacion', { preHandler: requireAdmin }, async (req: 
 
   const limite = Math.min(Math.max(1, Number(max) || MAX_ENVIOS_POR_TANDA), MAX_ENVIOS_POR_TANDA);
   const { rows } = await db.query(
-    `SELECT u.id, u.email, u.display_name FROM users u
+    `SELECT u.id, u.email, u.display_name, ${SQL_VARIANTE_REACTIVACION} AS variante
+       FROM ${FROM_REACTIVACION}
       WHERE ${SQL_PENDIENTES_REACTIVACION}
       ORDER BY u.created_at LIMIT $2`,
     [CAMPANA_REACTIVACION, limite],
@@ -4040,7 +4063,7 @@ app.post('/admin/email/reactivacion', { preHandler: requireAdmin }, async (req: 
 
     let error: string | null = null;
     try {
-      const r = await enviarReactivacion(u.email, u.display_name ?? 'Corredor', urlBajaEmail(u.id));
+      const r = await enviarReactivacion(u.email, u.display_name ?? 'Corredor', urlBajaEmail(u.id), u.variante);
       if (r.error) error = r.error.message;
     } catch (err) {
       error = String(err);
@@ -4061,7 +4084,7 @@ app.post('/admin/email/reactivacion', { preHandler: requireAdmin }, async (req: 
   }
 
   const quedan = await db.query(
-    `SELECT COUNT(*)::int AS n FROM users u WHERE ${SQL_PENDIENTES_REACTIVACION}`, [CAMPANA_REACTIVACION],
+    `SELECT COUNT(*)::int AS n FROM ${FROM_REACTIVACION} WHERE ${SQL_PENDIENTES_REACTIVACION}`, [CAMPANA_REACTIVACION],
   );
   return reply.send({ enviados, fallos, quedan: quedan.rows[0].n });
 });
