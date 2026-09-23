@@ -24,7 +24,11 @@ const fuente = readFileSync(join(raiz, 'src/routes/index.ts'), 'utf8');
 const desde = fuente.indexOf('  const html = `<!doctype html>');
 if (desde === -1) throw new Error('No encuentro la plantilla del panel en src/routes/index.ts');
 const ini = fuente.indexOf('`', desde) + 1;
-const fin = fuente.indexOf('`;\n\n  return reply.type', ini);
+// El final de la plantilla: el primer cierre de acento grave seguido de ';'
+// que va justo antes del `return reply`. Si esto deja de encontrarse, la
+// comprobación avisa en vez de analizar código que no es el del panel.
+const fin = fuente.indexOf('`;\n\n  return reply', ini);
+if (fin === -1) throw new Error('No encuentro el final de la plantilla del panel');
 // Las anotaciones de tipo no llegan al navegador; se quitan para poder evaluar.
 const plantilla = fuente.slice(ini, fin).replace(/: any\b/g, '');
 

@@ -1503,10 +1503,24 @@ app.get('/admin', async (_req, reply) => {
 </form></div></div>
 <script>
   async function load(key){
-    const r = await fetch('/admin/panel', { headers: { 'x-admin-key': key } });
+    // no-store: sin esto el navegador (Safari sobre todo) reutiliza el panel
+    // guardado y te enseña el de ayer, botones incluidos.
+    const r = await fetch('/admin/panel?t=' + Date.now(), {
+      headers: { 'x-admin-key': key }, cache: 'no-store',
+    });
     if (!r.ok) throw new Error('Clave incorrecta');
     sessionStorage.setItem('corrr_admin_key', key);
-    document.open(); document.write(await r.text()); document.close();
+    const texto = await r.text();
+    try {
+      document.open(); document.write(texto); document.close();
+    } catch (err) {
+      // Si el panel trae código con un error, el navegador lo tira SIN decir
+      // nada y todos los botones dejan de funcionar. Que se vea.
+      document.body.innerHTML =
+        '<div style="padding:24px;color:#f44336;font-family:monospace;white-space:pre-wrap">'
+        + 'El panel no se ha podido cargar del todo:\n\n' + String(err && err.message || err)
+        + '\n\nAvisa de esto: es un fallo del código del panel, no tuyo.</div>';
+    }
   }
   const saved = sessionStorage.getItem('corrr_admin_key');
   if (saved) load(saved).catch(() => sessionStorage.removeItem('corrr_admin_key'));
@@ -1558,6 +1572,7 @@ app.get('/admin/panel', { preHandler: requireAdmin }, async (req: any, reply) =>
   const html = `<!doctype html><html lang="es"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="refresh" content="300">
+<meta http-equiv="cache-control" content="no-store">
 <title>CORRR — Panel</title>
 <style>
   body{margin:0;background:#0A0A0A;color:#eee;font-family:-apple-system,Roboto,sans-serif;padding:16px;}
@@ -1615,7 +1630,7 @@ app.get('/admin/panel', { preHandler: requireAdmin }, async (req: any, reply) =>
 
 </style></head><body>
 <h1>CORRR — Panel de control</h1>
-<div class="sub">Generado ${new Date().toLocaleString('es-ES', { timeZone: 'Europe/Madrid' })} (hora Madrid) · se auto-refresca cada 5 min · <button class="btn" onclick="location.reload()">Actualizar</button></div>
+<div class="sub">Generado ${new Date().toLocaleString('es-ES', { timeZone: 'Europe/Madrid' })} (hora Madrid) · versión ${esc((process.env.RAILWAY_GIT_COMMIT_SHA ?? 'local').slice(0, 7))} · se auto-refresca cada 5 min · <button class="btn" onclick="location.reload()">Actualizar</button></div>
 
 <div class="kpis">
   ${kpi('Usuarios', t.users, `${t.verified} verificados`)}
@@ -1830,7 +1845,10 @@ Quien usa el enlace del correo se da de baja solo.</p>
 </script>
 </body></html>`;
 
-  return reply.type('text/html; charset=utf-8').send(html);
+  return reply
+    .header('cache-control', 'no-store')
+    .type('text/html; charset=utf-8')
+    .send(html);
 });
 
 // El endpoint /admin/wipe-users vivía aquí: vaciaba de golpe usuarios,
