@@ -1682,6 +1682,12 @@ Sale UNA vez por persona; para repetirlo, se crea otro. Solo lo ven las apps 1.1
 </div></div>
 <div id="lista_avisos"></div>
 
+<h2>Strava</h2>
+<p class="nota">Comprueba si nuestra app de Strava sigue funcionando con las claves de siempre.
+La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es anterior.</p>
+<button class="btn" id="bstrava">Comprobar Strava</button>
+<div id="strava_msg" style="font-size:13px;min-height:18px;margin-top:8px;"></div>
+
 <h2>Bajas del correo</h2>
 <p class="nota">Si alguien pide la baja <b>respondiendo al email</b> (Mail de Apple manda un correo a
 hola@corrr.es en vez de avisarnos), apúntala aquí: si no, seguiría recibiendo campañas.
@@ -1797,6 +1803,14 @@ Quien usa el enlace del correo se da de baja solo.</p>
       })
       .catch(function (e) { msg.style.color = '#f44336'; msg.textContent = e.message; });
   });
+  document.getElementById('bstrava').addEventListener('click', function () {
+    var m = document.getElementById('strava_msg');
+    m.style.color = '#888'; m.textContent = 'Preguntando a Strava…';
+    api('/admin/strava/estado').then(function (r) {
+      m.style.color = r.ok ? '#4caf50' : '#f44336';
+      m.textContent = r.mensaje;
+    }).catch(function (e) { m.style.color = '#f44336'; m.textContent = e.message; });
+  });
   cargar();
 </script>
 </body></html>`;
@@ -1814,6 +1828,35 @@ Quien usa el enlace del correo se da de baja solo.</p>
 // No se sustituye por nada. Si algún día hay que vaciar la base de datos,
 // se hace desde Supabase: cuesta más y obliga a pensarlo, que es
 // justamente lo que quieres antes de un borrado irreversible.
+
+/** ¿Sigue viva nuestra app de Strava? Lo pregunta a Strava con las claves que
+ *  hay configuradas y contesta en cristiano. Sirve para saber si podemos usar
+ *  su API sin pagar nada (la suscripción la exigen para CREAR apps nuevas; la
+ *  nuestra es anterior) antes de escribirles o de tocar código. */
+app.get('/admin/strava/estado', { preHandler: requireAdmin }, async (_req, reply) => {
+  if (!STRAVA_CLIENT_ID || !STRAVA_CLIENT_SECRET) {
+    return reply.send({ ok: false, mensaje: 'No hay claves de Strava configuradas en el servidor.' });
+  }
+  const url = `https://www.strava.com/api/v3/push_subscriptions?client_id=${STRAVA_CLIENT_ID}&client_secret=${STRAVA_CLIENT_SECRET}`;
+  try {
+    const res = await fetch(url);
+    const texto = await res.text();
+    if (res.ok) {
+      let n = 0;
+      try { n = (JSON.parse(texto) as any[]).length; } catch {}
+      return reply.send({
+        ok: true,
+        mensaje: `La app de Strava responde bien (${n} aviso${n === 1 ? '' : 's'} automático${n === 1 ? '' : 's'} configurado${n === 1 ? '' : 's'}). Las claves siguen valiendo.`,
+      });
+    }
+    return reply.send({
+      ok: false,
+      mensaje: `Strava responde ${res.status}: ${texto.slice(0, 200)}`,
+    });
+  } catch (e: any) {
+    return reply.send({ ok: false, mensaje: `No se pudo preguntar a Strava: ${String(e?.message ?? e)}` });
+  }
+});
 
 /** GET /admin/strava/subscriptions — lista las suscripciones webhook activas
  *  con Strava (solo puede haber 1 por app). Útil para diagnosticar. */
