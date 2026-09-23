@@ -547,6 +547,24 @@ export default function PerfilScreen({ user, onLogout }: Props) {
         </View>
       )}
 
+      {/* En Android no hay forma gratis de traer las carreras de Strava: a
+          Health Connect solo les manda tiempo, distancia y calorías, sin el
+          recorrido, y su API está cerrada a las cuentas sin suscripción. Lo
+          único que funciona hoy es llevar las dos apps a la vez, así que al
+          menos que se sepa. (El detector automático va en la siguiente.) */}
+      {!appleWatchSupported() && (
+        <View style={styles.watchSection}>
+          <View style={styles.watchHeader}>
+            <Ionicons name="layers-outline" size={20} color={colors.orange} />
+            <Text style={styles.watchTitle}>¿Corres con Strava?</Text>
+          </View>
+          <Text style={styles.watchSub}>
+            Llévalas a la vez: Strava te guarda la carrera y CORRR te da el territorio.
+            Estamos en que CORRR se entere solo, sin abrir nada.
+          </Text>
+        </View>
+      )}
+
       {/* Premium OCULTO en iOS. La directriz 3.1.1 de Apple obliga a vender
           cualquier bien digital mediante compra integrada (IAP). Esta tarjeta
           anuncia una suscripción con precio pero no hay IAP montado, así que
