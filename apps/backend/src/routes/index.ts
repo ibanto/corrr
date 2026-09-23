@@ -1518,8 +1518,8 @@ app.get('/admin', async (_req, reply) => {
       // nada y todos los botones dejan de funcionar. Que se vea.
       document.body.innerHTML =
         '<div style="padding:24px;color:#f44336;font-family:monospace;white-space:pre-wrap">'
-        + 'El panel no se ha podido cargar del todo:\n\n' + String(err && err.message || err)
-        + '\n\nAvisa de esto: es un fallo del código del panel, no tuyo.</div>';
+        + 'El panel no se ha podido cargar del todo:\\n\\n' + String(err && err.message || err)
+        + '\\n\\nAvisa de esto: es un fallo del código del panel, no tuyo.</div>';
     }
   }
   const saved = sessionStorage.getItem('corrr_admin_key');

@@ -20,6 +20,17 @@ import vm from 'node:vm';
 const raiz = dirname(dirname(fileURLToPath(import.meta.url)));
 const fuente = readFileSync(join(raiz, 'src/routes/index.ts'), 'utf8');
 
+/** La pantalla que pide la clave (`/admin`). Va aparte del panel y también
+ *  lleva código: si se rompe, no se puede ni entrar. */
+const desdeGate = fuente.indexOf("app.get('/admin', async (_req, reply) => {");
+if (desdeGate === -1) throw new Error('No encuentro la pantalla de la clave en src/routes/index.ts');
+const iniGate = fuente.indexOf('`<!doctype html>', desdeGate) + 1;
+const finGate = fuente.indexOf('`);', iniGate);
+// Se EVALÚA como plantilla, igual que hace el servidor: leerla como texto
+// plano dejaría las barras sin procesar y el fallo pasaría desapercibido
+// (que es justo lo que ocurrió la primera vez).
+const gate = new Function('return `' + fuente.slice(iniGate, finGate) + '`;')();
+
 /** La plantilla del HTML del panel, tal cual está en el código. */
 const desde = fuente.indexOf('  const html = `<!doctype html>');
 if (desde === -1) throw new Error('No encuentro la plantilla del panel en src/routes/index.ts');
@@ -47,7 +58,8 @@ const datos = {
 
 const html = new Function(...Object.keys(datos), 'return `' + plantilla + '`;')(...Object.values(datos));
 
-const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(m => m[1]);
+const sacarScripts = (pagina) => [...pagina.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(m => m[1]);
+const scripts = [...sacarScripts(gate), ...sacarScripts(html)];
 if (scripts.length === 0) {
   console.error('✘ El panel no tiene ningún <script>: ¿se ha perdido el código de los botones?');
   process.exit(1);
