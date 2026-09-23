@@ -1,5 +1,10 @@
 /**
- * Apple Watch → CORRR, a través de Salud (HealthKit).
+ * Tus otras carreras → CORRR, a través de Salud (HealthKit).
+ *
+ * No es solo el Apple Watch: entra CUALQUIER entreno que llegue a Salud con su
+ * ruta, y eso incluye Strava (con "Enviar a Salud" activado en su app), que es
+ * la vía gratis para traerlas — la API de Strava exige una suscripción de pago
+ * suya y limita las apps nuevas a 10 atletas.
  *
  * Las carreras y caminatas que grabas con el reloj se importan solas al abrir
  * la app y cuentan como si las hubieras corrido con CORRR: kilómetros, celdas

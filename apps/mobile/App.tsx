@@ -203,9 +203,9 @@ export default function App() {
     return () => sub.remove();
   }, []);
 
-  // Apple Watch: al abrir la app y al volver a ella se importan los entrenos
-  // nuevos del reloj (solo si el usuario lo conectó en su perfil). Ver
-  // src/services/healthkit.ts.
+  // Al abrir la app y al volver a ella entran las carreras grabadas fuera de
+  // CORRR (Strava, Apple Watch, otras apps que escriban en Salud), solo si el
+  // usuario lo activó en su perfil. Ver src/services/healthkit.ts.
   useEffect(() => {
     if (!user?.id) return;
     const userId = user.id;
@@ -218,8 +218,8 @@ export default function App() {
       const stolen = done.reduce((sum, w) => sum + w.stolenCells, 0);
       Alert.alert(
         done.length === 1
-          ? '⌚ Carrera del Apple Watch importada'
-          : `⌚ ${done.length} carreras del Apple Watch importadas`,
+          ? '👟 Carrera importada'
+          : `👟 ${done.length} carreras importadas`,
         `${km.toFixed(2).replace('.', ',')} km · ${cells} ${cells === 1 ? 'celda nueva' : 'celdas nuevas'}`
           + (stolen > 0 ? ` · ${stolen} robadas` : ''),
       );

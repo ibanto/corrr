@@ -62,7 +62,8 @@ const logroImages: Record<string, any> = {
 export default function PerfilScreen({ user, onLogout }: Props) {
   const displayName = user?.username ?? 'Runner';
   const [stravaLoading, setStravaLoading] = useState(false);
-  // Apple Watch vía Salud (solo iPhone). Ver services/healthkit.ts.
+  // "Tus otras carreras": lo que grabas fuera de CORRR y entra por Salud (solo
+  // iPhone). Ver services/healthkit.ts.
   const [watchConnected, setWatchConnected] = useState(false);
   const [watchLoading, setWatchLoading] = useState(false);
   useEffect(() => {
@@ -307,8 +308,8 @@ export default function PerfilScreen({ user, onLogout }: Props) {
       // iOS no dice si el usuario dio permiso de lectura (por privacidad, uno
       // denegado parece simplemente "sin datos"), así que se explica dónde mirar.
       Alert.alert(
-        'Apple Watch conectado',
-        'Desde ahora, las carreras y caminatas que grabes con el reloj se importarán solas al abrir CORRR.\n\nSi no aparece ninguna, revisa en Ajustes → Salud → Acceso a datos y dispositivos → CORRR que puede leer Entrenamientos y Rutas de entrenamiento.',
+        'Listo',
+        'Lo que grabes con Strava, con el reloj o con otra app entrará solo al abrir CORRR, y te dará territorio igual.\n\nSi usas Strava, actívalo también allí: Ajustes → Gestionar apps y dispositivos → Salud → Enviar a Salud.\n\nY si no aparece ninguna carrera, mira en Ajustes → Salud → Acceso a datos y dispositivos → CORRR que pueda leer Entrenamientos y Rutas de entrenamiento.',
       );
     } catch {
       Alert.alert('No se pudo conectar', 'Inténtalo de nuevo en un momento.');
@@ -321,8 +322,8 @@ export default function PerfilScreen({ user, onLogout }: Props) {
     if (!user?.id) return;
     const userId = user.id;
     Alert.alert(
-      'Desconectar Apple Watch',
-      'Las carreras que ya se importaron se quedan. Las nuevas dejarán de importarse.',
+      'Dejar de traerlas',
+      'Las carreras que ya se importaron se quedan. Las nuevas dejarán de entrar.',
       [
         { text: 'Cancelar', style: 'cancel' },
         {
@@ -512,18 +513,22 @@ export default function PerfilScreen({ user, onLogout }: Props) {
         </View>
       )}
 
-      {/* Apple Watch (vía Salud), solo iPhone: las carreras del reloj se
-          importan solas al abrir la app. Ver services/healthkit.ts. */}
+      {/* "Tus otras carreras" (vía Salud), solo iPhone: lo que se graba con
+          Strava, con el Apple Watch o con cualquier app que escriba en Salud
+          entra solo al abrir CORRR. Se llamaba "Apple Watch" y eso lo hundía:
+          quien no tiene reloj —la mayoría— ni lo miraba, aunque es justo el
+          que más lo necesita, porque graba con Strava. Ver
+          services/healthkit.ts. */}
       {appleWatchSupported() && (
         <View style={styles.watchSection}>
           <View style={styles.watchHeader}>
-            <Ionicons name="watch-outline" size={20} color={colors.orange} />
-            <Text style={styles.watchTitle}>Apple Watch</Text>
+            <Ionicons name="download-outline" size={20} color={colors.orange} />
+            <Text style={styles.watchTitle}>Tus otras carreras</Text>
           </View>
           <Text style={styles.watchSub}>
             {watchConnected
-              ? 'Conectado. Las carreras y caminatas que grabes con el reloj se importan solas al abrir CORRR.'
-              : 'Conquista territorio con las carreras que grabes con el reloj, sin sacar el móvil.'}
+              ? 'Activado. Lo que grabes con Strava, con el reloj o con otra app entra solo al abrir CORRR.'
+              : '¿Corres con Strava o con el reloj? Que esas carreras también te den territorio, sin repetirlas.'}
           </Text>
           <TouchableOpacity
             style={[styles.watchButton, watchConnected && styles.watchButtonSecondary]}
@@ -535,7 +540,7 @@ export default function PerfilScreen({ user, onLogout }: Props) {
               <ActivityIndicator size="small" color={watchConnected ? colors.textPrimary : '#000'} />
             ) : (
               <Text style={[styles.watchButtonText, watchConnected && styles.watchButtonTextSecondary]}>
-                {watchConnected ? 'Desconectar' : 'Conectar Apple Watch'}
+                {watchConnected ? 'Dejar de traerlas' : 'Que cuenten también'}
               </Text>
             )}
           </TouchableOpacity>
