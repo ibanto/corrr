@@ -227,6 +227,8 @@ interface RunSaveResult {
     pbMultiplier: number;
     streakDays: number;
     beatPB: boolean;
+    /** La carrera ha contado doble por tener 100 puntos o menos. */
+    dobleBienvenida?: boolean;
   };
 }
 

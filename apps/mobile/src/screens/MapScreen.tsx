@@ -602,7 +602,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     breakdown?: {
       kmPoints: number; cellPoints: number; newCells?: number; stolenCells?: number;
       loopBonus: number; streakMultiplier: number; pbMultiplier: number;
-      streakDays: number; beatPB: boolean;
+      streakDays: number; beatPB: boolean; dobleBienvenida?: boolean;
     } | null;
   } | null>(null);
   const [loopDetected, setLoopDetected] = useState(false);
@@ -2317,6 +2317,9 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
                   )}
                   {runSummary.breakdown.streakMultiplier > 1 && (
                     <BreakdownRow label={`Racha ${runSummary.breakdown.streakDays} días`} value="×1.5" hint="¡sigue así!" highlight />
+                  )}
+                  {runSummary.breakdown.dobleBienvenida && (
+                    <BreakdownRow label="Primeros pasos" value="×2" hint="mientras tengas menos de 100 puntos" highlight />
                   )}
                 </View>
               )}

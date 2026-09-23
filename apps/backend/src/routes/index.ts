@@ -401,6 +401,8 @@ async function initDB() {
   await db.query(`ALTER TABLE avisos ADD COLUMN IF NOT EXISTS etiqueta TEXT`).catch(() => {});
   await db.query(`ALTER TABLE avisos ADD COLUMN IF NOT EXISTS sello TEXT`).catch(() => {});
   await db.query(`ALTER TABLE avisos ADD COLUMN IF NOT EXISTS nota TEXT`).catch(() => {});
+  // Para probar un aviso en tu propio móvil antes de soltarlo a todo el mundo.
+  await db.query(`ALTER TABLE avisos ADD COLUMN IF NOT EXISTS corredor TEXT`).catch(() => {});
   await db.query(`ALTER TABLE avisos ENABLE ROW LEVEL SECURITY`).catch(() => {});
   await db.query(`ALTER TABLE aviso_vistas ENABLE ROW LEVEL SECURITY`).catch(() => {});
   // Motivo por el que una carrera quedó marcada como geométricamente inusual.
@@ -1654,8 +1656,11 @@ Sale UNA vez por persona; para repetirlo, se crea otro. Solo lo ven las apps 1.1
     <option value="ciudad">Solo a una ciudad</option>
     <option value="sin-carreras">Solo a quien no ha corrido nunca</option>
     <option value="dormidos">Solo a quien no corre desde hace 2 semanas</option>
+    <option value="pocos-puntos">Solo a quien tiene 100 puntos o menos (les cuenta doble)</option>
+    <option value="corredor">Solo a un corredor (para probarlo tú antes)</option>
   </select>
   <input id="a_ciudad" placeholder="Ciudad (p. ej. Barcelona)" style="display:none">
+  <input id="a_corredor" placeholder="Nombre del corredor (p. ej. Ibanto)" style="display:none">
   <button class="btn" type="submit">Publicar aviso</button>
   <div class="err" id="a_err" style="color:#f44336;font-size:13px;"></div>
 </form>
@@ -1720,13 +1725,16 @@ Sale UNA vez por persona; para repetirlo, se crea otro. Solo lo ven las apps 1.1
   });
   document.getElementById('a_publico').addEventListener('change', function (e) {
     document.getElementById('a_ciudad').style.display = e.target.value === 'ciudad' ? 'block' : 'none';
+    document.getElementById('a_corredor').style.display = e.target.value === 'corredor' ? 'block' : 'none';
   });
   function pintar(avisos) {
     document.getElementById('lista_avisos').innerHTML = avisos.length === 0
       ? '<p class="nota">Todavía no has publicado ninguno.</p>'
       : avisos.map(function (a) {
         var quien = { todos: 'a todo el mundo', ciudad: 'solo en ' + esc(a.ciudad || ''),
-          'sin-carreras': 'a quien no ha corrido nunca', dormidos: 'a quien no corre hace 2 semanas' }[a.publico];
+          'sin-carreras': 'a quien no ha corrido nunca', dormidos: 'a quien no corre hace 2 semanas',
+          'pocos-puntos': 'a quien tiene 100 puntos o menos',
+          corredor: 'solo a ' + esc(a.corredor || '') }[a.publico];
         return '<div class="aviso' + (a.activo ? '' : ' apagado') + '">'
           + '<h3>' + esc(a.titulo) + (a.activo ? '' : ' · APAGADO') + '</h3>'
           + '<p>' + esc(a.texto) + '</p>'
@@ -1754,6 +1762,7 @@ Sale UNA vez por persona; para repetirlo, se crea otro. Solo lo ven las apps 1.1
       enlace: val('a_enlace') || null, imagen: val('a_imagen') || null,
       publico: document.getElementById('a_publico').value, ciudad: val('a_ciudad') || null,
       etiqueta: val('a_etiqueta') || null, sello: val('a_sello') || null,
+      corredor: val('a_corredor') || null,
       nota: val('a_nota').split('/').slice(0, 2).map(function (l) { return l.trim(); }).join('\n') || null,
     }) }).then(function () {
       document.getElementById('fa').reset(); previo(); cargar();
@@ -2603,10 +2612,10 @@ app.post('/runs', {
     // Streak: look at last_run_date. Same day = no change. Consecutive day = +1.
     // Anything else = reset to 1.
     const { rows: statsRows } = await client.query(
-      'SELECT last_run_date, streak_days, best_daily_km FROM user_stats WHERE user_id = $1',
+      'SELECT last_run_date, streak_days, best_daily_km, total_points FROM user_stats WHERE user_id = $1',
       [userId]
     );
-    const prevStats = statsRows[0] || { last_run_date: null, streak_days: 0, best_daily_km: 0 };
+    const prevStats = statsRows[0] || { last_run_date: null, streak_days: 0, best_daily_km: 0, total_points: 0 };
     // El día de la carrera, no el de guardarla: una importada de ayer cuenta
     // para ayer. Si es anterior a tu última carrera, la racha no se toca (ni
     // se rompe ni se mueve la fecha hacia atrás).
@@ -2623,6 +2632,14 @@ app.post('/runs', {
       else if (diffDays === 1) newStreak = (prevStats.streak_days || 0) + 1; // consecutive
       // else: streak broken, newStreak stays at 1
     }
+    // DOBLE PARA QUIEN EMPIEZA. Con 100 puntos o menos —que es prácticamente
+    // nadie que haya corrido un par de veces— la carrera cuenta doble. Está
+    // pensado para el primer empujón: quien se registra y no sale, o sale una
+    // vez y ve cuatro puntos al lado de los miles de los demás, no vuelve.
+    // Se apaga solo en cuanto pasa de 100, así que no hace falta gestionarlo
+    // ni caduca; y se mira lo que tenía ANTES de esta carrera, para que la
+    // que le hace pasar de 100 también cuente doble.
+    const dobleBienvenida = Number(prevStats.total_points || 0) <= 100;
     const streakMultiplier = newStreak >= 3 ? 1.5 : 1;
     const pbMultiplier = distanceKm > (prevStats.best_daily_km || 0) ? 1.2 : 1;
     const newBestKm = Math.max(prevStats.best_daily_km || 0, distanceKm || 0);
@@ -2632,7 +2649,7 @@ app.post('/runs', {
     // Siempre recomputamos server-side (el bypass legacy que confiaba el
     // estimate del cliente se ha eliminado). clientPointsEstimate solo se usa
     // ya como valor de display optimista en el cliente, nunca aquí.
-    const authoritativePoints = Math.round(subtotal * streakMultiplier);
+    const authoritativePoints = Math.round(subtotal * streakMultiplier * (dobleBienvenida ? 2 : 1));
 
     // Persist the recomputed points on the run row (we inserted with the
     // client's estimate earlier).
@@ -2694,6 +2711,9 @@ app.post('/runs', {
         pbMultiplier,
         streakDays: newStreak,
         beatPB: pbMultiplier > 1,
+        // Para que la app pueda enseñar de dónde sale el ×2 en vez de un
+        // número que no cuadra con el desglose.
+        dobleBienvenida,
       },
     });
   } catch (err) {
@@ -4034,6 +4054,9 @@ const SQL_PUBLICO_AVISO = `(
      a.publico = 'todos'
   OR (a.publico = 'ciudad' AND a.ciudad IS NOT NULL AND LOWER(u.city) = LOWER(a.ciudad))
   OR (a.publico = 'sin-carreras' AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.user_id = u.id))
+  OR (a.publico = 'corredor' AND a.corredor IS NOT NULL AND LOWER(u.display_name) = LOWER(a.corredor))
+  OR (a.publico = 'pocos-puntos' AND COALESCE(
+        (SELECT st.total_points FROM user_stats st WHERE st.user_id = u.id), 0) <= 100)
   OR (a.publico = 'dormidos' AND NOT EXISTS (
         SELECT 1 FROM runs r WHERE r.user_id = u.id AND r.created_at >= NOW() - INTERVAL '14 days'))
 )`;
@@ -4068,7 +4091,7 @@ app.post('/app/aviso/:id/visto', { preHandler: requireAuth }, async (req: any, r
   return reply.send({ ok: true });
 });
 
-const PUBLICOS_AVISO = ['todos', 'ciudad', 'sin-carreras', 'dormidos'];
+const PUBLICOS_AVISO = ['todos', 'ciudad', 'sin-carreras', 'dormidos', 'pocos-puntos', 'corredor'];
 
 /** Lista de avisos con cuánta gente los ha visto y a cuánta le tocan. */
 app.get('/admin/avisos', { preHandler: requireAdmin }, async (_req, reply) => {
@@ -4082,19 +4105,29 @@ app.get('/admin/avisos', { preHandler: requireAdmin }, async (_req, reply) => {
 });
 
 app.post('/admin/avisos', { preHandler: requireAdmin }, async (req: any, reply) => {
-  const { titulo, texto, imagen, boton, enlace, publico, ciudad, hasta, etiqueta, sello, nota } = req.body ?? {};
+  const { titulo, texto, imagen, boton, enlace, publico, ciudad, hasta, etiqueta, sello, nota, corredor } = req.body ?? {};
   if (typeof titulo !== 'string' || !titulo.trim()) return reply.status(400).send({ error: 'Falta el título' });
   if (typeof texto !== 'string' || !texto.trim()) return reply.status(400).send({ error: 'Falta el texto' });
   const pub = PUBLICOS_AVISO.includes(publico) ? publico : 'todos';
   if (pub === 'ciudad' && (typeof ciudad !== 'string' || !ciudad.trim())) {
     return reply.status(400).send({ error: 'Para el público "ciudad" hace falta la ciudad' });
   }
+  if (pub === 'corredor') {
+    if (typeof corredor !== 'string' || !corredor.trim()) {
+      return reply.status(400).send({ error: 'Falta el nombre del corredor' });
+    }
+    const { rows: existe } = await db.query(
+      'SELECT 1 FROM users WHERE LOWER(display_name) = LOWER($1)', [corredor.trim()],
+    );
+    if (existe.length === 0) return reply.status(400).send({ error: `No hay ningún corredor que se llame "${corredor.trim()}"` });
+  }
   const { rows } = await db.query(
-    `INSERT INTO avisos (titulo, texto, imagen_url, boton, enlace, publico, ciudad, hasta, etiqueta, sello, nota)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
+    `INSERT INTO avisos (titulo, texto, imagen_url, boton, enlace, publico, ciudad, hasta, etiqueta, sello, nota, corredor)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
     [titulo.trim(), texto.trim(), imagen || null, boton || null, enlace || null,
      pub, pub === 'ciudad' ? ciudad.trim() : null, hasta || null,
-     etiqueta || null, sello || null, nota || null],
+     etiqueta || null, sello || null, nota || null,
+     pub === 'corredor' ? corredor.trim() : null],
   );
   return reply.status(201).send(rows[0]);
 });
