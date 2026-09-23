@@ -1726,7 +1726,7 @@ Quien usa el enlace del correo se da de baja solo.</p>
   function previo() {
     // El título se parte igual que en la app: lo de delante en blanco y la
     // última palabra sobre el bloque naranja.
-    var t = (val('a_titulo') || 'TÍTULO').toUpperCase().replace(/\s+/g, ' ').trim();
+    var t = (val('a_titulo') || 'TÍTULO').toUpperCase().replace(/\\s+/g, ' ').trim();
     var corte = t.lastIndexOf(' ');
     document.getElementById('p_t1').textContent = corte === -1 ? '' : t.slice(0, corte);
     document.getElementById('p_sub').style.display = corte === -1 ? 'none' : 'block';
@@ -1790,7 +1790,7 @@ Quien usa el enlace del correo se da de baja solo.</p>
       publico: document.getElementById('a_publico').value, ciudad: val('a_ciudad') || null,
       etiqueta: val('a_etiqueta') || null, sello: val('a_sello') || null,
       corredor: val('a_corredor') || null,
-      nota: val('a_nota').split('/').slice(0, 2).map(function (l) { return l.trim(); }).join('\n') || null,
+      nota: val('a_nota').split('/').slice(0, 2).map(function (l) { return l.trim(); }).join('\\n') || null,
     }) }).then(function () {
       document.getElementById('fa').reset(); previo(); cargar();
     }).catch(function (e) { err.textContent = e.message; });
