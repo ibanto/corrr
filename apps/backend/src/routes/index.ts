@@ -403,6 +403,9 @@ async function initDB() {
   await db.query(`ALTER TABLE avisos ADD COLUMN IF NOT EXISTS nota TEXT`).catch(() => {});
   // Para probar un aviso en tu propio móvil antes de soltarlo a todo el mundo.
   await db.query(`ALTER TABLE avisos ADD COLUMN IF NOT EXISTS corredor TEXT`).catch(() => {});
+  // Qué teléfono usa cada corredor. Se apunta cuando la app pide su aviso, y
+  // sirve para mandar un aviso solo a iPhone o solo a Android.
+  await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS plataforma TEXT`).catch(() => {});
   await db.query(`ALTER TABLE avisos ENABLE ROW LEVEL SECURITY`).catch(() => {});
   await db.query(`ALTER TABLE aviso_vistas ENABLE ROW LEVEL SECURITY`).catch(() => {});
   // Motivo por el que una carrera quedó marcada como geométricamente inusual.
@@ -1657,6 +1660,8 @@ Sale UNA vez por persona; para repetirlo, se crea otro. Solo lo ven las apps 1.1
     <option value="sin-carreras">Solo a quien no ha corrido nunca</option>
     <option value="dormidos">Solo a quien no corre desde hace 2 semanas</option>
     <option value="pocos-puntos">Solo a quien tiene 100 puntos o menos (les cuenta doble)</option>
+    <option value="ios">Solo a los de iPhone</option>
+    <option value="android">Solo a los de Android</option>
     <option value="corredor">Solo a un corredor (para probarlo tú antes)</option>
   </select>
   <input id="a_ciudad" placeholder="Ciudad (p. ej. Barcelona)" style="display:none">
@@ -1745,7 +1750,8 @@ Quien usa el enlace del correo se da de baja solo.</p>
         var quien = { todos: 'a todo el mundo', ciudad: 'solo en ' + esc(a.ciudad || ''),
           'sin-carreras': 'a quien no ha corrido nunca', dormidos: 'a quien no corre hace 2 semanas',
           'pocos-puntos': 'a quien tiene 100 puntos o menos',
-          corredor: 'solo a ' + esc(a.corredor || '') }[a.publico];
+          corredor: 'solo a ' + esc(a.corredor || ''),
+          ios: 'solo a los de iPhone', android: 'solo a los de Android' }[a.publico];
         return '<div class="aviso' + (a.activo ? '' : ' apagado') + '">'
           + '<h3>' + esc(a.titulo) + (a.activo ? '' : ' · APAGADO') + '</h3>'
           + '<p>' + esc(a.texto) + '</p>'
@@ -4077,6 +4083,8 @@ const SQL_PUBLICO_AVISO = `(
      a.publico = 'todos'
   OR (a.publico = 'ciudad' AND a.ciudad IS NOT NULL AND LOWER(u.city) = LOWER(a.ciudad))
   OR (a.publico = 'sin-carreras' AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.user_id = u.id))
+  OR (a.publico = 'ios' AND u.plataforma = 'ios')
+  OR (a.publico = 'android' AND u.plataforma = 'android')
   OR (a.publico = 'corredor' AND a.corredor IS NOT NULL AND LOWER(u.display_name) = LOWER(a.corredor))
   OR (a.publico = 'pocos-puntos' AND COALESCE(
         (SELECT st.total_points FROM user_stats st WHERE st.user_id = u.id), 0) <= 100)
@@ -4086,6 +4094,15 @@ const SQL_PUBLICO_AVISO = `(
 
 /** El aviso que toca ver a quien pregunta, o nada. */
 app.get('/app/aviso', { preHandler: requireAuth }, async (req: any, reply) => {
+  // De paso queda apuntado el teléfono: es lo único que permite luego mandar
+  // un aviso solo a iPhone (Salud) o solo a Android.
+  const plataforma = String(req.query?.plataforma ?? '');
+  if (plataforma === 'ios' || plataforma === 'android') {
+    await db.query(
+      `UPDATE users SET plataforma = $2 WHERE id = $1 AND plataforma IS DISTINCT FROM $2`,
+      [req.userId, plataforma],
+    ).catch(() => {});
+  }
   const { rows } = await db.query(
     `SELECT a.id, a.titulo, a.texto, a.imagen_url AS imagen, a.boton, a.enlace,
             a.etiqueta, a.sello, a.nota
@@ -4114,7 +4131,7 @@ app.post('/app/aviso/:id/visto', { preHandler: requireAuth }, async (req: any, r
   return reply.send({ ok: true });
 });
 
-const PUBLICOS_AVISO = ['todos', 'ciudad', 'sin-carreras', 'dormidos', 'pocos-puntos', 'corredor'];
+const PUBLICOS_AVISO = ['todos', 'ciudad', 'sin-carreras', 'dormidos', 'pocos-puntos', 'corredor', 'ios', 'android'];
 
 /** Lista de avisos con cuánta gente los ha visto y a cuánta le tocan. */
 app.get('/admin/avisos', { preHandler: requireAdmin }, async (_req, reply) => {

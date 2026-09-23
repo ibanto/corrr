@@ -1,3 +1,4 @@
+import { Platform } from 'react-native';
 import { API_BASE } from '../theme';
 import { cellsToTerritory, MapOwner, MapTerritory, RemoteCell } from '../map/territory';
 
@@ -426,7 +427,9 @@ class ApiService {
    *  usuario con un error — es un extra, no parte de la carrera. */
   async getAviso(): Promise<Aviso | null> {
     try {
-      const res = await this.request<{ aviso: Aviso | null }>('/app/aviso');
+      // El teléfono se manda para que un aviso pueda ir solo a iPhone o solo a
+      // Android (lo de Salud, por ejemplo, no tiene sentido en Android).
+      const res = await this.request<{ aviso: Aviso | null }>(`/app/aviso?plataforma=${Platform.OS}`);
       return res?.aviso ?? null;
     } catch {
       return null;
