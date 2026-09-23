@@ -1676,6 +1676,17 @@ Sale UNA vez por persona; para repetirlo, se crea otro. Solo lo ven las apps 1.1
   </div>
 </div></div>
 <div id="lista_avisos"></div>
+
+<h2>Bajas del correo</h2>
+<p class="nota">Si alguien pide la baja <b>respondiendo al email</b> (Mail de Apple manda un correo a
+hola@corrr.es en vez de avisarnos), apúntala aquí: si no, seguiría recibiendo campañas.
+Quien usa el enlace del correo se da de baja solo.</p>
+<form class="form" id="fb">
+  <input id="b_quien" placeholder="Nombre del corredor o su email" required>
+  <button class="btn" type="submit">Dar de baja del correo</button>
+  <div id="b_msg" style="font-size:13px;min-height:18px;"></div>
+</form>
+
 <script>
   var K = sessionStorage.getItem('corrr_admin_key');
   function api(ruta, opts) {
@@ -1767,6 +1778,18 @@ Sale UNA vez por persona; para repetirlo, se crea otro. Solo lo ven las apps 1.1
     }) }).then(function () {
       document.getElementById('fa').reset(); previo(); cargar();
     }).catch(function (e) { err.textContent = e.message; });
+  });
+  document.getElementById('fb').addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    var msg = document.getElementById('b_msg');
+    msg.style.color = '#888'; msg.textContent = 'Un momento…';
+    api('/admin/email/baja', { method: 'POST', body: JSON.stringify({ quien: val('b_quien') }) })
+      .then(function (r) {
+        msg.style.color = '#4caf50';
+        msg.textContent = 'Hecho: ' + r.dados_de_baja.join(', ') + ' ya no recibirá más correos de campaña.';
+        document.getElementById('fb').reset();
+      })
+      .catch(function (e) { msg.style.color = '#f44336'; msg.textContent = e.message; });
   });
   cargar();
 </script>
@@ -4331,6 +4354,30 @@ app.register(async (scope) => {
 });
 
 /** GET: cuántos lo recibirían, sin enviar nada. */
+/** Baja del correo apuntada a mano.
+ *
+ *  Hace falta porque la cabecera List-Unsubscribe ofrece dos caminos y solo
+ *  uno pasa por nosotros: Gmail llama al enlace (y queda apuntado), pero Mail
+ *  de Apple manda un CORREO a hola@corrr.es con asunto "Baja" — que es
+ *  perfectamente válido para quien lo pide, pero no toca la base de datos. Sin
+ *  esto, esa persona seguiría recibiendo campañas: la baja hay que respetarla
+ *  llegue por donde llegue. (Javier, 23-sep-2026.) */
+app.post('/admin/email/baja', { preHandler: requireAdmin }, async (req: any, reply) => {
+  const quien = String(req.body?.quien ?? '').trim();
+  if (!quien) return reply.status(400).send({ error: 'Falta el nombre o el email' });
+  const { rows } = await db.query(
+    `UPDATE users SET email_baja_at = COALESCE(email_baja_at, NOW())
+      WHERE LOWER(email) = LOWER($1) OR LOWER(display_name) = LOWER($1)
+      RETURNING display_name, email, email_baja_at`,
+    [quien],
+  );
+  if (rows.length === 0) return reply.status(404).send({ error: `No hay nadie con nombre o email "${quien}"` });
+  if (rows.length > 1) {
+    req.log.warn({ quien, n: rows.length }, '[baja] el nombre coincidía con varias personas');
+  }
+  return reply.send({ ok: true, dados_de_baja: rows.map((r: any) => r.display_name) });
+});
+
 app.get('/admin/email/reactivacion', { preHandler: requireAdmin }, async (_req: any, reply) => {
   const pocos = `COALESCE(s.total_points, 0) <= ${MAX_PUNTOS_REACTIVACION}`;
   const { rows } = await db.query(`
