@@ -102,6 +102,17 @@ interface RemoteZone {
 // ── Grid (v2) ────────────────────────────────────────────────────────────────
 interface Cell { x: number; y: number; }
 
+/** Aviso que el servidor manda enseñar al abrir la app (el pop-up del panel).
+ *  La app no decide nada: enseña lo que le dan y avisa de que lo ha enseñado. */
+interface Aviso {
+  id: number;
+  titulo: string;
+  texto: string;
+  imagen?: string | null;
+  boton?: string | null;
+  enlace?: string | null;
+}
+
 interface ProfileData {
   id: string;
   email: string;
@@ -404,6 +415,24 @@ class ApiService {
     }
   }
 
+  /** El aviso que toca ver, o null. Como el podio: si falla, no se molesta al
+   *  usuario con un error — es un extra, no parte de la carrera. */
+  async getAviso(): Promise<Aviso | null> {
+    try {
+      const res = await this.request<{ aviso: Aviso | null }>('/app/aviso');
+      return res?.aviso ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Ya se ha enseñado: que no vuelva a salir. */
+  async marcarAvisoVisto(id: number): Promise<void> {
+    try {
+      await this.request(`/app/aviso/${id}/visto`, { method: 'POST' });
+    } catch {}
+  }
+
   async getChallenges(): Promise<Challenge[]> {
     try {
       const res = await this.request<Challenge[]>('/challenges');
@@ -604,7 +633,7 @@ interface Friend {
 }
 
 export const api = new ApiService();
-export type { LoginResponse, RankingEntry, Challenge, Achievement, RunRecord, UserStats, MyStats, RemoteZone, ZonePayload, FriendRequest, Friend, Cell, RemoteCell, MapOwner, MapTerritory, CellRunPayload, RunSaveResult, TauntInbox, ProfileData, ProfileUpdate };
+export type { LoginResponse, RankingEntry, Challenge, Achievement, RunRecord, UserStats, MyStats, RemoteZone, ZonePayload, FriendRequest, Friend, Cell, RemoteCell, MapOwner, MapTerritory, Aviso, CellRunPayload, RunSaveResult, TauntInbox, ProfileData, ProfileUpdate };
 
 const MOCK_RANKING: RankingEntry[] = [
   { position: 1, username: 'Laura R.', city: 'Barcelona', points: 28480, zones: 87 },

@@ -33,7 +33,8 @@ import { importNewWorkouts, RUNS_IMPORTED_EVENT } from './src/services/healthkit
 import ZonePopup, { PopupType } from './src/components/ZonePopup';
 import { CHECK_TAUNTS_EVENT, RUN_TABS_EVENT } from './src/services/notifications';
 import PodioModal from './src/components/PodioModal';
-import type { Podium } from './src/services/api';
+import AvisoModal from './src/components/AvisoModal';
+import type { Podium, Aviso } from './src/services/api';
 import * as Notifications from 'expo-notifications';
 
 type Tab = 'Mapa' | 'Stats' | 'Ranking' | 'Retos' | 'Perfil';
@@ -94,6 +95,11 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [stolenPopup, setStolenPopup] = useState<{ visible: boolean; rivalName?: string; points?: number }>({ visible: false });
   const [podium, setPodium] = useState<Podium | null>(null);
+  /** El aviso que manda el servidor (el pop-up que se escribe desde el panel).
+   *  `avisoListo` es la presentación diferida de siempre: en iOS un Modal que
+   *  se monta mientras otro se cierra no llega a presentarse. */
+  const [aviso, setAviso] = useState<Aviso | null>(null);
+  const [avisoListo, setAvisoListo] = useState(false);
   // Versión por debajo de la mínima: la app se bloquea hasta actualizar. El
   // territorio es compartido, así que una versión con el reparto de celdas
   // roto le estropea el mapa a todos, no solo a quien la tiene.
@@ -263,6 +269,41 @@ export default function App() {
     };
   }, [user?.id]);
 
+  // El aviso del servidor. Se pregunta al entrar y cada vez que se vuelve a la
+  // app: así un aviso publicado a media mañana llega sin tener que reinstalar
+  // nada ni sacar versión. Quién lo ve y cuántas veces lo decide el servidor.
+  useEffect(() => {
+    if (!user?.id) { setAviso(null); return; }
+    let cancelado = false;
+    const cargar = async () => {
+      const a = await api.getAviso();
+      if (!cancelado && a) setAviso(prev => prev ?? a);
+    };
+    cargar();
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') cargar();
+    });
+    return () => { cancelado = true; sub.remove(); };
+  }, [user?.id]);
+
+  // No se presenta encima de otra cosa: el podio del sábado, el aviso de robo
+  // y la pantalla de "actualiza" van antes.
+  useEffect(() => {
+    const bloqueado = !aviso || !!podium || stolenPopup.visible || updateRequired;
+    if (bloqueado) { setAvisoListo(false); return; }
+    const t = setTimeout(() => setAvisoListo(true), 900);
+    return () => clearTimeout(t);
+  }, [aviso, podium, stolenPopup.visible, updateRequired]);
+
+  /** Cerrar el aviso: se le dice al servidor que ya se ha visto, para que no
+   *  vuelva a salir. Si eso falla, como mucho sale otra vez. */
+  const cerrarAviso = () => {
+    const id = aviso?.id;
+    setAvisoListo(false);
+    setAviso(null);
+    if (id !== undefined) api.marcarAvisoVisto(id);
+  };
+
   const handleAuthenticated = async (token: string, userData: User) => {
     await SecureStore.setItemAsync(TOKEN_KEY, token);
     await AsyncStorage.setItem(USER_KEY, JSON.stringify(userData));
@@ -400,6 +441,9 @@ export default function App() {
           currentUserId={user?.id}
           onClose={() => setPodium(null)}
         />
+      )}
+      {aviso && avisoListo && (
+        <AvisoModal visible aviso={aviso} onClose={cerrarAviso} />
       )}
       <ZonePopup
         visible={stolenPopup.visible}

@@ -367,6 +367,37 @@ async function initDB() {
     )
   `).catch(() => {});
   await db.query(`ALTER TABLE email_envios ENABLE ROW LEVEL SECURITY`).catch(() => {});
+  // Avisos: el pop-up que sale al abrir la app y que se escribe desde el
+  // panel, sin sacar versión nueva. La app (1.11.10+) pregunta por el suyo al
+  // arrancar; las anteriores ni preguntan, así que no les afecta.
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS avisos (
+      id SERIAL PRIMARY KEY,
+      titulo TEXT NOT NULL,
+      texto TEXT NOT NULL,
+      imagen_url TEXT,
+      boton TEXT,
+      enlace TEXT,
+      publico TEXT NOT NULL DEFAULT 'todos',
+      ciudad TEXT,
+      desde TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      hasta TIMESTAMPTZ,
+      activo BOOLEAN NOT NULL DEFAULT TRUE,
+      creado_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `).catch(() => {});
+  // Quién ha visto qué. La clave primaria es lo que hace que un aviso salga
+  // UNA vez por persona, aunque cierre y vuelva a abrir la app.
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS aviso_vistas (
+      aviso_id INTEGER NOT NULL REFERENCES avisos(id) ON DELETE CASCADE,
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      visto_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (aviso_id, user_id)
+    )
+  `).catch(() => {});
+  await db.query(`ALTER TABLE avisos ENABLE ROW LEVEL SECURITY`).catch(() => {});
+  await db.query(`ALTER TABLE aviso_vistas ENABLE ROW LEVEL SECURITY`).catch(() => {});
   // Motivo por el que una carrera quedó marcada como geométricamente inusual.
   // Nulo en las normales. Se guarda en vez de rechazar la carrera: ver el
   // bloque de anti-trampas en POST /runs.
@@ -1533,6 +1564,22 @@ app.get('/admin/panel', { preHandler: requireAdmin }, async (req: any, reply) =>
   .bar{background:#FF6600;height:10px;border-radius:5px;display:inline-block;vertical-align:middle;margin-right:8px;}
   .day{color:#999;font-size:12px;padding:3px 0;}
   .btn{background:#FF6600;color:#fff;border:none;border-radius:20px;padding:8px 20px;font-weight:700;cursor:pointer;font-size:13px;}
+  .form{display:grid;gap:8px;max-width:520px;}
+  .form input,.form textarea,.form select{background:#0A0A0A;border:1px solid #333;border-radius:8px;
+    padding:10px;color:#fff;font-size:14px;font-family:inherit;box-sizing:border-box;width:100%;}
+  .form textarea{min-height:76px;resize:vertical;}
+  .nota{color:#888;font-size:12px;margin:0 0 10px;}
+  .aviso{background:#161616;border:1px solid #262626;border-radius:12px;padding:12px;margin-top:10px;max-width:520px;}
+  .aviso h3{margin:0 0 4px;font-size:15px;color:#fff;} .aviso p{margin:0 0 8px;color:#bbb;font-size:13px;white-space:pre-wrap;}
+  .aviso .meta{color:#888;font-size:12px;margin-bottom:8px;}
+  .apagado{opacity:.5;}
+  .mini{background:#262626;color:#eee;border:0;border-radius:16px;padding:6px 14px;font-size:12px;
+    font-weight:700;cursor:pointer;margin-right:6px;}
+  .previo{background:#161616;border:1px solid #FF6600;border-radius:16px;padding:18px;max-width:300px;margin-top:10px;}
+  .previo .t{color:#FF6600;font-size:22px;font-weight:900;letter-spacing:1px;text-align:center;}
+  .previo .x{color:#ddd;font-size:14px;margin-top:10px;white-space:pre-wrap;text-align:center;}
+  .previo .b{background:#FF6600;color:#fff;border-radius:12px;padding:10px;text-align:center;
+    font-weight:900;margin-top:14px;letter-spacing:1px;}
 </style></head><body>
 <h1>CORRR — Panel de control</h1>
 <div class="sub">Generado ${new Date().toLocaleString('es-ES', { timeZone: 'Europe/Madrid' })} (hora Madrid) · se auto-refresca cada 5 min · <button class="btn" onclick="location.reload()">Actualizar</button></div>
@@ -1565,6 +1612,96 @@ ${lastRuns.rows.length === 0 ? '<tr><td colspan="5" style="color:#666">Sin carre
   `<tr><td><b>${esc(r.display_name)}</b></td><td>${Number(r.distance_km).toFixed(2)}</td>
    <td>${fmtDur(r.duration_secs)}</td><td>${r.points}</td><td>${fmtDate(r.created_at)}</td></tr>`).join('')}
 </table></div>
+
+<h2>Aviso en la app</h2>
+<p class="nota">El pop-up que sale al abrir la app. Se publica desde aquí, sin sacar versión nueva.
+Sale UNA vez por persona; para repetirlo, se crea otro. Solo lo ven las apps 1.11.10 o más nuevas.</p>
+<form class="form" id="fa">
+  <input id="a_titulo" placeholder="Título — p. ej. NUEVO RETO" maxlength="60" required>
+  <textarea id="a_texto" placeholder="Texto del aviso" maxlength="400" required></textarea>
+  <input id="a_boton" placeholder="Texto del botón (si lo dejas vacío: VALE)" maxlength="24">
+  <input id="a_enlace" placeholder="Enlace que abre el botón (opcional)">
+  <input id="a_imagen" placeholder="Imagen, dirección https (opcional)">
+  <select id="a_publico">
+    <option value="todos">A todo el mundo</option>
+    <option value="ciudad">Solo a una ciudad</option>
+    <option value="sin-carreras">Solo a quien no ha corrido nunca</option>
+    <option value="dormidos">Solo a quien no corre desde hace 2 semanas</option>
+  </select>
+  <input id="a_ciudad" placeholder="Ciudad (p. ej. Barcelona)" style="display:none">
+  <button class="btn" type="submit">Publicar aviso</button>
+  <div class="err" id="a_err" style="color:#f44336;font-size:13px;"></div>
+</form>
+<div class="previo" id="previo">
+  <div class="t" id="p_titulo">TÍTULO</div>
+  <div class="x" id="p_texto">Así se verá en el móvil.</div>
+  <div class="b" id="p_boton">VALE</div>
+</div>
+<div id="lista_avisos"></div>
+<script>
+  var K = sessionStorage.getItem('corrr_admin_key');
+  function api(ruta, opts) {
+    opts = opts || {};
+    opts.headers = { 'Content-Type': 'application/json', 'x-admin-key': K };
+    return fetch(ruta, opts).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (d) {
+        if (!r.ok) throw new Error(d.error || 'Error del servidor');
+        return d;
+      });
+    });
+  }
+  function esc(t) { return String(t == null ? '' : t).replace(/[&<>"]/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+  var val = function (id) { return document.getElementById(id).value.trim(); };
+  function previo() {
+    document.getElementById('p_titulo').textContent = val('a_titulo') || 'TÍTULO';
+    document.getElementById('p_texto').textContent = val('a_texto') || 'Así se verá en el móvil.';
+    document.getElementById('p_boton').textContent = (val('a_boton') || 'VALE').toUpperCase();
+  }
+  ['a_titulo', 'a_texto', 'a_boton'].forEach(function (id) {
+    document.getElementById(id).addEventListener('input', previo);
+  });
+  document.getElementById('a_publico').addEventListener('change', function (e) {
+    document.getElementById('a_ciudad').style.display = e.target.value === 'ciudad' ? 'block' : 'none';
+  });
+  function pintar(avisos) {
+    document.getElementById('lista_avisos').innerHTML = avisos.length === 0
+      ? '<p class="nota">Todavía no has publicado ninguno.</p>'
+      : avisos.map(function (a) {
+        var quien = { todos: 'a todo el mundo', ciudad: 'solo en ' + esc(a.ciudad || ''),
+          'sin-carreras': 'a quien no ha corrido nunca', dormidos: 'a quien no corre hace 2 semanas' }[a.publico];
+        return '<div class="aviso' + (a.activo ? '' : ' apagado') + '">'
+          + '<h3>' + esc(a.titulo) + (a.activo ? '' : ' · APAGADO') + '</h3>'
+          + '<p>' + esc(a.texto) + '</p>'
+          + '<div class="meta">' + quien + ' · lo han visto ' + a.vistas + ' de ' + a.publico_total + '</div>'
+          + '<button class="mini" data-encender="' + a.id + '">' + (a.activo ? 'Apagar' : 'Encender') + '</button>'
+          + '<button class="mini" data-borrar="' + a.id + '">Borrar</button></div>';
+      }).join('');
+  }
+  function cargar() { api('/admin/avisos').then(pintar).catch(function () {}); }
+  document.getElementById('lista_avisos').addEventListener('click', function (ev) {
+    var enc = ev.target.getAttribute('data-encender');
+    var bor = ev.target.getAttribute('data-borrar');
+    if (enc) {
+      var apagar = ev.target.textContent === 'Apagar';
+      api('/admin/avisos/' + enc, { method: 'PUT', body: JSON.stringify({ activo: !apagar }) }).then(cargar);
+    } else if (bor && confirm('¿Borrar este aviso? Deja de salir y se pierde el recuento de quién lo vio.')) {
+      api('/admin/avisos/' + bor, { method: 'DELETE' }).then(cargar);
+    }
+  });
+  document.getElementById('fa').addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    var err = document.getElementById('a_err'); err.textContent = '';
+    api('/admin/avisos', { method: 'POST', body: JSON.stringify({
+      titulo: val('a_titulo'), texto: val('a_texto'), boton: val('a_boton') || null,
+      enlace: val('a_enlace') || null, imagen: val('a_imagen') || null,
+      publico: document.getElementById('a_publico').value, ciudad: val('a_ciudad') || null,
+    }) }).then(function () {
+      document.getElementById('fa').reset(); previo(); cargar();
+    }).catch(function (e) { err.textContent = e.message; });
+  });
+  cargar();
+</script>
 </body></html>`;
 
   return reply.type('text/html; charset=utf-8').send(html);
@@ -3822,6 +3959,104 @@ app.get('/app/version', async (req: any, reply) => {
       ? (IOS_UPDATE_URL ? { updateUrl: IOS_UPDATE_URL } : {})
       : { updateUrl: ANDROID_UPDATE_URL }),
   });
+});
+
+// ── Avisos en la app ─────────────────────────────────────────────────────────
+// El pop-up que sale al abrir. Se escribe desde /admin y se cambia cuando
+// haga falta: no necesita versión nueva de la app, que es justo para lo que
+// existe (anunciar una novedad, lanzar un reto, avisar de una caída).
+//
+// Un aviso sale UNA vez por persona: el servidor apunta quién lo ha visto. Si
+// quieres repetirlo, se crea otro.
+
+/** A quién le toca cada tipo de aviso. Se calcula en el servidor para no
+ *  mandarle a la app datos de nadie. */
+const SQL_PUBLICO_AVISO = `(
+     a.publico = 'todos'
+  OR (a.publico = 'ciudad' AND a.ciudad IS NOT NULL AND LOWER(u.city) = LOWER(a.ciudad))
+  OR (a.publico = 'sin-carreras' AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.user_id = u.id))
+  OR (a.publico = 'dormidos' AND NOT EXISTS (
+        SELECT 1 FROM runs r WHERE r.user_id = u.id AND r.created_at >= NOW() - INTERVAL '14 days'))
+)`;
+
+/** El aviso que toca ver a quien pregunta, o nada. */
+app.get('/app/aviso', { preHandler: requireAuth }, async (req: any, reply) => {
+  const { rows } = await db.query(
+    `SELECT a.id, a.titulo, a.texto, a.imagen_url AS imagen, a.boton, a.enlace
+       FROM avisos a, users u
+      WHERE u.id = $1
+        AND a.activo
+        AND a.desde <= NOW()
+        AND (a.hasta IS NULL OR a.hasta > NOW())
+        AND ${SQL_PUBLICO_AVISO}
+        AND NOT EXISTS (SELECT 1 FROM aviso_vistas v WHERE v.aviso_id = a.id AND v.user_id = u.id)
+      ORDER BY a.creado_at DESC
+      LIMIT 1`,
+    [req.userId],
+  );
+  return reply.send({ aviso: rows[0] ?? null });
+});
+
+/** La app avisa de que ya lo ha enseñado, para no repetirlo. */
+app.post('/app/aviso/:id/visto', { preHandler: requireAuth }, async (req: any, reply) => {
+  const id = parseInt(String(req.params?.id ?? ''), 10);
+  if (!Number.isInteger(id)) return reply.status(400).send({ error: 'id no válido' });
+  await db.query(
+    `INSERT INTO aviso_vistas (aviso_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+    [id, req.userId],
+  ).catch(() => {});
+  return reply.send({ ok: true });
+});
+
+const PUBLICOS_AVISO = ['todos', 'ciudad', 'sin-carreras', 'dormidos'];
+
+/** Lista de avisos con cuánta gente los ha visto y a cuánta le tocan. */
+app.get('/admin/avisos', { preHandler: requireAdmin }, async (_req, reply) => {
+  const { rows } = await db.query(
+    `SELECT a.*,
+            (SELECT COUNT(*)::int FROM aviso_vistas v WHERE v.aviso_id = a.id) AS vistas,
+            (SELECT COUNT(*)::int FROM users u WHERE ${SQL_PUBLICO_AVISO}) AS publico_total
+       FROM avisos a ORDER BY a.creado_at DESC LIMIT 50`,
+  );
+  return reply.send(rows);
+});
+
+app.post('/admin/avisos', { preHandler: requireAdmin }, async (req: any, reply) => {
+  const { titulo, texto, imagen, boton, enlace, publico, ciudad, hasta } = req.body ?? {};
+  if (typeof titulo !== 'string' || !titulo.trim()) return reply.status(400).send({ error: 'Falta el título' });
+  if (typeof texto !== 'string' || !texto.trim()) return reply.status(400).send({ error: 'Falta el texto' });
+  const pub = PUBLICOS_AVISO.includes(publico) ? publico : 'todos';
+  if (pub === 'ciudad' && (typeof ciudad !== 'string' || !ciudad.trim())) {
+    return reply.status(400).send({ error: 'Para el público "ciudad" hace falta la ciudad' });
+  }
+  const { rows } = await db.query(
+    `INSERT INTO avisos (titulo, texto, imagen_url, boton, enlace, publico, ciudad, hasta)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+    [titulo.trim(), texto.trim(), imagen || null, boton || null, enlace || null,
+     pub, pub === 'ciudad' ? ciudad.trim() : null, hasta || null],
+  );
+  return reply.status(201).send(rows[0]);
+});
+
+/** Encender, apagar o corregir un aviso ya creado. */
+app.put('/admin/avisos/:id', { preHandler: requireAdmin }, async (req: any, reply) => {
+  const { titulo, texto, imagen, boton, enlace, activo, hasta } = req.body ?? {};
+  const { rows } = await db.query(
+    `UPDATE avisos SET
+       titulo = COALESCE($1, titulo), texto = COALESCE($2, texto),
+       imagen_url = COALESCE($3, imagen_url), boton = COALESCE($4, boton),
+       enlace = COALESCE($5, enlace), activo = COALESCE($6, activo), hasta = COALESCE($7, hasta)
+     WHERE id = $8 RETURNING *`,
+    [titulo ?? null, texto ?? null, imagen ?? null, boton ?? null, enlace ?? null,
+     typeof activo === 'boolean' ? activo : null, hasta ?? null, req.params.id],
+  );
+  if (rows.length === 0) return reply.status(404).send({ error: 'No existe ese aviso' });
+  return reply.send(rows[0]);
+});
+
+app.delete('/admin/avisos/:id', { preHandler: requireAdmin }, async (req: any, reply) => {
+  await db.query(`DELETE FROM avisos WHERE id = $1`, [req.params.id]);
+  return reply.send({ ok: true });
 });
 
 // ── Emails sobre CORRR ───────────────────────────────────────────────────────
