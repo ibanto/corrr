@@ -1579,6 +1579,10 @@ app.get('/admin/panel', { preHandler: requireAdmin }, async (req: any, reply) =>
     padding:10px;color:#fff;font-size:14px;font-family:inherit;box-sizing:border-box;width:100%;}
   .form textarea{min-height:76px;resize:vertical;}
   .nota{color:#888;font-size:12px;margin:0 0 10px;}
+  /* La respuesta de un botón que no navega a ningún sitio: si no se ve, parece
+     que el botón no hace nada. */
+  .resultado{margin-top:12px;max-width:520px;background:#161616;border:1px solid #333;
+    border-left-width:4px;border-radius:8px;padding:12px 14px;font-size:15px;line-height:1.35;}
   .aviso{background:#161616;border:1px solid #262626;border-radius:12px;padding:12px;margin-top:10px;max-width:520px;}
   .aviso h3{margin:0 0 4px;font-size:15px;color:#fff;} .aviso p{margin:0 0 8px;color:#bbb;font-size:13px;white-space:pre-wrap;}
   .aviso .meta{color:#888;font-size:12px;margin-bottom:8px;}
@@ -1686,7 +1690,7 @@ Sale UNA vez por persona; para repetirlo, se crea otro. Solo lo ven las apps 1.1
 <p class="nota">Comprueba si nuestra app de Strava sigue funcionando con las claves de siempre.
 La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es anterior.</p>
 <button class="btn" id="bstrava">Comprobar Strava</button>
-<div id="strava_msg" style="font-size:13px;min-height:18px;margin-top:8px;"></div>
+<div id="strava_msg" class="resultado" style="display:none"></div>
 
 <h2>Bajas del correo</h2>
 <p class="nota">Si alguien pide la baja <b>respondiendo al email</b> (Mail de Apple manda un correo a
@@ -1695,7 +1699,7 @@ Quien usa el enlace del correo se da de baja solo.</p>
 <form class="form" id="fb">
   <input id="b_quien" placeholder="Nombre del corredor o su email" required>
   <button class="btn" type="submit">Dar de baja del correo</button>
-  <div id="b_msg" style="font-size:13px;min-height:18px;"></div>
+  <div id="b_msg" class="resultado" style="display:none"></div>
 </form>
 
 <script>
@@ -1794,22 +1798,33 @@ Quien usa el enlace del correo se da de baja solo.</p>
   document.getElementById('fb').addEventListener('submit', function (ev) {
     ev.preventDefault();
     var msg = document.getElementById('b_msg');
-    msg.style.color = '#888'; msg.textContent = 'Un momento…';
+    msg.style.display = 'block'; msg.style.color = '#bbb';
+    msg.style.borderLeftColor = '#555'; msg.textContent = 'Un momento…';
     api('/admin/email/baja', { method: 'POST', body: JSON.stringify({ quien: val('b_quien') }) })
       .then(function (r) {
-        msg.style.color = '#4caf50';
-        msg.textContent = 'Hecho: ' + r.dados_de_baja.join(', ') + ' ya no recibirá más correos de campaña.';
+        msg.style.color = '#4caf50'; msg.style.borderLeftColor = '#4caf50';
+        msg.textContent = '✓ Hecho: ' + r.dados_de_baja.join(', ') + ' ya no recibirá más correos de campaña.';
         document.getElementById('fb').reset();
       })
-      .catch(function (e) { msg.style.color = '#f44336'; msg.textContent = e.message; });
+      .catch(function (e) {
+        msg.style.color = '#f44336'; msg.style.borderLeftColor = '#f44336';
+        msg.textContent = '✗ ' + e.message;
+      });
   });
   document.getElementById('bstrava').addEventListener('click', function () {
+    var b = document.getElementById('bstrava');
     var m = document.getElementById('strava_msg');
-    m.style.color = '#888'; m.textContent = 'Preguntando a Strava…';
+    b.disabled = true; b.textContent = 'Preguntando a Strava…';
+    m.style.display = 'block'; m.style.color = '#bbb';
+    m.style.borderLeftColor = '#555'; m.textContent = 'Preguntando a Strava…';
     api('/admin/strava/estado').then(function (r) {
       m.style.color = r.ok ? '#4caf50' : '#f44336';
-      m.textContent = r.mensaje;
-    }).catch(function (e) { m.style.color = '#f44336'; m.textContent = e.message; });
+      m.style.borderLeftColor = r.ok ? '#4caf50' : '#f44336';
+      m.textContent = (r.ok ? '✓ ' : '✗ ') + r.mensaje;
+    }).catch(function (e) {
+      m.style.color = '#f44336'; m.style.borderLeftColor = '#f44336';
+      m.textContent = '✗ ' + e.message;
+    }).then(function () { b.disabled = false; b.textContent = 'Comprobar Strava'; });
   });
   cargar();
 </script>
