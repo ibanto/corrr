@@ -396,6 +396,11 @@ async function initDB() {
       PRIMARY KEY (aviso_id, user_id)
     )
   `).catch(() => {});
+  // Adornos del cartel (la línea de arriba, el sello de la esquina y la nota
+  // del botón). Opcionales: un aviso sin ellos se ve bien igual.
+  await db.query(`ALTER TABLE avisos ADD COLUMN IF NOT EXISTS etiqueta TEXT`).catch(() => {});
+  await db.query(`ALTER TABLE avisos ADD COLUMN IF NOT EXISTS sello TEXT`).catch(() => {});
+  await db.query(`ALTER TABLE avisos ADD COLUMN IF NOT EXISTS nota TEXT`).catch(() => {});
   await db.query(`ALTER TABLE avisos ENABLE ROW LEVEL SECURITY`).catch(() => {});
   await db.query(`ALTER TABLE aviso_vistas ENABLE ROW LEVEL SECURITY`).catch(() => {});
   // Motivo por el que una carrera quedó marcada como geométricamente inusual.
@@ -1575,11 +1580,30 @@ app.get('/admin/panel', { preHandler: requireAdmin }, async (req: any, reply) =>
   .apagado{opacity:.5;}
   .mini{background:#262626;color:#eee;border:0;border-radius:16px;padding:6px 14px;font-size:12px;
     font-weight:700;cursor:pointer;margin-right:6px;}
-  .previo{background:#161616;border:1px solid #FF6600;border-radius:16px;padding:18px;max-width:300px;margin-top:10px;}
-  .previo .t{color:#FF6600;font-size:22px;font-weight:900;letter-spacing:1px;text-align:center;}
-  .previo .x{color:#ddd;font-size:14px;margin-top:10px;white-space:pre-wrap;text-align:center;}
-  .previo .b{background:#FF6600;color:#fff;border-radius:12px;padding:10px;text-align:center;
-    font-weight:900;margin-top:14px;letter-spacing:1px;}
+  /* El corte de las esquinas se hace igual que en la app: el marco naranja
+     debajo y el cartel encima, los dos con la misma esquina recortada. */
+  .previo{background:#FF5500;padding:2px;max-width:364px;margin-top:10px;
+    clip-path:polygon(28px 0,100% 0,100% calc(100% - 28px),calc(100% - 28px) 100%,0 100%,0 28px);}
+  .previo .dentro{background:#080808;padding:20px;position:relative;overflow:hidden;
+    clip-path:polygon(27px 0,100% 0,100% calc(100% - 27px),calc(100% - 27px) 100%,0 100%,0 27px);
+    font-family:'Avenir Next Condensed','Roboto Condensed',Impact,sans-serif;}
+  .previo .rayas{position:absolute;top:0;right:0;height:30px;width:130px;overflow:hidden;}
+  .previo .rayas i{position:absolute;top:-10px;width:7px;height:56px;background:#FF5500;
+    transform:skewX(-20deg);}
+  .previo .etq{color:#fff;font-size:11px;font-weight:800;letter-spacing:1.6px;}
+  .previo .t1{color:#fff;font-size:42px;line-height:40px;font-weight:900;letter-spacing:.5px;}
+  .previo .sub{height:5px;background:#FF5500;margin:-4px 0 2px;}
+  .previo .t2{display:inline-block;background:#FF5500;color:#080808;font-size:42px;line-height:46px;
+    font-weight:900;padding:0 10px;}
+  .previo .x{color:#fff;font-size:18px;line-height:22px;margin-top:14px;font-weight:700;}
+  .previo .x b{color:#FF5500;font-weight:700;}
+  .previo .pie{display:flex;gap:8px;margin-top:18px;align-items:stretch;}
+  .previo .b{flex:1;background:#FF5500;color:#080808;padding:10px;text-align:center;
+    font-weight:900;font-size:22px;letter-spacing:1px;transform:skewX(-12deg);}
+  .previo .b span{display:inline-block;transform:skewX(12deg);}
+  .previo .nt{border:1px solid #FF5500;color:#FF5500;font-size:12px;font-weight:700;
+    padding:6px 10px;display:flex;flex-direction:column;justify-content:center;max-width:120px;}
+
 </style></head><body>
 <h1>CORRR — Panel de control</h1>
 <div class="sub">Generado ${new Date().toLocaleString('es-ES', { timeZone: 'Europe/Madrid' })} (hora Madrid) · se auto-refresca cada 5 min · <button class="btn" onclick="location.reload()">Actualizar</button></div>
@@ -1622,6 +1646,9 @@ Sale UNA vez por persona; para repetirlo, se crea otro. Solo lo ven las apps 1.1
   <input id="a_boton" placeholder="Texto del botón (si lo dejas vacío: VALE)" maxlength="24">
   <input id="a_enlace" placeholder="Enlace que abre el botón (opcional)">
   <input id="a_imagen" placeholder="Imagen, dirección https (opcional)">
+  <input id="a_etiqueta" placeholder="Línea pequeña de arriba, p. ej. MAPA ACTUALIZADO (opcional)" maxlength="30">
+  <input id="a_sello" placeholder="Sello de la esquina, p. ej. TERRITORIO LIBRE (opcional)" maxlength="24">
+  <input id="a_nota" placeholder="Nota junto al botón, p. ej. AHORA / SIN CORTES (opcional)" maxlength="40">
   <select id="a_publico">
     <option value="todos">A todo el mundo</option>
     <option value="ciudad">Solo a una ciudad</option>
@@ -1632,11 +1659,17 @@ Sale UNA vez por persona; para repetirlo, se crea otro. Solo lo ven las apps 1.1
   <button class="btn" type="submit">Publicar aviso</button>
   <div class="err" id="a_err" style="color:#f44336;font-size:13px;"></div>
 </form>
-<div class="previo" id="previo">
-  <div class="t" id="p_titulo">TÍTULO</div>
+<div class="previo" id="previo"><div class="dentro">
+  <div class="rayas" id="p_rayas"></div>
+  <div class="etq" id="p_etiqueta"></div>
+  <div class="t1" id="p_t1"></div><div class="sub" id="p_sub"></div>
+  <div><span class="t2" id="p_t2">TÍTULO</span></div>
   <div class="x" id="p_texto">Así se verá en el móvil.</div>
-  <div class="b" id="p_boton">VALE</div>
-</div>
+  <div class="pie">
+    <div class="b"><span id="p_boton">VALE</span></div>
+    <div class="nt" id="p_nota" style="display:none"></div>
+  </div>
+</div></div>
 <div id="lista_avisos"></div>
 <script>
   var K = sessionStorage.getItem('corrr_admin_key');
@@ -1653,12 +1686,36 @@ Sale UNA vez por persona; para repetirlo, se crea otro. Solo lo ven las apps 1.1
   function esc(t) { return String(t == null ? '' : t).replace(/[&<>"]/g, function (c) {
     return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
   var val = function (id) { return document.getElementById(id).value.trim(); };
-  function previo() {
-    document.getElementById('p_titulo').textContent = val('a_titulo') || 'TÍTULO';
-    document.getElementById('p_texto').textContent = val('a_texto') || 'Así se verá en el móvil.';
-    document.getElementById('p_boton').textContent = (val('a_boton') || 'VALE').toUpperCase();
+  // Rayas de obra de la esquina, las mismas que pinta la app.
+  for (var k = 0; k < 9; k++) {
+    var r = document.createElement('i');
+    r.style.right = (k * 13) + 'px';
+    document.getElementById('p_rayas').appendChild(r);
   }
-  ['a_titulo', 'a_texto', 'a_boton'].forEach(function (id) {
+  function previo() {
+    // El título se parte igual que en la app: lo de delante en blanco y la
+    // última palabra sobre el bloque naranja.
+    var t = (val('a_titulo') || 'TÍTULO').toUpperCase().replace(/\s+/g, ' ').trim();
+    var corte = t.lastIndexOf(' ');
+    document.getElementById('p_t1').textContent = corte === -1 ? '' : t.slice(0, corte);
+    document.getElementById('p_sub').style.display = corte === -1 ? 'none' : 'block';
+    document.getElementById('p_t2').textContent = corte === -1 ? t : t.slice(corte + 1);
+    // Lo que va entre asteriscos sale en naranja, como en el móvil.
+    var x = val('a_texto') || 'Así se verá en el móvil.';
+    document.getElementById('p_texto').innerHTML = esc(x).split('*').map(function (trozo, i) {
+      return i % 2 === 1 ? '<b>' + trozo + '</b>' : trozo;
+    }).join('');
+    document.getElementById('p_boton').textContent = '▶ ' + (val('a_boton') || 'VALE').toUpperCase();
+    var etq = document.getElementById('p_etiqueta');
+    etq.textContent = val('a_etiqueta').toUpperCase();
+    var nota = val('a_nota');
+    var caja = document.getElementById('p_nota');
+    caja.style.display = nota ? 'flex' : 'none';
+    caja.innerHTML = nota.split('/').slice(0, 2).map(function (l) {
+      return '<div>' + esc(l.trim().toUpperCase()) + '</div>';
+    }).join('');
+  }
+  ['a_titulo', 'a_texto', 'a_boton', 'a_etiqueta', 'a_nota'].forEach(function (id) {
     document.getElementById(id).addEventListener('input', previo);
   });
   document.getElementById('a_publico').addEventListener('change', function (e) {
@@ -1696,6 +1753,8 @@ Sale UNA vez por persona; para repetirlo, se crea otro. Solo lo ven las apps 1.1
       titulo: val('a_titulo'), texto: val('a_texto'), boton: val('a_boton') || null,
       enlace: val('a_enlace') || null, imagen: val('a_imagen') || null,
       publico: document.getElementById('a_publico').value, ciudad: val('a_ciudad') || null,
+      etiqueta: val('a_etiqueta') || null, sello: val('a_sello') || null,
+      nota: val('a_nota').split('/').slice(0, 2).map(function (l) { return l.trim(); }).join('\n') || null,
     }) }).then(function () {
       document.getElementById('fa').reset(); previo(); cargar();
     }).catch(function (e) { err.textContent = e.message; });
@@ -3982,7 +4041,8 @@ const SQL_PUBLICO_AVISO = `(
 /** El aviso que toca ver a quien pregunta, o nada. */
 app.get('/app/aviso', { preHandler: requireAuth }, async (req: any, reply) => {
   const { rows } = await db.query(
-    `SELECT a.id, a.titulo, a.texto, a.imagen_url AS imagen, a.boton, a.enlace
+    `SELECT a.id, a.titulo, a.texto, a.imagen_url AS imagen, a.boton, a.enlace,
+            a.etiqueta, a.sello, a.nota
        FROM avisos a, users u
       WHERE u.id = $1
         AND a.activo
@@ -4022,7 +4082,7 @@ app.get('/admin/avisos', { preHandler: requireAdmin }, async (_req, reply) => {
 });
 
 app.post('/admin/avisos', { preHandler: requireAdmin }, async (req: any, reply) => {
-  const { titulo, texto, imagen, boton, enlace, publico, ciudad, hasta } = req.body ?? {};
+  const { titulo, texto, imagen, boton, enlace, publico, ciudad, hasta, etiqueta, sello, nota } = req.body ?? {};
   if (typeof titulo !== 'string' || !titulo.trim()) return reply.status(400).send({ error: 'Falta el título' });
   if (typeof texto !== 'string' || !texto.trim()) return reply.status(400).send({ error: 'Falta el texto' });
   const pub = PUBLICOS_AVISO.includes(publico) ? publico : 'todos';
@@ -4030,10 +4090,11 @@ app.post('/admin/avisos', { preHandler: requireAdmin }, async (req: any, reply) 
     return reply.status(400).send({ error: 'Para el público "ciudad" hace falta la ciudad' });
   }
   const { rows } = await db.query(
-    `INSERT INTO avisos (titulo, texto, imagen_url, boton, enlace, publico, ciudad, hasta)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+    `INSERT INTO avisos (titulo, texto, imagen_url, boton, enlace, publico, ciudad, hasta, etiqueta, sello, nota)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
     [titulo.trim(), texto.trim(), imagen || null, boton || null, enlace || null,
-     pub, pub === 'ciudad' ? ciudad.trim() : null, hasta || null],
+     pub, pub === 'ciudad' ? ciudad.trim() : null, hasta || null,
+     etiqueta || null, sello || null, nota || null],
   );
   return reply.status(201).send(rows[0]);
 });

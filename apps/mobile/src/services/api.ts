@@ -111,6 +111,11 @@ interface Aviso {
   imagen?: string | null;
   boton?: string | null;
   enlace?: string | null;
+  /** Adornos del cartel, todos opcionales: línea pequeña de arriba, sello de
+   *  la esquina y nota al lado del botón (hasta dos líneas). */
+  etiqueta?: string | null;
+  sello?: string | null;
+  nota?: string | null;
 }
 
 interface ProfileData {
