@@ -47,7 +47,8 @@ el resto se hace a mano en Xcode, App Store Connect, Play Console y Railway.
 No pregunta por el cifrado: `ITSAppUsesNonExemptEncryption` es `false` en el Info.plist.
 
 Si la versión toca HealthKit, añadir en **Notas para la revisión** para qué se
-usa y dónde se activa (Perfil → Apple Watch).
+usa y dónde se activa: **Perfil → "Tus otras carreras" → "Que cuenten también"**
+(hasta la 1.11.9 esa sección se llamaba "Apple Watch").
 
 ## 4. Android — Google Play Console
 
