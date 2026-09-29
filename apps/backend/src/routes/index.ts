@@ -3210,10 +3210,16 @@ app.post('/runs', {
             mias.map((c: any) => ({ x: c.cell_x, y: c.cell_y })), caja,
           );
           if (encerradas.length > MAX_CELDAS_CERCO) {
+            // Callarse es lo peor que se puede hacer aquí: el corredor cierra
+            // su vuelta, no pasa nada y no sabe por qué. Se le dice — y como
+            // el aviso queda en la tabla, sale también en la lista del panel,
+            // así que se entera quien lleva el juego.
             req.log.warn(
               { userId, encerradas: encerradas.length },
               '[cerco] demasiado grande, no se rellena',
             );
+            await avisarCercoEnorme(client, userId, encerradas.length)
+              .catch((e: any) => req.log.warn({ err: String(e) }, '[cerco] no se pudo avisar del tope'));
           } else if (encerradas.length > 0) {
             const cerco = await ocuparCercadas(client, userId, encerradas, runId);
             cercadas = cerco.total;
@@ -4708,8 +4714,9 @@ app.get('/app/version', async (req: any, reply) => {
 
 // ── Arreglar una carrera a la que le faltó el interior ──────────────────────
 
-/** Tope de seguridad: por encima de esto no es un circuito, es un error. */
-const MAX_CELDAS_RELLENO = 60_000;
+/** Tope de seguridad, el mismo que el de las carreras (MAX_CELDAS_CERCO):
+ *  10 km². Por encima de eso no es un circuito, es un error. */
+const MAX_CELDAS_RELLENO = 100_000;
 
 /** Dar a una carrera el interior que le tocaba y no se llevó.
  *
@@ -4782,8 +4789,8 @@ app.post('/admin/carreras/:id/rellenar', { preHandler: requireAdmin }, async (re
  *  Rodear una zona y dejar dentro islas de otro no se entiende mirando el
  *  mapa: si el cerco es tuyo, lo de dentro es tuyo. Y como quitarle territorio
  *  a alguien es robar, puntúa igual que robar pisando: +2 por celda para
- *  quien cerca, −1 para el cercado. El terreno LIBRE que rodeas no da puntos:
- *  por ahí no has pasado.
+ *  quien cerca, −1 para el cercado. El terreno LIBRE que rodeas da +1, igual
+ *  que si lo hubieras pisado: rodear cuesta tanto como pasar por encima.
  *
  *  Devuelve cuántas celdas cambian de manos y a quién se las quita, para
  *  poder avisarle. */
@@ -4831,6 +4838,43 @@ async function ocuparCercadas(
     );
   }
   return { total, libres: total - robadas, robadas, victimas };
+}
+
+/** Avisa a quien ha cerrado un cerco más grande de lo que el juego reparte de
+ *  una vez (MAX_CELDAS_CERCO). Sin esto cierra la vuelta y no pasa nada: ni
+ *  territorio ni explicación.
+ *
+ *  Solo se manda uno a la vez. Mientras el cerco siga ahí sin resolver, cada
+ *  carrera suya volvería a entrar por aquí y le llenaría la app de carteles
+ *  repetidos. */
+async function avisarCercoEnorme(
+  cliente: { query: (sql: string, params?: any[]) => Promise<{ rows: any[]; rowCount: number | null }> },
+  userId: string,
+  celdas: number,
+): Promise<void> {
+  const { rows } = await cliente.query('SELECT display_name FROM users WHERE id = $1', [userId]);
+  const nombre = rows[0]?.display_name;
+  if (!nombre) return;
+  const { rows: yaHay } = await cliente.query(
+    `SELECT 1 FROM avisos WHERE corredor = $1 AND titulo = $2 AND activo LIMIT 1`,
+    [nombre, 'Cerco demasiado grande'],
+  );
+  if (yaHay.length > 0) return;
+  const km2 = (celdas / 10_000).toFixed(1); // 10.000 celdas de 10×10 m = 1 km²
+  await cliente.query(
+    `INSERT INTO avisos (titulo, texto, boton, etiqueta, sello, nota, publico, corredor)
+     VALUES ($1, $2, $3, $4, $5, $6, 'corredor', $7)`,
+    [
+      'Cerco demasiado grande',
+      `Has rodeado *${celdas.toLocaleString('es-ES')} celdas* (unos *${km2} km²*): más de lo que CORRR `
+        + 'reparte de una vez. Todavía no se te ha dado, pero no se ha perdido: lo estamos mirando.',
+      'Vale',
+      'Territorio',
+      'Pendiente',
+      `${km2}\nKM²`,
+      nombre,
+    ],
+  );
 }
 
 /** Avisa dentro de la app a quien se ha quedado sin territorio por un cerco. */

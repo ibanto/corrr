@@ -245,6 +245,32 @@ más coja y sale su nombre en el cartel de avisos un par de días. Para que se
 vean hace falta la **1.11.11 publicada antes del 29** (subir como muy tarde el
 24-25 de octubre). Ojo: quien siga en 1.11.10 las recogerá sin verlas.
 
+## 9-quater. Cercos: lo que rodeas es tuyo
+
+`src/services/territorio.ts`. Si el perímetro de una zona es todo tuyo, el
+interior pasa a ser tuyo, lo hayas cerrado en un día o en cinco. Se calcula
+inundando desde fuera y pasando solo por celdas que NO son tuyas: lo que el
+agua no alcanza está rodeado. La inundación va en cruz, así que una escalerilla
+en DIAGONAL sella — eso perdona el zigzag del GPS, que es lo que rompería un
+cerco por un pelo.
+
+Se aplica sola al guardar una carrera (dentro de `POST /runs`, mirando 3 km
+alrededor de lo corrido, no toda la ciudad). Para los cercos cerrados ANTES de
+que existiera la regla hay un botón a mano en el panel (Herramientas → Cobrar
+un cerco), que sí repasa todo el territorio del corredor.
+
+Puntos, igual que pisando: **+1** la celda libre, **+2** la que le quitas a
+alguien, **−1** al robado, y a este le llega solo un aviso ("Te han cercado").
+
+**Tope: 10 km² (`MAX_CELDAS_CERCO = 100_000`)**, el mismo en los tres caminos.
+No es una regla del juego, es una red de seguridad por si un salto del GPS deja
+a alguien con forma de anillo alrededor de media ciudad. Estuvo en 2 km² y era
+demasiado poco: KarolK cerró 4,7 km² en una vuelta real. Cuando se pasa del
+tope **se avisa al corredor** (`avisarCercoEnorme`, uno solo mientras el cerco
+siga ahí) en vez de callarse, y ese aviso sale también en la lista del panel.
+
+Tras tocar esto: `npm run test:territorio`.
+
 ## 9-ter. El panel de administración
 
 Vive entero en la plantilla HTML de `apps/backend/src/routes/index.ts` (no hay

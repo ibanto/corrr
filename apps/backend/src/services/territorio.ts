@@ -22,9 +22,19 @@
 
 export type Celda = { x: number; y: number };
 
-/** Tope por carrera. Encerrar 2 km² de golpe es una gesta; más que eso es un
- *  error de cálculo o alguien buscándole las cosquillas al juego. */
-export const MAX_CELDAS_CERCO = 20_000;
+/** Tope por carrera: 10 km².
+ *
+ *  No es una regla del juego, es una red de seguridad. Si un fallo o un salto
+ *  del GPS deja el territorio de alguien con forma de anillo alrededor de
+ *  media ciudad, sin tope se la quedaría entera de una sentada y habría que
+ *  deshacerlo a mano. Con tope, el estropicio máximo está acotado.
+ *
+ *  Estuvo en 2 km² y era demasiado poco: KarolK cerró 46.985 celdas (4,7 km²)
+ *  en una vuelta real, y el móvil se las dio porque cerrar dentro de UNA
+ *  carrera lo calcula él, con otro límite. O sea que la misma hazaña contaba
+ *  o no según se hiciera en un día o en tres. A 10 km² los dos caminos van a
+ *  la par. */
+export const MAX_CELDAS_CERCO = 100_000;
 
 /** Caja de trabajo máxima. Inundar es recorrer celda a celda: con 700×700
  *  (7×7 km) se cubre cualquier cerco real sin que el servidor sude. */

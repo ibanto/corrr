@@ -72,5 +72,20 @@ function marco(n) {
     c.x0 === 2 && c.x1 === 6 && c.y0 === 1 && c.y1 === 8, JSON.stringify(c));
 }
 
+{
+  // El tope son 10 km² (100.000 celdas, MAX_CELDAS_CERCO). Un cerco de casi
+  // ese tamaño tiene que salir entero y rápido: esto corre DENTRO de guardar
+  // la carrera, así que si se arrastra, al corredor se le queda la app
+  // pensando al pulsar STOP.
+  const lado = 310;
+  const t0 = Date.now();
+  const dentro = celdasEncerradas(marco(lado));
+  const ms = Date.now() - t0;
+  const esperado = (lado - 2) ** 2;
+  comprueba('un cerco de casi 10 km² se calcula entero y rápido',
+    dentro.length === esperado && ms < 2000,
+    `${dentro.length} celdas en ${ms} ms (esperadas ${esperado})`);
+}
+
 console.log(fallos ? `\n${fallos} comprobaciones FALLAN.` : '\nCercos en orden.');
 process.exit(fallos ? 1 : 0);
