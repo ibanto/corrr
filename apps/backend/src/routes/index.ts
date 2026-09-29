@@ -2480,6 +2480,9 @@ function validateClaimedCellsGeometry(
   return null;
 }
 
+/** Lo que tarda en aparecer el objeto que sustituye a uno recogido. */
+const ESPERA_REAPARICION_MS = 10 * 60 * 1000;
+
 /** Hasta cuándo vale el objeto que nace al comerse otro: hereda el final del
  *  evento del que se acaba de comer. */
 function objetoHasta(o: Objeto): Date {
@@ -2956,12 +2959,19 @@ app.post('/runs', {
 
     // Por cada objeto comido nace otro, para que el mapa no se quede pelado el
     // primer día. Nace en la misma zona (caja de 5 km alrededor), no al otro
-    // lado del país. Si falla, la carrera se guarda igual: es un extra.
+    // lado del país.
+    //
+    // Pero TARDA 10 MINUTOS EN APARECER: si naciera al momento, lo rentable
+    // sería dar vueltas en corto por la zona recogiendo lo que va saliendo, y
+    // esto va de salir a correr, no de hacer caja en una manzana. Con la
+    // espera, seguir corriendo por otro lado renta más que quedarse.
+    //
+    // Si falla, la carrera se guarda igual: es un extra.
     for (const o of objetos) {
       const radio = 500; // celdas = 5 km
       await sembrar(client as any, {
         cuantos: 1, tipo: o.tipo, puntos: o.puntos,
-        desde: new Date(), hasta: objetoHasta(o),
+        desde: new Date(Date.now() + ESPERA_REAPARICION_MS), hasta: objetoHasta(o),
         caja: { x0: o.x - radio, x1: o.x + radio, y0: o.y - radio, y1: o.y + radio },
       }).catch(() => 0);
     }
