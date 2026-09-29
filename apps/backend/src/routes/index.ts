@@ -1715,8 +1715,8 @@ correr quedan fuera solos. Manda siempre una prueba a tu correo antes de la tand
 <form class="form" id="fc">
   <select id="c_campana"></select>
   <input id="c_prueba" placeholder="Tu email, para la prueba" type="email">
-  <button class="btn" id="c_test" type="button">Mandarme una prueba</button>
-  <button class="btn" id="c_enviar" type="button">Enviar la tanda de verdad</button>
+  <button class="btn" id="c_test" type="button" disabled>Mandarme una prueba</button>
+  <button class="btn" id="c_enviar" type="button" disabled>Enviar la tanda de verdad</button>
   <div id="c_msg" class="resultado" style="display:none"></div>
 </form>
 
@@ -1869,7 +1869,17 @@ Quien usa el enlace del correo se da de baja solo.</p>
       }).join('');
     }
   }
-  function cargarCampanas() { api('/admin/email/campanas').then(pintarCampanas).catch(function () {}); }
+  function cargarCampanas() {
+    api('/admin/email/campanas').then(function (lista) {
+      pintarCampanas(lista);
+      document.getElementById('c_test').disabled = false;
+      document.getElementById('c_enviar').disabled = false;
+    }).catch(function (e) {
+      var m = document.getElementById('c_msg');
+      m.style.display = 'block'; m.style.color = '#f44336'; m.style.borderLeftColor = '#f44336';
+      m.textContent = '✗ No se han podido cargar las campañas: ' + e.message;
+    });
+  }
   function mandarCorreo(modo) {
     var m = document.getElementById('c_msg');
     var cuerpo = { modo: modo, campana: document.getElementById('c_campana').value };
@@ -1884,7 +1894,8 @@ Quien usa el enlace del correo se da de baja solo.</p>
     api('/admin/email/reactivacion', { method: 'POST', body: JSON.stringify(cuerpo) }).then(function (r) {
       m.style.color = '#4caf50'; m.style.borderLeftColor = '#4caf50';
       m.textContent = modo === 'prueba'
-        ? '✓ Prueba enviada. Míralo en tu correo antes de lanzar la tanda.'
+        ? '✓ Prueba aceptada por el correo (id ' + (r.id || '?') + '), enviada a ' + r.para
+          + '. Si no llega en 2 minutos, mira en spam o en Promociones.'
         : '✓ Enviados ' + r.enviados + '. Quedan ' + r.quedan + ' para la próxima tanda.'
           + (r.fallos && r.fallos.length ? ' Fallaron ' + r.fallos.length + '.' : '');
       cargarCampanas();
@@ -4617,7 +4628,9 @@ app.get('/admin/email/reactivacion', { preHandler: requireAdmin }, async (_req: 
  *  POST { modo: 'enviar', max?: 80 }        → una tanda a los pendientes. */
 app.post('/admin/email/reactivacion', { preHandler: requireAdmin }, async (req: any, reply) => {
   const { modo, para, max, variante } = req.body ?? {};
-  const campana = String(req.body?.campana ?? CAMPANA_REACTIVACION);
+  // `|| ` y no `?? `: el panel puede mandar cadena vacía si su lista de
+  // campañas aún no ha cargado, y eso no es "otra campaña", es ninguna.
+  const campana = String(req.body?.campana || CAMPANA_REACTIVACION);
   const conf = CAMPANAS[campana];
   if (!conf) return reply.status(400).send({ error: `No existe la campaña "${campana}"` });
 
@@ -4629,8 +4642,8 @@ app.post('/admin/email/reactivacion', { preHandler: requireAdmin }, async (req: 
       para, rows[0]?.display_name ?? 'Corredor', urlBajaEmail(USUARIO_PRUEBA),
       cual, `[PRUEBA] ${conf.asunto}`,
     );
-    if (error) return reply.status(502).send({ error: error.message });
-    return reply.send({ ok: true, id: data?.id });
+    if (error) return reply.status(502).send({ error: `Resend no lo aceptó: ${error.message}` });
+    return reply.send({ ok: true, id: data?.id, para, campana });
   }
 
   if (modo !== 'enviar') return reply.status(400).send({ error: 'modo tiene que ser "prueba" o "enviar"' });
