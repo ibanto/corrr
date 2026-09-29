@@ -130,6 +130,22 @@ interface ObjetoMapa {
   tipo: string;
 }
 
+/** Ficha pública de un corredor: lo que se ve al tocarlo en el ranking. */
+interface FichaCorredor {
+  id: string;
+  name: string;
+  city: string | null;
+  warCry: string | null;
+  avatar: string | null;
+  zonas: number;
+  km: number;
+  carreras: number;
+  puntos: number;
+  hectareas: number;
+  racha: number;
+  mine: boolean;
+}
+
 interface ProfileData {
   id: string;
   email: string;
@@ -500,6 +516,16 @@ class ApiService {
     }
   }
 
+  /** La ficha de otro corredor. Null si no se puede: es para mirar, no puede
+   *  romper la pantalla de quien la abre. */
+  async getFichaCorredor(userId: string): Promise<FichaCorredor | null> {
+    try {
+      return await this.request<FichaCorredor>(`/users/${userId}/ficha`);
+    } catch {
+      return null;
+    }
+  }
+
   async getAllRuns(limit = 30, offset = 0): Promise<{ runs: RunRecord[]; total: number; limit: number; offset: number }> {
     return this.request<{ runs: RunRecord[]; total: number; limit: number; offset: number }>(
       `/runs/my?limit=${limit}&offset=${offset}`
@@ -669,7 +695,7 @@ interface Friend {
 }
 
 export const api = new ApiService();
-export type { LoginResponse, RankingEntry, Challenge, Achievement, RunRecord, UserStats, MyStats, RemoteZone, ZonePayload, FriendRequest, Friend, Cell, RemoteCell, MapOwner, MapTerritory, Aviso, ObjetoMapa, CellRunPayload, RunSaveResult, TauntInbox, ProfileData, ProfileUpdate };
+export type { LoginResponse, RankingEntry, Challenge, Achievement, RunRecord, UserStats, MyStats, RemoteZone, ZonePayload, FriendRequest, Friend, Cell, RemoteCell, MapOwner, MapTerritory, Aviso, ObjetoMapa, FichaCorredor, CellRunPayload, RunSaveResult, TauntInbox, ProfileData, ProfileUpdate };
 
 const MOCK_RANKING: RankingEntry[] = [
   { position: 1, username: 'Laura R.', city: 'Barcelona', points: 28480, zones: 87 },

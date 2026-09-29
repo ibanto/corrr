@@ -3053,6 +3053,44 @@ app.get('/runs/my', { preHandler: requireAuth }, async (req: any, reply) => {
  *
  *  Además va el área absoluta, que es el dato honesto y no depende de con
  *  quién te compares. */
+/** La ficha de un corredor: lo que ves al tocarlo en el ranking o al tocar su
+ *  territorio en el mapa. Solo lo que ya es público dentro del juego —nombre,
+ *  ciudad, foto, grito y sus números—, nunca el email ni por dónde corre. */
+app.get('/users/:id/ficha', { preHandler: requireAuth }, async (req: any, reply) => {
+  const { id } = req.params as any;
+  if (!/^[0-9a-f-]{36}$/i.test(String(id))) return reply.status(400).send({ error: 'id no válido' });
+  const { rows } = await db.query(
+    `SELECT u.id, u.display_name, u.city, u.war_cry,
+            COALESCE(s.total_zones, 0)  AS zonas,
+            COALESCE(s.total_km, 0)     AS km,
+            COALESCE(s.total_runs, 0)   AS carreras,
+            COALESCE(s.total_points, 0) AS puntos,
+            COALESCE(s.total_cells, 0)  AS celdas,
+            COALESCE(s.streak_days, 0)  AS racha
+       FROM users u LEFT JOIN user_stats s ON s.user_id = u.id
+      WHERE u.id = $1`,
+    [id],
+  );
+  if (rows.length === 0) return reply.status(404).send({ error: 'No existe ese corredor' });
+  const r = rows[0];
+  const fotos = await ownerAvatars([r.id], req.log);
+  return reply.send({
+    id: r.id,
+    name: r.display_name,
+    city: r.city,
+    warCry: r.war_cry,
+    avatar: fotos[r.id]?.avatar ?? null,
+    zonas: r.zonas,
+    km: Number(r.km),
+    carreras: r.carreras,
+    puntos: r.puntos,
+    // Cada celda son 10×10 m: 100 celdas = una hectárea.
+    hectareas: Number(r.celdas) / 100,
+    racha: r.racha,
+    mine: r.id === req.userId,
+  });
+});
+
 app.get('/territory/:userId', { preHandler: requireAuth }, async (req: any, reply) => {
   const { userId } = req.params as any;
   if (!/^[0-9a-f-]{36}$/i.test(String(userId))) {

@@ -14,6 +14,7 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, radius } from '../theme';
+import FichaCorredor from '../components/FichaCorredor';
 import { api, RankingEntry, FriendRequest, Friend } from '../services/api';
 
 type Tab = 'Nacional' | 'Ciudad' | 'Amigos';
@@ -181,6 +182,8 @@ const rowStyles = StyleSheet.create({
 });
 
 export default function RankingScreen({ user, pendingCount = 0, onPendingCountChange }: Props) {
+  /** Corredor cuya ficha se está mirando, o null. */
+  const [fichaId, setFichaId] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>('Nacional');
   const [data, setData] = useState<RankingEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -339,7 +342,11 @@ export default function RankingScreen({ user, pendingCount = 0, onPendingCountCh
 
     return (
       <SwipeableRankingRow item={item} onAddFriend={() => sendFriendRequest(item)}>
-        {rowContent}
+        {/* Tocar a alguien abre su ficha. El gesto de deslizar sigue siendo
+            para añadirlo como amigo: uno es un toque y el otro un arrastre. */}
+        <TouchableOpacity activeOpacity={0.7} onPress={() => setFichaId(item.userId ?? null)}>
+          {rowContent}
+        </TouchableOpacity>
       </SwipeableRankingRow>
     );
   };
@@ -562,6 +569,8 @@ export default function RankingScreen({ user, pendingCount = 0, onPendingCountCh
         />
       )}
 
+      {/* La ficha del corredor que se acaba de tocar. */}
+      <FichaCorredor userId={fichaId} onClose={() => setFichaId(null)} />
     </View>
   );
 }
