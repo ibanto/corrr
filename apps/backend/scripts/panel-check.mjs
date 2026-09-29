@@ -86,5 +86,25 @@ for (const id of necesarios) {
   if (!scripts.some(s => s.includes(`'${id}'`))) { console.error(`✘ Nadie usa "${id}" en el código del panel`); fallos++; }
 }
 
+// Ningún botón puede quedar enganchado dos veces. Pasó el 29-sep-2026: al
+// añadir apartados nuevos, el bloque entero se coló TAMBIÉN dentro de los
+// `.then` de los botones de calabazas, así que cada vez que se sembraban o
+// quitaban calabazas se volvían a enganchar los mismos botones. A partir de
+// ahí, un clic en "Cobrar un cerco" mandaba la orden dos veces, luego tres.
+// El código era válido y el panel se veía bien: solo se ve contando.
+const enganches = new Map();
+for (const codigo of scripts) {
+  for (const m of codigo.matchAll(/getElementById\(\s*'([^']+)'\s*\)\.addEventListener\(\s*'([^']+)'/g)) {
+    const clave = `${m[1]} · ${m[2]}`;
+    enganches.set(clave, (enganches.get(clave) ?? 0) + 1);
+  }
+}
+for (const [clave, veces] of enganches) {
+  if (veces > 1) {
+    console.error(`✘ "${clave}" está enganchado ${veces} veces: cada clic mandaría ${veces} órdenes`);
+    fallos++;
+  }
+}
+
 console.log(fallos ? `\n${fallos} problema(s) en el panel.` : '\nPanel en orden.');
 process.exit(fallos ? 1 : 0);

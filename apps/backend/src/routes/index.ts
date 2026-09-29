@@ -2165,130 +2165,14 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
     api('/admin/objetos', { method: 'POST', body: JSON.stringify(cuerpo) }).then(function (r) {
       msgObjetos('Sembradas ' + r.puestas + ' de ' + r.pedidas
         + (r.puestas < r.pedidas ? ' (el resto caían demasiado cerca de otra)' : ''), true);
-      function administrador(dar) {
-    var m = document.getElementById('ad_msg');
-    m.style.display = 'block'; m.style.color = '#bbb'; m.style.borderLeftColor = '#555';
-    m.textContent = 'Un momento…';
-    api('/admin/administrador', {
-      method: 'POST', body: JSON.stringify({ quien: val('ad_quien'), dar: dar }),
-    }).then(function (r) {
-      m.style.color = '#4caf50'; m.style.borderLeftColor = '#4caf50';
-      m.textContent = '✓ ' + r.quienes.join(', ') + (dar ? ' ya es administrador.' : ' ya no lo es.');
-      document.getElementById('fad').reset();
-    }).catch(function (e) {
-      m.style.color = '#f44336'; m.style.borderLeftColor = '#f44336';
-      m.textContent = '✗ ' + e.message;
-    });
-  }
-  document.getElementById('ad_dar').addEventListener('click', function () { administrador(true); });
-  document.getElementById('ad_quitar').addEventListener('click', function () { administrador(false); });
-  api('/admin/carreras').then(function (lista) {
-    document.getElementById('rc_carrera').innerHTML = lista.map(function (c) {
-      return '<option value="' + c.id + '">' + esc(c.nombre) + ' · ' + c.km + ' km · '
-        + esc(c.cuando) + ' · ' + c.celdas + ' celdas</option>';
-    }).join('');
-    document.getElementById('rc_rellenar').disabled = false;
-  }).catch(function () {});
-  document.getElementById('rc_rellenar').addEventListener('click', function () {
-    var sel = document.getElementById('rc_carrera');
-    var texto = sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].text : '';
-    if (!confirm('¿Devolverle el interior de esta carrera?\\n\\n' + texto)) return;
-    var m = document.getElementById('rc_msg');
-    m.style.display = 'block'; m.style.color = '#bbb'; m.style.borderLeftColor = '#555';
-    m.textContent = 'Calculando el interior…';
-    api('/admin/carreras/' + sel.value + '/rellenar', { method: 'POST', body: '{}' }).then(function (r) {
-      m.style.color = '#4caf50'; m.style.borderLeftColor = '#4caf50';
-      m.textContent = '✓ ' + (r.nuevas
-        ? r.corredor + ' recupera ' + r.nuevas + ' celdas y ' + r.puntos + ' puntos ('
-          + r.robadas + ' se las quita a otros, avisados). '
-        : (r.mensaje || 'No había nada que devolver.'));
-    }).catch(function (e) {
-      m.style.color = '#f44336'; m.style.borderLeftColor = '#f44336';
-      m.textContent = '✗ ' + e.message;
-    });
-  });
-  document.getElementById('cz_dar').addEventListener('click', function () {
-    var m = document.getElementById('cz_msg');
-    m.style.display = 'block'; m.style.color = '#bbb'; m.style.borderLeftColor = '#555';
-    m.textContent = 'Calculando el cerco…';
-    api('/admin/corredores/cercos', { method: 'POST', body: JSON.stringify({ quien: val('cz_quien') }) })
-      .then(function (r) {
-        m.style.color = '#4caf50'; m.style.borderLeftColor = '#4caf50';
-        m.textContent = '✓ ' + (r.nuevas
-          ? r.corredor + ' cobra ' + r.nuevas + ' celdas y ' + r.puntos + ' puntos ('
-            + r.robadas + ' se las quita a otros, que pierden 1 punto por celda y reciben aviso).'
-          : (r.mensaje || 'No había ningún cerco.'));
-      }).catch(function (e) {
-        m.style.color = '#f44336'; m.style.borderLeftColor = '#f44336';
-        m.textContent = '✗ ' + e.message;
-      });
-  });
-  cargarObjetos();
+      cargarObjetos();
     }).catch(function (e) { msgObjetos(e.message, false); });
   });
   document.getElementById('o_quitar').addEventListener('click', function () {
     if (!confirm('¿Quitar del mapa las calabazas sin coger? Las ya cogidas se quedan.')) return;
     api('/admin/objetos?tipo=calabaza', { method: 'DELETE' }).then(function (r) {
       msgObjetos('Quitadas ' + r.quitadas + '.', true);
-      function administrador(dar) {
-    var m = document.getElementById('ad_msg');
-    m.style.display = 'block'; m.style.color = '#bbb'; m.style.borderLeftColor = '#555';
-    m.textContent = 'Un momento…';
-    api('/admin/administrador', {
-      method: 'POST', body: JSON.stringify({ quien: val('ad_quien'), dar: dar }),
-    }).then(function (r) {
-      m.style.color = '#4caf50'; m.style.borderLeftColor = '#4caf50';
-      m.textContent = '✓ ' + r.quienes.join(', ') + (dar ? ' ya es administrador.' : ' ya no lo es.');
-      document.getElementById('fad').reset();
-    }).catch(function (e) {
-      m.style.color = '#f44336'; m.style.borderLeftColor = '#f44336';
-      m.textContent = '✗ ' + e.message;
-    });
-  }
-  document.getElementById('ad_dar').addEventListener('click', function () { administrador(true); });
-  document.getElementById('ad_quitar').addEventListener('click', function () { administrador(false); });
-  api('/admin/carreras').then(function (lista) {
-    document.getElementById('rc_carrera').innerHTML = lista.map(function (c) {
-      return '<option value="' + c.id + '">' + esc(c.nombre) + ' · ' + c.km + ' km · '
-        + esc(c.cuando) + ' · ' + c.celdas + ' celdas</option>';
-    }).join('');
-    document.getElementById('rc_rellenar').disabled = false;
-  }).catch(function () {});
-  document.getElementById('rc_rellenar').addEventListener('click', function () {
-    var sel = document.getElementById('rc_carrera');
-    var texto = sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].text : '';
-    if (!confirm('¿Devolverle el interior de esta carrera?\\n\\n' + texto)) return;
-    var m = document.getElementById('rc_msg');
-    m.style.display = 'block'; m.style.color = '#bbb'; m.style.borderLeftColor = '#555';
-    m.textContent = 'Calculando el interior…';
-    api('/admin/carreras/' + sel.value + '/rellenar', { method: 'POST', body: '{}' }).then(function (r) {
-      m.style.color = '#4caf50'; m.style.borderLeftColor = '#4caf50';
-      m.textContent = '✓ ' + (r.nuevas
-        ? r.corredor + ' recupera ' + r.nuevas + ' celdas y ' + r.puntos + ' puntos ('
-          + r.robadas + ' se las quita a otros, avisados). '
-        : (r.mensaje || 'No había nada que devolver.'));
-    }).catch(function (e) {
-      m.style.color = '#f44336'; m.style.borderLeftColor = '#f44336';
-      m.textContent = '✗ ' + e.message;
-    });
-  });
-  document.getElementById('cz_dar').addEventListener('click', function () {
-    var m = document.getElementById('cz_msg');
-    m.style.display = 'block'; m.style.color = '#bbb'; m.style.borderLeftColor = '#555';
-    m.textContent = 'Calculando el cerco…';
-    api('/admin/corredores/cercos', { method: 'POST', body: JSON.stringify({ quien: val('cz_quien') }) })
-      .then(function (r) {
-        m.style.color = '#4caf50'; m.style.borderLeftColor = '#4caf50';
-        m.textContent = '✓ ' + (r.nuevas
-          ? r.corredor + ' cobra ' + r.nuevas + ' celdas y ' + r.puntos + ' puntos ('
-            + r.robadas + ' se las quita a otros, que pierden 1 punto por celda y reciben aviso).'
-          : (r.mensaje || 'No había ningún cerco.'));
-      }).catch(function (e) {
-        m.style.color = '#f44336'; m.style.borderLeftColor = '#f44336';
-        m.textContent = '✗ ' + e.message;
-      });
-  });
-  cargarObjetos();
+      cargarObjetos();
     }).catch(function (e) { msgObjetos(e.message, false); });
   });
   function administrador(dar) {
