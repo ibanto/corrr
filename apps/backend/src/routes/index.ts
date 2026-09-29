@@ -14,6 +14,9 @@ import { SUPABASE_ROOT_CA } from '../db/supabase-ca.js';
 import { agruparEnTiras, Dueno } from '../services/tiras.js';
 import { sembrar, recoger, Objeto } from '../services/objetos.js';
 import {
+  celdasEncerradas, cajaDe, MAX_CELDAS_CERCO, MAX_CAJA_CERCO, Celda,
+} from '../services/territorio.js';
+import {
   CAMPANA_REACTIVACION, ASUNTO_REACTIVACION, CAMPANA_DOBLE, ASUNTO_DOBLE,
   htmlReactivacion, textoReactivacion, Variante,
 } from '../services/emailReactivacion.js';
@@ -3079,6 +3082,56 @@ app.post('/runs', {
     // Siempre recomputamos server-side (el bypass legacy que confiaba el
     // estimate del cliente se ha eliminado). clientPointsEstimate solo se usa
     // ya como valor de display optimista en el cliente, nunca aquí.
+    // ── Cercos ────────────────────────────────────────────────────────────
+    // Si tu territorio rodea un hueco, el hueco es tuyo, lo hayas cerrado hoy
+    // o llevándolo tres días. Se mira después de apuntar las celdas de esta
+    // carrera, porque es esta carrera la que puede haber cerrado el cerco.
+    //
+    // Da TERRITORIO, no puntos: los puntos se ganan corriendo, y un cerco
+    // grande daría decenas de miles de golpe y descolocaría el ranking.
+    let cercadas = 0;
+    if (Array.isArray(claimedCells) && claimedCells.length > 0) {
+      try {
+        // Solo la zona de esta carrera, con margen: el cerco que se acaba de
+        // cerrar está aquí, y así no se repasa el territorio de toda la
+        // ciudad en cada carrera.
+        const margen = 300; // celdas = 3 km alrededor
+        const caja = cajaDe(claimedCells as Celda[], margen);
+        const ancho = caja.x1 - caja.x0 + 1, alto = caja.y1 - caja.y0 + 1;
+        if (ancho * alto <= MAX_CAJA_CERCO) {
+          const { rows: mias } = await client.query(
+            `SELECT cell_x, cell_y FROM cells
+              WHERE owner_id = $1 AND cell_x BETWEEN $2 AND $3 AND cell_y BETWEEN $4 AND $5`,
+            [userId, caja.x0, caja.x1, caja.y0, caja.y1],
+          );
+          const encerradas = celdasEncerradas(
+            mias.map((c: any) => ({ x: c.cell_x, y: c.cell_y })), caja,
+          );
+          if (encerradas.length > MAX_CELDAS_CERCO) {
+            req.log.warn(
+              { userId, encerradas: encerradas.length },
+              '[cerco] demasiado grande, no se rellena',
+            );
+          } else if (encerradas.length > 0) {
+            // ON CONFLICT DO NOTHING: lo de otros que quede dentro sigue
+            // siendo suyo. Rodear no es robar; robar es pisar.
+            const { rows: puestas } = await client.query(
+              `INSERT INTO cells (cell_x, cell_y, owner_id, run_id, claimed_at)
+               SELECT x, y, $3::uuid, $4::uuid, NOW()
+                 FROM unnest($1::int[], $2::int[]) AS t(x, y)
+               ON CONFLICT (cell_x, cell_y) DO NOTHING
+               RETURNING cell_x, cell_y`,
+              [encerradas.map(c => c.x), encerradas.map(c => c.y), userId, runId],
+            );
+            cercadas = puestas.length;
+          }
+        }
+      } catch (e) {
+        // Un fallo aquí no puede costarle la carrera a nadie.
+        req.log.warn({ err: String(e) }, '[cerco] no se pudo calcular');
+      }
+    }
+
     // Objetos del mapa (calabazas): los recoge el SERVIDOR mirando por dónde
     // ha pasado la carrera, así que la app no puede inventarse ninguno. Sus
     // puntos se suman al final, sin multiplicadores: 200 son 200, y así el
@@ -3125,7 +3178,7 @@ app.post('/runs', {
            best_daily_km  = $9
        WHERE user_id = $1`,
       [userId, zonesCount, authoritativePoints, distanceKm,
-       stolenZones.length + stolenCells.length, newCellCount,
+       stolenZones.length + stolenCells.length, newCellCount + cercadas,
        lastRunDay.toISOString().slice(0, 10), newStreak, newBestKm]
     );
 
@@ -3162,6 +3215,8 @@ app.post('/runs', {
       points: authoritativePoints,
       // Lo que se ha encontrado por el camino. La app lo enseña al terminar.
       objetos,
+      // Celdas ganadas por cerrar un cerco con el territorio que ya tenías.
+      cercadas,
       breakdown: {
         kmPoints,
         cellPoints,
@@ -3177,6 +3232,7 @@ app.post('/runs', {
         dobleBienvenida,
         objetos: objetos.length,
         puntosObjetos,
+        cercadas,
       },
     });
   } catch (err) {
@@ -4542,50 +4598,6 @@ app.get('/app/version', async (req: any, reply) => {
 });
 
 // ── Arreglar una carrera a la que le faltó el interior ──────────────────────
-
-/** Celdas encerradas por un conjunto de celdas: se inunda desde fuera de la
- *  caja y lo que no se alcanza es el interior. Es lo que la app tenía que
- *  haber rellenado al cerrar el circuito. */
-function celdasEncerradas(celdas: { x: number; y: number }[]): { x: number; y: number }[] {
-  if (celdas.length === 0) return [];
-  const dentro = new Set(celdas.map(c => `${c.x},${c.y}`));
-  const x0 = Math.min(...celdas.map(c => c.x)) - 1;
-  const x1 = Math.max(...celdas.map(c => c.x)) + 1;
-  const y0 = Math.min(...celdas.map(c => c.y)) - 1;
-  const y1 = Math.max(...celdas.map(c => c.y)) + 1;
-  const fuera = new Set<string>([`${x0},${y0}`]);
-  const cola: [number, number][] = [[x0, y0]];
-  while (cola.length) {
-    const [x, y] = cola.pop()!;
-    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
-      const nx = x + dx, ny = y + dy, k = `${nx},${ny}`;
-      if (nx < x0 || nx > x1 || ny < y0 || ny > y1) continue;
-      if (fuera.has(k) || dentro.has(k)) continue;
-      fuera.add(k);
-      cola.push([nx, ny]);
-    }
-  }
-  const encerradas: { x: number; y: number }[] = [];
-  for (let y = y0; y <= y1; y++) {
-    for (let x = x0; x <= x1; x++) {
-      const k = `${x},${y}`;
-      if (!fuera.has(k) && !dentro.has(k)) encerradas.push({ x, y });
-    }
-  }
-  return encerradas;
-}
-
-/** Las últimas carreras, para poder elegir una en el panel. */
-app.get('/admin/carreras', { preHandler: requireAdmin }, async (_req, reply) => {
-  const { rows } = await db.query(
-    `SELECT r.id, u.display_name AS nombre, ROUND(r.distance_km::numeric, 2) AS km,
-            to_char(r.created_at AT TIME ZONE 'Europe/Madrid', 'DD-MM HH24:MI') AS cuando,
-            (SELECT COUNT(*)::int FROM cells c WHERE c.run_id = r.id) AS celdas
-       FROM runs r JOIN users u ON u.id = r.user_id
-      ORDER BY r.created_at DESC LIMIT 20`,
-  );
-  return reply.send(rows);
-});
 
 /** Tope de seguridad: por encima de esto no es un circuito, es un error. */
 const MAX_CELDAS_RELLENO = 60_000;
