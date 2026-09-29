@@ -1780,6 +1780,16 @@ correr quedan fuera solos. Manda siempre una prueba a tu correo antes de la tand
   <div id="c_msg" class="resultado" style="display:none"></div>
 </form>
 
+<h2>Arreglar una carrera</h2>
+<p class="nota">Si una carrera cerró el círculo y no se llevó lo de dentro (pasaba con las vueltas
+de más de 2×2 km, arreglado el 29-sep), aquí se le devuelve. <b>Solo ocupa celdas libres</b>: no le
+quita territorio a nadie. Se le avisa dentro de la app.</p>
+<form class="form" id="frc">
+  <select id="rc_carrera"></select>
+  <button class="btn" id="rc_rellenar" type="button" disabled>Devolverle el interior</button>
+  <div id="rc_msg" class="resultado" style="display:none"></div>
+</form>
+
 <h2>Administradores</h2>
 <p class="nota">Quien esté marcado ve dentro de la app, en su perfil, el resumen de cómo va la cosa
 (altas, quién ha corrido hoy, quién se descuelga). Nadie más lo ve.</p>
@@ -2022,6 +2032,30 @@ Quien usa el enlace del correo se da de baja solo.</p>
   }
   document.getElementById('ad_dar').addEventListener('click', function () { administrador(true); });
   document.getElementById('ad_quitar').addEventListener('click', function () { administrador(false); });
+  api('/admin/carreras').then(function (lista) {
+    document.getElementById('rc_carrera').innerHTML = lista.map(function (c) {
+      return '<option value="' + c.id + '">' + esc(c.nombre) + ' · ' + c.km + ' km · '
+        + esc(c.cuando) + ' · ' + c.celdas + ' celdas</option>';
+    }).join('');
+    document.getElementById('rc_rellenar').disabled = false;
+  }).catch(function () {});
+  document.getElementById('rc_rellenar').addEventListener('click', function () {
+    var sel = document.getElementById('rc_carrera');
+    var texto = sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].text : '';
+    if (!confirm('¿Devolverle el interior de esta carrera?\\n\\n' + texto)) return;
+    var m = document.getElementById('rc_msg');
+    m.style.display = 'block'; m.style.color = '#bbb'; m.style.borderLeftColor = '#555';
+    m.textContent = 'Calculando el interior…';
+    api('/admin/carreras/' + sel.value + '/rellenar', { method: 'POST', body: '{}' }).then(function (r) {
+      m.style.color = '#4caf50'; m.style.borderLeftColor = '#4caf50';
+      m.textContent = '✓ ' + (r.nuevas
+        ? r.corredor + ' recupera ' + r.nuevas + ' celdas (' + r.ocupadas + ' ya eran de otro y se respetan). Le sale un aviso en la app.'
+        : (r.mensaje || 'No había nada que devolver.'));
+    }).catch(function (e) {
+      m.style.color = '#f44336'; m.style.borderLeftColor = '#f44336';
+      m.textContent = '✗ ' + e.message;
+    });
+  });
   cargarObjetos();
     }).catch(function (e) { msgObjetos(e.message, false); });
   });
@@ -2046,6 +2080,30 @@ Quien usa el enlace del correo se da de baja solo.</p>
   }
   document.getElementById('ad_dar').addEventListener('click', function () { administrador(true); });
   document.getElementById('ad_quitar').addEventListener('click', function () { administrador(false); });
+  api('/admin/carreras').then(function (lista) {
+    document.getElementById('rc_carrera').innerHTML = lista.map(function (c) {
+      return '<option value="' + c.id + '">' + esc(c.nombre) + ' · ' + c.km + ' km · '
+        + esc(c.cuando) + ' · ' + c.celdas + ' celdas</option>';
+    }).join('');
+    document.getElementById('rc_rellenar').disabled = false;
+  }).catch(function () {});
+  document.getElementById('rc_rellenar').addEventListener('click', function () {
+    var sel = document.getElementById('rc_carrera');
+    var texto = sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].text : '';
+    if (!confirm('¿Devolverle el interior de esta carrera?\\n\\n' + texto)) return;
+    var m = document.getElementById('rc_msg');
+    m.style.display = 'block'; m.style.color = '#bbb'; m.style.borderLeftColor = '#555';
+    m.textContent = 'Calculando el interior…';
+    api('/admin/carreras/' + sel.value + '/rellenar', { method: 'POST', body: '{}' }).then(function (r) {
+      m.style.color = '#4caf50'; m.style.borderLeftColor = '#4caf50';
+      m.textContent = '✓ ' + (r.nuevas
+        ? r.corredor + ' recupera ' + r.nuevas + ' celdas (' + r.ocupadas + ' ya eran de otro y se respetan). Le sale un aviso en la app.'
+        : (r.mensaje || 'No había nada que devolver.'));
+    }).catch(function (e) {
+      m.style.color = '#f44336'; m.style.borderLeftColor = '#f44336';
+      m.textContent = '✗ ' + e.message;
+    });
+  });
   cargarObjetos();
     }).catch(function (e) { msgObjetos(e.message, false); });
   });
@@ -2066,6 +2124,30 @@ Quien usa el enlace del correo se da de baja solo.</p>
   }
   document.getElementById('ad_dar').addEventListener('click', function () { administrador(true); });
   document.getElementById('ad_quitar').addEventListener('click', function () { administrador(false); });
+  api('/admin/carreras').then(function (lista) {
+    document.getElementById('rc_carrera').innerHTML = lista.map(function (c) {
+      return '<option value="' + c.id + '">' + esc(c.nombre) + ' · ' + c.km + ' km · '
+        + esc(c.cuando) + ' · ' + c.celdas + ' celdas</option>';
+    }).join('');
+    document.getElementById('rc_rellenar').disabled = false;
+  }).catch(function () {});
+  document.getElementById('rc_rellenar').addEventListener('click', function () {
+    var sel = document.getElementById('rc_carrera');
+    var texto = sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].text : '';
+    if (!confirm('¿Devolverle el interior de esta carrera?\\n\\n' + texto)) return;
+    var m = document.getElementById('rc_msg');
+    m.style.display = 'block'; m.style.color = '#bbb'; m.style.borderLeftColor = '#555';
+    m.textContent = 'Calculando el interior…';
+    api('/admin/carreras/' + sel.value + '/rellenar', { method: 'POST', body: '{}' }).then(function (r) {
+      m.style.color = '#4caf50'; m.style.borderLeftColor = '#4caf50';
+      m.textContent = '✓ ' + (r.nuevas
+        ? r.corredor + ' recupera ' + r.nuevas + ' celdas (' + r.ocupadas + ' ya eran de otro y se respetan). Le sale un aviso en la app.'
+        : (r.mensaje || 'No había nada que devolver.'));
+    }).catch(function (e) {
+      m.style.color = '#f44336'; m.style.borderLeftColor = '#f44336';
+      m.textContent = '✗ ' + e.message;
+    });
+  });
   cargarObjetos();
   cargarCampanas();
   cargar();
@@ -4449,6 +4531,127 @@ app.get('/app/version', async (req: any, reply) => {
     ...(isIos
       ? (IOS_UPDATE_URL ? { updateUrl: IOS_UPDATE_URL } : {})
       : { updateUrl: ANDROID_UPDATE_URL }),
+  });
+});
+
+// ── Arreglar una carrera a la que le faltó el interior ──────────────────────
+
+/** Celdas encerradas por un conjunto de celdas: se inunda desde fuera de la
+ *  caja y lo que no se alcanza es el interior. Es lo que la app tenía que
+ *  haber rellenado al cerrar el circuito. */
+function celdasEncerradas(celdas: { x: number; y: number }[]): { x: number; y: number }[] {
+  if (celdas.length === 0) return [];
+  const dentro = new Set(celdas.map(c => `${c.x},${c.y}`));
+  const x0 = Math.min(...celdas.map(c => c.x)) - 1;
+  const x1 = Math.max(...celdas.map(c => c.x)) + 1;
+  const y0 = Math.min(...celdas.map(c => c.y)) - 1;
+  const y1 = Math.max(...celdas.map(c => c.y)) + 1;
+  const fuera = new Set<string>([`${x0},${y0}`]);
+  const cola: [number, number][] = [[x0, y0]];
+  while (cola.length) {
+    const [x, y] = cola.pop()!;
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+      const nx = x + dx, ny = y + dy, k = `${nx},${ny}`;
+      if (nx < x0 || nx > x1 || ny < y0 || ny > y1) continue;
+      if (fuera.has(k) || dentro.has(k)) continue;
+      fuera.add(k);
+      cola.push([nx, ny]);
+    }
+  }
+  const encerradas: { x: number; y: number }[] = [];
+  for (let y = y0; y <= y1; y++) {
+    for (let x = x0; x <= x1; x++) {
+      const k = `${x},${y}`;
+      if (!fuera.has(k) && !dentro.has(k)) encerradas.push({ x, y });
+    }
+  }
+  return encerradas;
+}
+
+/** Las últimas carreras, para poder elegir una en el panel. */
+app.get('/admin/carreras', { preHandler: requireAdmin }, async (_req, reply) => {
+  const { rows } = await db.query(
+    `SELECT r.id, u.display_name AS nombre, ROUND(r.distance_km::numeric, 2) AS km,
+            to_char(r.created_at AT TIME ZONE 'Europe/Madrid', 'DD-MM HH24:MI') AS cuando,
+            (SELECT COUNT(*)::int FROM cells c WHERE c.run_id = r.id) AS celdas
+       FROM runs r JOIN users u ON u.id = r.user_id
+      ORDER BY r.created_at DESC LIMIT 20`,
+  );
+  return reply.send(rows);
+});
+
+/** Tope de seguridad: por encima de esto no es un circuito, es un error. */
+const MAX_CELDAS_RELLENO = 60_000;
+
+/** Dar a una carrera el interior que le tocaba y no se llevó.
+ *
+ *  Existe porque la app descartaba en silencio los circuitos de más de 2×2 km
+ *  (arreglado el 29-sep, pero las carreras ya guardadas se quedaron sin lo
+ *  suyo). Solo toca celdas LIBRES: no le quita territorio a nadie, aunque el
+ *  circuito pase por encima. Y avisa al corredor dentro de la app. */
+app.post('/admin/carreras/:id/rellenar', { preHandler: requireAdmin }, async (req: any, reply) => {
+  const { id } = req.params as any;
+  if (!/^[0-9a-f-]{36}$/i.test(String(id))) return reply.status(400).send({ error: 'id de carrera no válido' });
+
+  const { rows: carrera } = await db.query(
+    `SELECT r.id, r.user_id, r.distance_km, u.display_name
+       FROM runs r JOIN users u ON u.id = r.user_id WHERE r.id = $1`, [id],
+  );
+  if (carrera.length === 0) return reply.status(404).send({ error: 'No existe esa carrera' });
+  const { user_id: userId, display_name: nombre } = carrera[0];
+
+  const { rows: suyas } = await db.query(
+    `SELECT cell_x, cell_y FROM cells WHERE run_id = $1`, [id],
+  );
+  if (suyas.length === 0) return reply.status(400).send({ error: 'Esa carrera ya no conserva ninguna celda' });
+
+  const interior = celdasEncerradas(suyas.map((c: any) => ({ x: c.cell_x, y: c.cell_y })));
+  if (interior.length === 0) return reply.send({ ok: true, nuevas: 0, mensaje: 'No hay ningún interior encerrado en esa carrera.' });
+  if (interior.length > MAX_CELDAS_RELLENO) {
+    return reply.status(400).send({ error: `Saldrían ${interior.length} celdas: demasiadas, míralo a mano antes.` });
+  }
+
+  // ON CONFLICT DO NOTHING: las celdas que ya son de alguien se quedan como
+  // están. Esto repara lo que faltó, no reparte de nuevo el mapa.
+  const { rows: metidas } = await db.query(
+    `INSERT INTO cells (cell_x, cell_y, owner_id, run_id, claimed_at)
+     SELECT x, y, $3::uuid, $4::uuid, NOW()
+       FROM unnest($1::int[], $2::int[]) AS t(x, y)
+     ON CONFLICT (cell_x, cell_y) DO NOTHING
+     RETURNING cell_x, cell_y`,
+    [interior.map(c => c.x), interior.map(c => c.y), userId, id],
+  );
+  const nuevas = metidas.length;
+
+  if (nuevas > 0) {
+    // Los mismos puntos que habría dado la carrera: 1 por celda nueva.
+    await db.query(
+      `UPDATE user_stats SET total_cells = COALESCE(total_cells, 0) + $2,
+                             total_points = total_points + $2
+        WHERE user_id = $1`, [userId, nuevas],
+    );
+    await db.query(`UPDATE runs SET points = points + $2 WHERE id = $1`, [id, nuevas]);
+    invalidateViewportCache(metidas.map((c: any) => ({ x: c.cell_x, y: c.cell_y })));
+
+    // Y se le cuenta, que si no aparece territorio de la nada y no se entiende.
+    await db.query(
+      `INSERT INTO avisos (titulo, texto, boton, etiqueta, sello, nota, publico, corredor)
+       VALUES ($1, $2, $3, $4, $5, $6, 'corredor', $7)`,
+      [
+        'Territorio devuelto',
+        `Cerraste el círculo y CORRR no te dio lo de dentro: un fallo nuestro con las vueltas grandes. Ya está arreglado y *te hemos devuelto ${nuevas.toLocaleString('es-ES')} celdas*. Perdona el lío.`,
+        'A seguir',
+        'Se nos escapó',
+        'Arreglado',
+        `+${nuevas.toLocaleString('es-ES')}\nCELDAS`,
+        nombre,
+      ],
+    ).catch((e: any) => req.log.warn({ err: String(e) }, 'no se pudo crear el aviso del relleno'));
+  }
+
+  return reply.send({
+    ok: true, corredor: nombre, interior: interior.length, nuevas,
+    ocupadas: interior.length - nuevas,
   });
 });
 
