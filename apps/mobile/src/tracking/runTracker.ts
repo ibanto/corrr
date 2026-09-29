@@ -229,6 +229,8 @@ export const STOP_CLOSE_DIST_M = 50;
 // manzanas (KarolK 20-sep: 4,7 km² con 13 km; Ibanto ese mismo día: una banda
 // maciza de 530×430 m con 1,34 km).
 export const MAX_LOOP_EDGE_M = 60;
+/** …y, en circuitos grandes, hasta este porcentaje del perímetro. */
+export const MAX_LOOP_EDGE_FRACCION = 0.02;
 
 // Hueco sin lecturas (túnel, pérdida de señal): al volver la señal lejos, se
 // suma la línea recta SOLO si encaja con alguien andando o corriendo y venías
@@ -339,9 +341,14 @@ export function findClosedLoops(path: Coord[]): Coord[][] {
       const perimeter = cum[j] - cum[i];
       // Al crecer i el perímetro solo encoge: si ya es corto, ninguno sirve.
       if (perimeter < LOOP_MIN_PERIMETER_M) break;
-      // Un "circuito" de más de 10 km casi siempre es el recorrido entero
-      // cerrándose contra sí mismo, que es justo lo que evitamos.
-      if (perimeter > 10000) continue;
+      // Tope alto a propósito: dar una vuelta grande y quedarse lo de dentro
+      // ES el juego. Estaba en 10 km "porque un circuito tan grande suele ser
+      // el recorrido entero cerrándose contra sí mismo", pero eso es
+      // exactamente lo que hay que premiar, y dejaba fuera cualquier vuelta
+      // larga. Lo que protege de verdad no es este tope, sino que el circuito
+      // no tenga rectas inventadas (isTrustworthyLoop) y los topes del
+      // servidor.
+      if (perimeter > 50000) continue;
       if (getDistance(path[i], path[j]) < LOOP_CLOSE_DIST_M) {
         loops.push(path.slice(i, j + 1));
         from = j; // tramo consumido
@@ -359,8 +366,17 @@ export function findClosedLoops(path: Coord[]): Coord[][] {
  *  es una línea recta que el GPS se ha saltado, y todo lo que "encierra" contra
  *  el resto del recorrido es territorio que nadie ha pisado. */
 export function isTrustworthyLoop(loop: Coord[]): boolean {
+  // El límite se mide TAMBIÉN en proporción al circuito. Un hueco de 90 m en
+  // una vuelta de 9 km es el 1%: la forma es la misma con él o sin él. Uno de
+  // 343 m en un circuito de 1,4 km es la cuarta parte: ahí la "recta" es la
+  // que encierra el territorio, y eso es lo que había que cortar (Ibanto,
+  // 20-sep). Con un tope fijo, o se colaban las cuñas o se perdían las vueltas
+  // grandes con un fallo de señal de nada.
+  let perimetro = 0;
+  for (let i = 1; i < loop.length; i++) perimetro += getDistance(loop[i - 1], loop[i]);
+  const limite = Math.max(MAX_LOOP_EDGE_M, perimetro * MAX_LOOP_EDGE_FRACCION);
   for (let i = 1; i < loop.length; i++) {
-    if (getDistance(loop[i - 1], loop[i]) > MAX_LOOP_EDGE_M) return false;
+    if (getDistance(loop[i - 1], loop[i]) > limite) return false;
   }
   return true;
 }
@@ -373,8 +389,13 @@ export function claimLoopInterior(loop: Coord[], cells: Set<string>): void {
     if (c.x < minCX) minCX = c.x; if (c.x > maxCX) maxCX = c.x;
     if (c.y < minCY) minCY = c.y; if (c.y > maxCY) maxCY = c.y;
   }
-  // 200×200 celdas son 2×2 km: un circuito mayor es un fallo del GPS.
-  if ((maxCX - minCX + 1) * (maxCY - minCY + 1) > 40000) return;
+  // Tope de trabajo, no de juego: rellenar es mirar celda a celda si cae
+  // dentro, y hay que poner un techo para no colgar el móvil. Estaba en 2×2 km
+  // "porque un circuito mayor es un fallo del GPS", y no: DaniRC dio una
+  // vuelta REAL de 3,1 × 2,2 km (29-sep) y se descartó en silencio — encima
+  // contándose como rellenada. Con 250.000 celdas caben vueltas de 5 × 5 km,
+  // que es más de lo que nadie encierra corriendo.
+  if ((maxCX - minCX + 1) * (maxCY - minCY + 1) > 250_000) return;
   for (let cy = minCY; cy <= maxCY; cy++) {
     for (let cx = minCX; cx <= maxCX; cx++) {
       const k = cellKey(cx, cy);
@@ -677,12 +698,28 @@ export class RunTracker {
   finish(): { loops: number } {
     let loops = 0;
     this.diag.trailCells = this.cells.size;
+    // Los trozos separados por un hueco CORTO se cosen en uno solo para buscar
+    // circuitos. Sin esto, un corte de señal a mitad de una vuelta partía el
+    // circuito en dos mitades y no se detectaba ninguno: DaniRC dio una vuelta
+    // de 9,7 km al Eixample, el GPS le falló 89 m, y se quedó sin las 27.800
+    // celdas de dentro (29-sep). Los huecos LARGOS siguen partiendo el
+    // recorrido: por ahí no se sabe por dónde fue.
+    const caminos: Coord[][] = [];
+    for (const seg of this.segments) {
+      const anterior = caminos[caminos.length - 1];
+      const salto = anterior && anterior.length && seg.length
+        ? getDistance(anterior[anterior.length - 1], seg[0])
+        : Infinity;
+      if (anterior && salto <= GAP_BRIDGE_MAX_M) anterior.push(...seg);
+      else caminos.push([...seg]);
+    }
     const first = this.segments[0][0];
-    this.segments.forEach((seg, idx) => {
-      let pts = seg;
+    caminos.forEach((camino, idx) => {
+      let pts = camino;
       // Parar cerca de donde empezaste cierra el circuito, pero solo si todo
-      // fue un tramo continuo: a través de un hueco no se sabe por dónde fuiste.
-      if (idx === 0 && this.segments.length === 1 && first && pts.length >= 10) {
+      // fue un camino continuo: a través de un hueco largo no se sabe por
+      // dónde fuiste.
+      if (idx === 0 && caminos.length === 1 && first && pts.length >= 10) {
         const last = pts[pts.length - 1];
         if (getDistance(first, last) < STOP_CLOSE_DIST_M) pts = [...pts, first];
       }

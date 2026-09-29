@@ -263,6 +263,32 @@ scenario('Circuito con un corte del GPS dentro (la cuña de KarolK)', check => {
   check('no reclama el triángulo del hueco', tr.cells.size < triangulo * 0.15, `${tr.cells.size} celdas (triángulo ${Math.round(triangulo)})`);
 });
 
+scenario('Vuelta grande con un fallo de señal de 90 m (DaniRC, 29-sep)', check => {
+  // Lo que le pasó de verdad: 9,7 km dando una vuelta al Eixample, el GPS le
+  // falló menos de 100 m a mitad, y se quedó SIN las 27.800 celdas de dentro,
+  // que es justo lo que había ido a buscar. Dos motivos, los dos arreglados:
+  // los circuitos se buscaban dentro de cada trozo por separado, y una recta
+  // de 90 m se juzgaba igual en una vuelta de 9 km que en una de 1.
+  const tr = new RunTracker(T0);
+  const lado = 2000; // vuelta de 8 km, como la suya
+  const a = route(BCN, [
+    { eastM: lado, northM: 0 },
+    { eastM: 0, northM: lado },
+    { eastM: -lado, northM: 0 },
+    { eastM: 0, northM: -lado + 300 },
+  ], { t0: T0, kmh: 11 });
+  // Se pierde la señal 90 m y vuelve, ya casi en el punto de partida.
+  const b = route(offset(BCN, 0, 210), [{ eastM: 0, northM: -205 }], { t0: lastTs(a) + 40_000, kmh: 11 });
+  feed(tr, a);
+  feed(tr, b);
+  tr.finish();
+  const interior = (lado * lado) / (CELL_SIZE_M * CELL_SIZE_M);
+  check('se rellena el interior de la vuelta', tr.cells.size > interior * 0.7,
+    `${tr.cells.size} celdas (el interior son ${Math.round(interior)})`);
+  check('el corte no parte el circuito', tr.diag.loopsFilled >= 1,
+    `${tr.diag.loopsFilled} rellenados, ${tr.diag.loopsSkipped} descartados, salto máximo ${tr.diag.maxStepM} m, trozos ${tr.diag.segments}`);
+});
+
 scenario('Pausa manual: lo andado en pausa no cuenta', check => {
   const tr = new RunTracker(T0);
   const a = route(BCN, [{ eastM: 300, northM: 0 }], { t0: T0, kmh: 10 });
