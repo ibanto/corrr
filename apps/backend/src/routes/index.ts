@@ -12,6 +12,7 @@ import { Resend } from 'resend';
 import { randomBytes, createHmac, timingSafeEqual } from 'crypto';
 import { SUPABASE_ROOT_CA } from '../db/supabase-ca.js';
 import { agruparEnTiras, Dueno } from '../services/tiras.js';
+import { sembrar, recoger, Objeto } from '../services/objetos.js';
 import {
   CAMPANA_REACTIVACION, ASUNTO_REACTIVACION, CAMPANA_DOBLE, ASUNTO_DOBLE,
   htmlReactivacion, textoReactivacion, Variante,
@@ -407,6 +408,28 @@ async function initDB() {
   // Qué teléfono usa cada corredor. Se apunta cuando la app pide su aviso, y
   // sirve para mandar un aviso solo a iPhone o solo a Android.
   await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS plataforma TEXT`).catch(() => {});
+  // Objetos del mapa (las calabazas de Halloween y lo que venga después).
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS objetos (
+      id SERIAL PRIMARY KEY,
+      tipo TEXT NOT NULL DEFAULT 'calabaza',
+      cell_x INTEGER NOT NULL,
+      cell_y INTEGER NOT NULL,
+      puntos INTEGER NOT NULL DEFAULT 200,
+      desde TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      hasta TIMESTAMPTZ,
+      tomado_por UUID REFERENCES users(id) ON DELETE SET NULL,
+      tomado_at TIMESTAMPTZ,
+      creado_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `).catch(() => {});
+  // Los libres se buscan por posición en cada refresco del mapa y al guardar
+  // cada carrera: sin este índice, eso es un repaso a la tabla entera.
+  await db.query(`CREATE INDEX IF NOT EXISTS objetos_libres_idx
+                    ON objetos (cell_x, cell_y) WHERE tomado_por IS NULL`).catch(() => {});
+  await db.query(`CREATE INDEX IF NOT EXISTS objetos_tomados_idx
+                    ON objetos (tomado_por, tomado_at)`).catch(() => {});
+  await db.query(`ALTER TABLE objetos ENABLE ROW LEVEL SECURITY`).catch(() => {});
   await db.query(`ALTER TABLE avisos ENABLE ROW LEVEL SECURITY`).catch(() => {});
   await db.query(`ALTER TABLE aviso_vistas ENABLE ROW LEVEL SECURITY`).catch(() => {});
   // Motivo por el que una carrera quedó marcada como geométricamente inusual.
@@ -1708,6 +1731,21 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
 <button class="btn" id="bstrava">Comprobar Strava</button>
 <div id="strava_msg" class="resultado" style="display:none"></div>
 
+<h2>Juego del mapa</h2>
+<p class="nota">Las calabazas se siembran sobre calles por las que YA ha corrido alguien, así que
+ninguna cae dentro de un edificio. Se cogen pasando por encima al correr, y cuando alguien se come
+una, nace otra cerca. <b>Solo las ven las apps 1.11.11 o más nuevas.</b></p>
+<div id="objetos_estado"></div>
+<form class="form" id="fo">
+  <input id="o_cuantas" type="number" min="1" max="500" value="100" placeholder="Cuántas">
+  <input id="o_puntos" type="number" min="1" max="1000" value="200" placeholder="Puntos cada una">
+  <input id="o_desde" type="datetime-local">
+  <input id="o_hasta" type="datetime-local">
+  <button class="btn" id="o_sembrar" type="button">Sembrar calabazas</button>
+  <button class="mini" id="o_quitar" type="button">Quitar las que queden sin coger</button>
+  <div id="o_msg" class="resultado" style="display:none"></div>
+</form>
+
 <h2>Correos</h2>
 <p class="nota">Cada campaña se manda UNA vez por persona. Quien pidió la baja y quien ya salió a
 correr quedan fuera solos. Manda siempre una prueba a tu correo antes de la tanda.</p>
@@ -1906,6 +1944,46 @@ Quien usa el enlace del correo se da de baja solo.</p>
   }
   document.getElementById('c_test').addEventListener('click', function () { mandarCorreo('prueba'); });
   document.getElementById('c_enviar').addEventListener('click', function () { mandarCorreo('enviar'); });
+  function pintarObjetos(o) {
+    var top = (o.top || []).map(function (t, i) {
+      return (i + 1) + '. ' + esc(t.display_name) + ' — ' + t.cuantos;
+    }).join('<br>') || 'Todavía no las ha cogido nadie.';
+    document.getElementById('objetos_estado').innerHTML =
+      '<div class="aviso"><h3>Calabazas</h3>'
+      + '<p>En el mapa ahora: <b>' + o.libres + '</b> · cogidas: <b>' + o.comidas + '</b>'
+      + ' · por <b>' + (o.corredores || 0) + '</b> corredores</p>'
+      + '<div class="meta">' + top + '</div></div>';
+  }
+  function cargarObjetos() { api('/admin/objetos?tipo=calabaza').then(pintarObjetos).catch(function () {}); }
+  function msgObjetos(texto, ok) {
+    var m = document.getElementById('o_msg');
+    m.style.display = 'block';
+    m.style.color = ok ? '#4caf50' : '#f44336';
+    m.style.borderLeftColor = ok ? '#4caf50' : '#f44336';
+    m.textContent = (ok ? '✓ ' : '✗ ') + texto;
+  }
+  document.getElementById('o_sembrar').addEventListener('click', function () {
+    var cuerpo = {
+      tipo: 'calabaza',
+      cuantos: Number(document.getElementById('o_cuantas').value),
+      puntos: Number(document.getElementById('o_puntos').value),
+      desde: val('o_desde') || null,
+      hasta: val('o_hasta') || null,
+    };
+    api('/admin/objetos', { method: 'POST', body: JSON.stringify(cuerpo) }).then(function (r) {
+      msgObjetos('Sembradas ' + r.puestas + ' de ' + r.pedidas
+        + (r.puestas < r.pedidas ? ' (el resto caían demasiado cerca de otra)' : ''), true);
+      cargarObjetos();
+    }).catch(function (e) { msgObjetos(e.message, false); });
+  });
+  document.getElementById('o_quitar').addEventListener('click', function () {
+    if (!confirm('¿Quitar del mapa las calabazas sin coger? Las ya cogidas se quedan.')) return;
+    api('/admin/objetos?tipo=calabaza', { method: 'DELETE' }).then(function (r) {
+      msgObjetos('Quitadas ' + r.quitadas + '.', true);
+      cargarObjetos();
+    }).catch(function (e) { msgObjetos(e.message, false); });
+  });
+  cargarObjetos();
   cargarCampanas();
   cargar();
 </script>
@@ -2402,6 +2480,12 @@ function validateClaimedCellsGeometry(
   return null;
 }
 
+/** Hasta cuándo vale el objeto que nace al comerse otro: hereda el final del
+ *  evento del que se acaba de comer. */
+function objetoHasta(o: Objeto): Date {
+  return o.hasta ? new Date(o.hasta) : new Date(Date.now() + 7 * 24 * 3600 * 1000);
+}
+
 app.post('/runs', {
   preHandler: requireAuth,
   // Nadie corre 20 veces en una hora. Sin este límite, el endpoint solo tenía
@@ -2820,7 +2904,17 @@ app.post('/runs', {
     // Siempre recomputamos server-side (el bypass legacy que confiaba el
     // estimate del cliente se ha eliminado). clientPointsEstimate solo se usa
     // ya como valor de display optimista en el cliente, nunca aquí.
-    const authoritativePoints = Math.round(subtotal * streakMultiplier * (dobleBienvenida ? 2 : 1));
+    // Objetos del mapa (calabazas): los recoge el SERVIDOR mirando por dónde
+    // ha pasado la carrera, así que la app no puede inventarse ninguno. Sus
+    // puntos se suman al final, sin multiplicadores: 200 son 200, y así el
+    // corredor puede echar la cuenta de cabeza.
+    const objetos = Array.isArray(claimedCells) && claimedCells.length > 0
+      ? await recoger(client, userId, claimedCells, new Date(isImport ? runEndMs : nowMs))
+      : [];
+    const puntosObjetos = objetos.reduce((n: number, o: Objeto) => n + o.puntos, 0);
+
+    const authoritativePoints =
+      Math.round(subtotal * streakMultiplier * (dobleBienvenida ? 2 : 1)) + puntosObjetos;
 
     // Persist the recomputed points on the run row (we inserted with the
     // client's estimate earlier).
@@ -2860,6 +2954,18 @@ app.post('/runs', {
        lastRunDay.toISOString().slice(0, 10), newStreak, newBestKm]
     );
 
+    // Por cada objeto comido nace otro, para que el mapa no se quede pelado el
+    // primer día. Nace en la misma zona (caja de 5 km alrededor), no al otro
+    // lado del país. Si falla, la carrera se guarda igual: es un extra.
+    for (const o of objetos) {
+      const radio = 500; // celdas = 5 km
+      await sembrar(client as any, {
+        cuantos: 1, tipo: o.tipo, puntos: o.puntos,
+        desde: new Date(), hasta: objetoHasta(o),
+        caja: { x0: o.x - radio, x1: o.x + radio, y0: o.y - radio, y1: o.y + radio },
+      }).catch(() => 0);
+    }
+
     // Check and unlock achievements
     await checkAchievements(client, userId);
 
@@ -2872,6 +2978,8 @@ app.post('/runs', {
       // Celdas de la carrera que se quedan con quien pasó por ellas después.
       newerCellsKept,
       points: authoritativePoints,
+      // Lo que se ha encontrado por el camino. La app lo enseña al terminar.
+      objetos,
       breakdown: {
         kmPoints,
         cellPoints,
@@ -2885,6 +2993,8 @@ app.post('/runs', {
         // Para que la app pueda enseñar de dónde sale el ×2 en vez de un
         // número que no cuadra con el desglose.
         dobleBienvenida,
+        objetos: objetos.length,
+        puntosObjetos,
       },
     });
   } catch (err) {
@@ -4209,6 +4319,101 @@ app.get('/app/version', async (req: any, reply) => {
       ? (IOS_UPDATE_URL ? { updateUrl: IOS_UPDATE_URL } : {})
       : { updateUrl: ANDROID_UPDATE_URL }),
   });
+});
+
+// ── Objetos del mapa (calabazas de Halloween y lo que venga) ────────────────
+
+/** Los objetos libres que hay a la vista. La app los pinta como pinta el
+ *  territorio; cogerlos es pasar por encima corriendo, y de eso se encarga el
+ *  servidor al guardar la carrera. */
+app.get('/objetos/viewport', { preHandler: requireAuth }, async (req: any, reply) => {
+  const { north, south, east, west } = req.query as any;
+  const n = parseFloat(north), s2 = parseFloat(south);
+  const e = parseFloat(east), w = parseFloat(west);
+  if (![n, s2, e, w].every(Number.isFinite)) {
+    return reply.status(400).send({ error: 'north, south, east, west requeridos (float)' });
+  }
+  const sw = coordToCell(s2, w);
+  const ne = coordToCell(n, e);
+  const { rows } = await db.query(
+    `SELECT id, cell_x, cell_y, puntos, tipo FROM objetos
+      WHERE tomado_por IS NULL AND desde <= NOW() AND (hasta IS NULL OR hasta > NOW())
+        AND cell_x BETWEEN $1 AND $2 AND cell_y BETWEEN $3 AND $4
+      LIMIT 500`,
+    [sw.x, ne.x, sw.y, ne.y],
+  );
+  return reply.send({
+    objetos: rows.map((r: any) => ({ id: r.id, x: r.cell_x, y: r.cell_y, puntos: r.puntos, tipo: r.tipo })),
+  });
+});
+
+/** Marcador del evento: quién lleva más. Lo usa el cartel del ganador y, si
+ *  algún día queremos, una pantalla dentro de la app. */
+app.get('/objetos/ranking', { preHandler: requireAuth }, async (req: any, reply) => {
+  const tipo = String(req.query?.tipo ?? 'calabaza');
+  const { rows } = await db.query(
+    `SELECT u.id, u.display_name, COUNT(*)::int AS cuantos, SUM(o.puntos)::int AS puntos
+       FROM objetos o JOIN users u ON u.id = o.tomado_por
+      WHERE o.tipo = $1 AND o.tomado_por IS NOT NULL
+      GROUP BY u.id, u.display_name
+      ORDER BY cuantos DESC, puntos DESC
+      LIMIT 20`,
+    [tipo],
+  );
+  return reply.send({
+    tipo,
+    ranking: rows.map((r: any) => ({
+      userId: r.id, name: r.display_name, cuantos: r.cuantos, puntos: r.puntos,
+      mine: r.id === req.userId,
+    })),
+  });
+});
+
+/** Estado del evento, para el panel. */
+app.get('/admin/objetos', { preHandler: requireAdmin }, async (req: any, reply) => {
+  const tipo = String(req.query?.tipo ?? 'calabaza');
+  const { rows } = await db.query(
+    `SELECT
+       COUNT(*) FILTER (WHERE tomado_por IS NULL AND (hasta IS NULL OR hasta > NOW()))::int AS libres,
+       COUNT(*) FILTER (WHERE tomado_por IS NOT NULL)::int AS comidas,
+       COUNT(DISTINCT tomado_por)::int AS corredores,
+       MIN(desde) AS desde, MAX(hasta) AS hasta
+     FROM objetos WHERE tipo = $1`,
+    [tipo],
+  );
+  const { rows: top } = await db.query(
+    `SELECT u.display_name, COUNT(*)::int AS cuantos
+       FROM objetos o JOIN users u ON u.id = o.tomado_por
+      WHERE o.tipo = $1 GROUP BY u.display_name ORDER BY cuantos DESC LIMIT 5`,
+    [tipo],
+  );
+  return reply.send({ tipo, ...rows[0], top });
+});
+
+/** Sembrar el evento: "pon 100 calabazas del 29 al 31". Se puede repetir para
+ *  añadir más; nunca borra las que ya están. */
+app.post('/admin/objetos', { preHandler: requireAdmin }, async (req: any, reply) => {
+  const { tipo, cuantos, puntos, desde, hasta } = req.body ?? {};
+  const n = Math.min(Math.max(1, Number(cuantos) || 0), 500);
+  if (!n) return reply.status(400).send({ error: 'Falta cuántas' });
+  const d = desde ? new Date(desde) : new Date();
+  const h = hasta ? new Date(hasta) : new Date(Date.now() + 3 * 24 * 3600 * 1000);
+  if (isNaN(d.getTime()) || isNaN(h.getTime()) || h <= d) {
+    return reply.status(400).send({ error: 'Las fechas no cuadran' });
+  }
+  const puestas = await sembrar(db, {
+    cuantos: n, tipo: String(tipo || 'calabaza'), puntos: Number(puntos) || 200, desde: d, hasta: h,
+  });
+  return reply.send({ ok: true, puestas, pedidas: n });
+});
+
+/** Quitar del mapa las que queden libres (para cerrar un evento a mano). */
+app.delete('/admin/objetos', { preHandler: requireAdmin }, async (req: any, reply) => {
+  const tipo = String(req.query?.tipo ?? 'calabaza');
+  const { rowCount } = await db.query(
+    `DELETE FROM objetos WHERE tipo = $1 AND tomado_por IS NULL`, [tipo],
+  );
+  return reply.send({ ok: true, quitadas: rowCount ?? 0 });
 });
 
 // ── Avisos en la app ─────────────────────────────────────────────────────────
