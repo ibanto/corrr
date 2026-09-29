@@ -119,6 +119,17 @@ interface Aviso {
   nota?: string | null;
 }
 
+/** Objeto del mapa (las calabazas de Halloween y lo que venga después). Se
+ *  coge pasando por encima al correr; quien decide es el servidor. */
+interface ObjetoMapa {
+  id: number;
+  /** Celda del mapa, como el territorio. */
+  x: number;
+  y: number;
+  puntos: number;
+  tipo: string;
+}
+
 interface ProfileData {
   id: string;
   email: string;
@@ -230,6 +241,9 @@ interface RunSaveResult {
     beatPB: boolean;
     /** La carrera ha contado doble por tener 100 puntos o menos. */
     dobleBienvenida?: boolean;
+    /** Objetos recogidos por el camino y lo que han sumado. */
+    objetos?: number;
+    puntosObjetos?: number;
   };
 }
 
@@ -474,6 +488,18 @@ class ApiService {
 
   /** Listado paginado de todas las carreras del usuario. Usado por la pantalla
    *  "Ver más" desde Stats. Devuelve total para paginar correctamente. */
+  /** Los objetos que hay a la vista. Si falla, el mapa se pinta sin ellos: son
+   *  un extra, no pueden dejar a nadie sin ver su territorio. */
+  async getObjetos(north: number, south: number, east: number, west: number): Promise<ObjetoMapa[]> {
+    try {
+      const qs = `north=${north}&south=${south}&east=${east}&west=${west}`;
+      const res = await this.request<{ objetos: ObjetoMapa[] }>(`/objetos/viewport?${qs}`);
+      return res?.objetos ?? [];
+    } catch {
+      return [];
+    }
+  }
+
   async getAllRuns(limit = 30, offset = 0): Promise<{ runs: RunRecord[]; total: number; limit: number; offset: number }> {
     return this.request<{ runs: RunRecord[]; total: number; limit: number; offset: number }>(
       `/runs/my?limit=${limit}&offset=${offset}`
@@ -643,7 +669,7 @@ interface Friend {
 }
 
 export const api = new ApiService();
-export type { LoginResponse, RankingEntry, Challenge, Achievement, RunRecord, UserStats, MyStats, RemoteZone, ZonePayload, FriendRequest, Friend, Cell, RemoteCell, MapOwner, MapTerritory, Aviso, CellRunPayload, RunSaveResult, TauntInbox, ProfileData, ProfileUpdate };
+export type { LoginResponse, RankingEntry, Challenge, Achievement, RunRecord, UserStats, MyStats, RemoteZone, ZonePayload, FriendRequest, Friend, Cell, RemoteCell, MapOwner, MapTerritory, Aviso, ObjetoMapa, CellRunPayload, RunSaveResult, TauntInbox, ProfileData, ProfileUpdate };
 
 const MOCK_RANKING: RankingEntry[] = [
   { position: 1, username: 'Laura R.', city: 'Barcelona', points: 28480, zones: 87 },

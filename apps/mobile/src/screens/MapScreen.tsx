@@ -18,7 +18,7 @@ import {
   Dimensions,
   Vibration,
 } from 'react-native';
-import MapView, { Polygon, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
+import MapView, { Marker, Polygon, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
 import {
@@ -35,7 +35,7 @@ import { CHECK_TAUNTS_EVENT, RUN_TABS_EVENT } from '../services/notifications';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { colors, spacing, radius } from '../theme';
-import { api, RemoteZone, MapTerritory, TauntInbox } from '../services/api';
+import { api, RemoteZone, MapTerritory, ObjetoMapa, TauntInbox } from '../services/api';
 import ZonePopup, { PopupType } from '../components/ZonePopup';
 import ShareRunCard, { ShareRunData, ShareSteal } from '../components/ShareRunCard';
 import { randomSharePhrase } from '../data/sharePhrases';
@@ -603,6 +603,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       kmPoints: number; cellPoints: number; newCells?: number; stolenCells?: number;
       loopBonus: number; streakMultiplier: number; pbMultiplier: number;
       streakDays: number; beatPB: boolean; dobleBienvenida?: boolean;
+      objetos?: number; puntosObjetos?: number;
     } | null;
   } | null>(null);
   const [loopDetected, setLoopDetected] = useState(false);
@@ -645,6 +646,12 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
   const trackerRef = useRef<RunTracker | null>(null);
   const handleReadingRef = useRef<(r: GpsReading, live: boolean) => ReadingOutcome | null>(() => null);
   const [territorio, setTerritorio] = useState<MapTerritory>(TERRITORIO_VACIO);
+  /** Objetos del mapa (calabazas). Son un extra: si no llegan, el mapa va
+   *  igual. Se guardan también en una referencia porque el aviso de "la has
+   *  cogido" se comprueba dentro del manejador del GPS, que no ve el estado. */
+  const [objetos, setObjetos] = useState<ObjetoMapa[]>([]);
+  const objetosRef = useRef<ObjetoMapa[]>([]);
+  const [objetoCogido, setObjetoCogido] = useState<ObjetoMapa | null>(null);
   /** Zona de la que se calculan y dibujan los territorios. El servidor manda
    *  bastante más de lo que cabe en pantalla (redondea a casillas de 1,3 km
    *  para poder reutilizar la respuesta entre usuarios), y calcular la forma de
@@ -968,6 +975,11 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         for (const [id, o] of Object.entries(owners)) ownerAvatarsRef.current[id] = o.avatar;
       }
       setTerritorio(t);
+      const objs = await api.getObjetos(
+        useLat + halfLat, useLat - halfLat, useLng + halfLng, useLng - halfLng,
+      );
+      objetosRef.current = objs;
+      setObjetos(objs);
     } catch {}
   };
 
@@ -1670,7 +1682,21 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         setCurrentPath([...pathRef.current]);
         // Velocidad con EMA: un spike aislado de deriva apenas mueve la aguja.
         if (out.moved) setCurrentSpeed(prev => prev * 0.7 + out.speedKmh * 0.3);
-        if (out.cellsChanged) setClaimedCellsTick(t => t + 1);
+        if (out.cellsChanged) {
+          setClaimedCellsTick(t => t + 1);
+          // ¿Había un objeto en esta celda? El servidor es quien lo da por
+          // bueno al guardar la carrera; esto es solo para que se entere en
+          // el momento, que es la gracia.
+          const celda = coordToCell(out.coord.latitude, out.coord.longitude);
+          const pillado = objetosRef.current.find(o => o.x === celda.x && o.y === celda.y);
+          if (pillado) {
+            objetosRef.current = objetosRef.current.filter(o => o.id !== pillado.id);
+            setObjetos(objetosRef.current);
+            setObjetoCogido(pillado);
+            Vibration.vibrate([0, 120, 80, 120]);
+            setTimeout(() => setObjetoCogido(null), 4000);
+          }
+        }
       }
       if (out.resumed) {
         setIsAutoPaused(false);
@@ -2318,6 +2344,14 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
                   {runSummary.breakdown.streakMultiplier > 1 && (
                     <BreakdownRow label={`Racha ${runSummary.breakdown.streakDays} días`} value="×1.5" hint="¡sigue así!" highlight />
                   )}
+                  {(runSummary.breakdown.objetos ?? 0) > 0 && (
+                    <BreakdownRow
+                      label={`Calabazas (${runSummary.breakdown.objetos})`}
+                      value={`+${runSummary.breakdown.puntosObjetos ?? 0}`}
+                      hint="por el camino"
+                      highlight
+                    />
+                  )}
                   {runSummary.breakdown.dobleBienvenida && (
                     <BreakdownRow label="Primeros pasos" value="×2" hint="mientras tengas menos de 100 puntos" highlight />
                   )}
@@ -2710,6 +2744,21 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
             />
           )}
 
+          {/* Objetos del mapa: se cogen pasando por encima al correr. */}
+          {objetos.map(o => (
+            <Marker
+              key={`objeto-${o.id}`}
+              coordinate={{
+                latitude: (o.y + 0.5) * CELL_LAT_DEG,
+                longitude: (o.x + 0.5) * CELL_LNG_DEG,
+              }}
+              anchor={{ x: 0.5, y: 0.5 }}
+              tracksViewChanges={false}
+            >
+              <Text style={styles.objeto}>🎃</Text>
+            </Marker>
+          ))}
+
           {/* Punto de inicio */}
           {currentPath.length > 0 && isRunning && (
             <Polygon
@@ -2753,6 +2802,15 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
           <View style={styles.loopBanner}>
             <Ionicons name="checkmark-circle" size={20} color={colors.success} />
             <Text style={styles.loopBannerText}>¡Zona cerrada! Calculando...</Text>
+          </View>
+        )}
+
+        {/* Has pisado una calabaza. Sale aquí y en la pantalla de carrera,
+            que es donde está mirando quien corre. */}
+        {objetoCogido && (
+          <View style={styles.cogido} pointerEvents="none">
+            <Text style={styles.objeto}>🎃</Text>
+            <Text style={styles.cogidoTexto}>¡CALABAZA! +{objetoCogido.puntos}</Text>
           </View>
         )}
 
@@ -2854,6 +2912,12 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
               Va FLOTANDO sobre el contenido: si empujara, al aparecer y
               desaparecer descolocaría el tiempo, la distancia y la frase. */}
           <View style={styles.avisoSlot} pointerEvents="none">
+            {objetoCogido && (
+              <View style={styles.cogidoRun}>
+                <Text style={styles.objeto}>🎃</Text>
+                <Text style={styles.cogidoTexto}>¡CALABAZA! +{objetoCogido.puntos}</Text>
+              </View>
+            )}
             {gpsWeak && (
               <View style={styles.gpsBannerRun}>
                 <Ionicons name="warning" size={18} color="#FFB300" />
@@ -3517,6 +3581,22 @@ const styles = StyleSheet.create({
   summaryBreakdown: {
     width: '100%', marginBottom: spacing.lg, gap: 2,
   },
+  // La calabaza del mapa. Es un emoji y no una imagen: no pesa, se ve igual en
+  // Android y en iPhone, y no hay que mantener otro archivo.
+  objeto: { fontSize: 30 },
+  cogido: {
+    position: 'absolute', left: spacing.md, right: spacing.md, top: 96,
+    backgroundColor: colors.orange, borderRadius: radius.lg,
+    paddingVertical: spacing.sm, paddingHorizontal: spacing.md,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.sm,
+  },
+  cogidoTexto: { color: '#fff', fontSize: 16, fontWeight: '900', letterSpacing: 0.5 },
+  cogidoRun: {
+    backgroundColor: colors.orange, borderRadius: radius.lg,
+    paddingVertical: spacing.sm, paddingHorizontal: spacing.md,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.sm,
+  },
+
   breakdownRow: {
     flexDirection: 'row', alignItems: 'center',
     paddingVertical: 8, paddingHorizontal: spacing.sm,
