@@ -59,6 +59,10 @@ const logroImages: Record<string, any> = {
   robos: require('../../assets/logros/logro-robos.png'),
 };
 
+/** 12453 → "12.453". Los números largos sin separador no se leen de un
+ *  vistazo, y encima no caben. */
+const numero = (n: number) => Math.round(n).toLocaleString('es-ES');
+
 export default function PerfilScreen({ user, onLogout }: Props) {
   const displayName = user?.username ?? 'Runner';
   const [stravaLoading, setStravaLoading] = useState(false);
@@ -437,14 +441,18 @@ export default function PerfilScreen({ user, onLogout }: Props) {
           tarjetas grandes para que se vean de un vistazo. */}
       <View style={styles.bigStatsGrid}>
         {[
-          { value: String(s?.total_zones ?? 0), label: 'Zonas', icon: 'flag' as const },
+          { value: numero(s?.total_zones ?? 0), label: 'Zonas', icon: 'flag' as const },
           { value: formatKm(s?.total_km ?? 0), label: 'km totales', icon: 'navigate' as const },
-          { value: String(s?.total_runs ?? 0), label: 'Carreras', icon: 'walk' as const },
-          { value: String(s?.total_points ?? 0), label: 'Puntos', icon: 'flame' as const },
+          { value: numero(s?.total_runs ?? 0), label: 'Carreras', icon: 'walk' as const },
+          { value: numero(s?.total_points ?? 0), label: 'Puntos', icon: 'flame' as const },
         ].map((item, i) => (
           <View key={i} style={styles.bigStatCard}>
             <Ionicons name={item.icon} size={28} color={colors.orange} />
-            <Text style={styles.bigStatValue}>{item.value}</Text>
+            {/* Una sola línea y encogiendo si hace falta: con 5 cifras,
+                "12.453" se partía en dos y quedaba "1245 / 3". */}
+            <Text style={styles.bigStatValue} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.45}>
+              {item.value}
+            </Text>
             <Text style={styles.bigStatLabel}>{item.label}</Text>
           </View>
         ))}

@@ -73,6 +73,9 @@ const logroImages: Record<string, any> = {
   robos: require('../../assets/logros/logro-robos.png'),
 };
 
+/** 12453 → "12.453". */
+const numero = (n: number) => Math.round(n).toLocaleString('es-ES');
+
 export default function StatsScreen({ user }: Props) {
   const [period, setPeriod] = useState<Period>('Semana');
   const [stats, setStats] = useState<UserStats | null>(null);
@@ -360,14 +363,17 @@ export default function StatsScreen({ user }: Props) {
           <View style={styles.bigStatsGrid}>
             {[
               { icon: 'walk' as const, value: displayStats.km.toFixed(1), unit: 'km', label: period === 'Todo' ? 'km totales' : `km ${period.toLowerCase()}` },
-              { icon: 'flag' as const, value: String(displayStats.zones), unit: '', label: period === 'Todo' ? 'zonas capturadas' : 'zonas' },
-              { icon: 'flash' as const, value: String(displayStats.runs), unit: '', label: 'carreras' },
-              { icon: 'flame' as const, value: String(displayStats.points), unit: 'pts', label: 'puntos' },
+              { icon: 'flag' as const, value: numero(displayStats.zones), unit: '', label: period === 'Todo' ? 'zonas capturadas' : 'zonas' },
+              { icon: 'flash' as const, value: numero(displayStats.runs), unit: '', label: 'carreras' },
+              { icon: 'flame' as const, value: numero(displayStats.points), unit: 'pts', label: 'puntos' },
             ].map((s, i) => (
               <View key={i} style={styles.statCard}>
                 <Ionicons name={s.icon} size={18} color={colors.orange} style={{ marginBottom: 2 }} />
                 <View style={styles.statValueRow}>
-                  <Text style={styles.statBigValue}>{s.value}</Text>
+                  {/* Una línea y encogiendo: los puntos pasan de 5 cifras. */}
+                  <Text style={styles.statBigValue} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.5}>
+                    {s.value}
+                  </Text>
                   {s.unit ? <Text style={styles.statUnit}>{s.unit}</Text> : null}
                 </View>
                 <Text style={styles.statLabel}>{s.label}</Text>
