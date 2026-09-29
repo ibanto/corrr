@@ -2069,7 +2069,8 @@ Quien usa el enlace del correo se da de baja solo.</p>
     api('/admin/carreras/' + sel.value + '/rellenar', { method: 'POST', body: '{}' }).then(function (r) {
       m.style.color = '#4caf50'; m.style.borderLeftColor = '#4caf50';
       m.textContent = '✓ ' + (r.nuevas
-        ? r.corredor + ' recupera ' + r.nuevas + ' celdas (' + r.ocupadas + ' ya eran de otro y se respetan). Le sale un aviso en la app.'
+        ? r.corredor + ' recupera ' + r.nuevas + ' celdas y ' + r.puntos + ' puntos ('
+          + r.robadas + ' se las quita a otros, avisados). '
         : (r.mensaje || 'No había nada que devolver.'));
     }).catch(function (e) {
       m.style.color = '#f44336'; m.style.borderLeftColor = '#f44336';
@@ -2084,7 +2085,8 @@ Quien usa el enlace del correo se da de baja solo.</p>
       .then(function (r) {
         m.style.color = '#4caf50'; m.style.borderLeftColor = '#4caf50';
         m.textContent = '✓ ' + (r.nuevas
-          ? r.corredor + ' cobra ' + r.nuevas + ' celdas (' + r.ocupadas + ' de dentro son de otros y siguen siéndolo). Le sale un aviso en la app.'
+          ? r.corredor + ' cobra ' + r.nuevas + ' celdas y ' + r.puntos + ' puntos ('
+            + r.robadas + ' se las quita a otros, que pierden 1 punto por celda y reciben aviso).'
           : (r.mensaje || 'No había ningún cerco.'));
       }).catch(function (e) {
         m.style.color = '#f44336'; m.style.borderLeftColor = '#f44336';
@@ -2132,7 +2134,8 @@ Quien usa el enlace del correo se da de baja solo.</p>
     api('/admin/carreras/' + sel.value + '/rellenar', { method: 'POST', body: '{}' }).then(function (r) {
       m.style.color = '#4caf50'; m.style.borderLeftColor = '#4caf50';
       m.textContent = '✓ ' + (r.nuevas
-        ? r.corredor + ' recupera ' + r.nuevas + ' celdas (' + r.ocupadas + ' ya eran de otro y se respetan). Le sale un aviso en la app.'
+        ? r.corredor + ' recupera ' + r.nuevas + ' celdas y ' + r.puntos + ' puntos ('
+          + r.robadas + ' se las quita a otros, avisados). '
         : (r.mensaje || 'No había nada que devolver.'));
     }).catch(function (e) {
       m.style.color = '#f44336'; m.style.borderLeftColor = '#f44336';
@@ -2147,7 +2150,8 @@ Quien usa el enlace del correo se da de baja solo.</p>
       .then(function (r) {
         m.style.color = '#4caf50'; m.style.borderLeftColor = '#4caf50';
         m.textContent = '✓ ' + (r.nuevas
-          ? r.corredor + ' cobra ' + r.nuevas + ' celdas (' + r.ocupadas + ' de dentro son de otros y siguen siéndolo). Le sale un aviso en la app.'
+          ? r.corredor + ' cobra ' + r.nuevas + ' celdas y ' + r.puntos + ' puntos ('
+            + r.robadas + ' se las quita a otros, que pierden 1 punto por celda y reciben aviso).'
           : (r.mensaje || 'No había ningún cerco.'));
       }).catch(function (e) {
         m.style.color = '#f44336'; m.style.borderLeftColor = '#f44336';
@@ -2191,7 +2195,8 @@ Quien usa el enlace del correo se da de baja solo.</p>
     api('/admin/carreras/' + sel.value + '/rellenar', { method: 'POST', body: '{}' }).then(function (r) {
       m.style.color = '#4caf50'; m.style.borderLeftColor = '#4caf50';
       m.textContent = '✓ ' + (r.nuevas
-        ? r.corredor + ' recupera ' + r.nuevas + ' celdas (' + r.ocupadas + ' ya eran de otro y se respetan). Le sale un aviso en la app.'
+        ? r.corredor + ' recupera ' + r.nuevas + ' celdas y ' + r.puntos + ' puntos ('
+          + r.robadas + ' se las quita a otros, avisados). '
         : (r.mensaje || 'No había nada que devolver.'));
     }).catch(function (e) {
       m.style.color = '#f44336'; m.style.borderLeftColor = '#f44336';
@@ -2206,7 +2211,8 @@ Quien usa el enlace del correo se da de baja solo.</p>
       .then(function (r) {
         m.style.color = '#4caf50'; m.style.borderLeftColor = '#4caf50';
         m.textContent = '✓ ' + (r.nuevas
-          ? r.corredor + ' cobra ' + r.nuevas + ' celdas (' + r.ocupadas + ' de dentro son de otros y siguen siéndolo). Le sale un aviso en la app.'
+          ? r.corredor + ' cobra ' + r.nuevas + ' celdas y ' + r.puntos + ' puntos ('
+            + r.robadas + ' se las quita a otros, que pierden 1 punto por celda y reciben aviso).'
           : (r.mensaje || 'No había ningún cerco.'));
       }).catch(function (e) {
         m.style.color = '#f44336'; m.style.borderLeftColor = '#f44336';
@@ -3145,6 +3151,8 @@ app.post('/runs', {
     // Da TERRITORIO, no puntos: los puntos se ganan corriendo, y un cerco
     // grande daría decenas de miles de golpe y descolocaría el ranking.
     let cercadas = 0;
+    let cercadasRobadas = 0;
+    let victimasCerco = new Map<string, number>();
     if (Array.isArray(claimedCells) && claimedCells.length > 0) {
       try {
         // Solo la zona de esta carrera, con margen: el cerco que se acaba de
@@ -3168,17 +3176,10 @@ app.post('/runs', {
               '[cerco] demasiado grande, no se rellena',
             );
           } else if (encerradas.length > 0) {
-            // ON CONFLICT DO NOTHING: lo de otros que quede dentro sigue
-            // siendo suyo. Rodear no es robar; robar es pisar.
-            const { rows: puestas } = await client.query(
-              `INSERT INTO cells (cell_x, cell_y, owner_id, run_id, claimed_at)
-               SELECT x, y, $3::uuid, $4::uuid, NOW()
-                 FROM unnest($1::int[], $2::int[]) AS t(x, y)
-               ON CONFLICT (cell_x, cell_y) DO NOTHING
-               RETURNING cell_x, cell_y`,
-              [encerradas.map(c => c.x), encerradas.map(c => c.y), userId, runId],
-            );
-            cercadas = puestas.length;
+            const cerco = await ocuparCercadas(client, userId, encerradas, runId);
+            cercadas = cerco.total;
+            cercadasRobadas = cerco.robadas;
+            victimasCerco = cerco.victimas;
           }
         }
       } catch (e) {
@@ -3196,8 +3197,14 @@ app.post('/runs', {
       : [];
     const puntosObjetos = objetos.reduce((n: number, o: Objeto) => n + o.puntos, 0);
 
+    // Una celda vale lo mismo la pises o la rodees: +1 si estaba libre, +2 si
+    // se la quitas a alguien (y a ese se le resta 1, como en cualquier robo).
+    // Van dentro del subtotal, así que la racha y el ×2 de los primeros pasos
+    // les afectan igual que a las celdas pisadas.
+    const puntosCerco = (cercadas - cercadasRobadas) + cercadasRobadas * 2;
     const authoritativePoints =
-      Math.round(subtotal * streakMultiplier * (dobleBienvenida ? 2 : 1)) + puntosObjetos;
+      Math.round((subtotal + puntosCerco) * streakMultiplier * (dobleBienvenida ? 2 : 1))
+      + puntosObjetos;
 
     // Persist the recomputed points on the run row (we inserted with the
     // client's estimate earlier).
@@ -3256,6 +3263,11 @@ app.post('/runs', {
       }).catch(() => 0);
     }
 
+    if (victimasCerco.size > 0) {
+      const { rows: yo } = await client.query('SELECT display_name FROM users WHERE id = $1', [userId]);
+      await avisarCercados(client, victimasCerco, yo[0]?.display_name ?? 'Alguien');
+    }
+
     // Check and unlock achievements
     await checkAchievements(client, userId);
 
@@ -3272,6 +3284,7 @@ app.post('/runs', {
       objetos,
       // Celdas ganadas por cerrar un cerco con el territorio que ya tenías.
       cercadas,
+      cercadasRobadas,
       breakdown: {
         kmPoints,
         cellPoints,
@@ -3288,6 +3301,8 @@ app.post('/runs', {
         objetos: objetos.length,
         puntosObjetos,
         cercadas,
+        cercadasRobadas,
+        puntosCerco,
       },
     });
   } catch (err) {
@@ -4685,27 +4700,21 @@ app.post('/admin/carreras/:id/rellenar', { preHandler: requireAdmin }, async (re
     return reply.status(400).send({ error: `Saldrían ${interior.length} celdas: demasiadas, míralo a mano antes.` });
   }
 
-  // ON CONFLICT DO NOTHING: las celdas que ya son de alguien se quedan como
-  // están. Esto repara lo que faltó, no reparte de nuevo el mapa.
-  const { rows: metidas } = await db.query(
-    `INSERT INTO cells (cell_x, cell_y, owner_id, run_id, claimed_at)
-     SELECT x, y, $3::uuid, $4::uuid, NOW()
-       FROM unnest($1::int[], $2::int[]) AS t(x, y)
-     ON CONFLICT (cell_x, cell_y) DO NOTHING
-     RETURNING cell_x, cell_y`,
-    [interior.map(c => c.x), interior.map(c => c.y), userId, id],
-  );
-  const nuevas = metidas.length;
+  // Misma regla que un cerco normal: lo de dentro es suyo, también lo que
+  // fuera de otro (a ese se le resta 1 punto por celda y se le avisa).
+  const cerco = await ocuparCercadas(db, userId, interior, id);
+  const nuevas = cerco.total;
+  const puntos = (cerco.total - cerco.robadas) + cerco.robadas * 2;
 
   if (nuevas > 0) {
-    // Los mismos puntos que habría dado la carrera: 1 por celda nueva.
     await db.query(
       `UPDATE user_stats SET total_cells = COALESCE(total_cells, 0) + $2,
-                             total_points = total_points + $2
-        WHERE user_id = $1`, [userId, nuevas],
+                             total_points = total_points + $3
+        WHERE user_id = $1`, [userId, nuevas, puntos],
     );
-    await db.query(`UPDATE runs SET points = points + $2 WHERE id = $1`, [id, nuevas]);
-    invalidateViewportCache(metidas.map((c: any) => ({ x: c.cell_x, y: c.cell_y })));
+    await db.query(`UPDATE runs SET points = points + $2 WHERE id = $1`, [id, puntos]);
+    invalidateViewportCache(interior);
+    await avisarCercados(db, cerco.victimas, nombre);
 
     // Y se le cuenta, que si no aparece territorio de la nada y no se entiende.
     await db.query(
@@ -4725,9 +4734,91 @@ app.post('/admin/carreras/:id/rellenar', { preHandler: requireAdmin }, async (re
 
   return reply.send({
     ok: true, corredor: nombre, interior: interior.length, nuevas,
-    ocupadas: interior.length - nuevas,
+    robadas: cerco.robadas, puntos,
   });
 });
+
+/** Quedarse las celdas cercadas, incluidas las que sean de otro.
+ *
+ *  Rodear una zona y dejar dentro islas de otro no se entiende mirando el
+ *  mapa: si el cerco es tuyo, lo de dentro es tuyo. Y como quitarle territorio
+ *  a alguien es robar, puntúa igual que robar pisando: +2 por celda para
+ *  quien cerca, −1 para el cercado. El terreno LIBRE que rodeas no da puntos:
+ *  por ahí no has pasado.
+ *
+ *  Devuelve cuántas celdas cambian de manos y a quién se las quita, para
+ *  poder avisarle. */
+async function ocuparCercadas(
+  cliente: { query: (sql: string, params?: any[]) => Promise<{ rows: any[]; rowCount: number | null }> },
+  userId: string,
+  celdas: Celda[],
+  runId: string | null,
+): Promise<{ total: number; libres: number; robadas: number; victimas: Map<string, number> }> {
+  if (celdas.length === 0) return { total: 0, libres: 0, robadas: 0, victimas: new Map() };
+  const xs = celdas.map(c => c.x), ys = celdas.map(c => c.y);
+
+  // Quién tenía lo de dentro ANTES de tocarlo: después ya no se sabría.
+  const { rows: antes } = await cliente.query(
+    `SELECT c.owner_id, COUNT(*)::int AS n
+       FROM cells c JOIN unnest($1::int[], $2::int[]) AS t(x, y)
+         ON c.cell_x = t.x AND c.cell_y = t.y
+      WHERE c.owner_id <> $3 GROUP BY c.owner_id`,
+    [xs, ys, userId],
+  );
+  const victimas = new Map<string, number>(antes.map((r: any) => [r.owner_id, r.n]));
+  const robadas = [...victimas.values()].reduce((a, b) => a + b, 0);
+
+  const { rows: puestas } = await cliente.query(
+    `INSERT INTO cells (cell_x, cell_y, owner_id, run_id, claimed_at)
+     SELECT x, y, $3::uuid, $4::uuid, NOW()
+       FROM unnest($1::int[], $2::int[]) AS t(x, y)
+     ON CONFLICT (cell_x, cell_y) DO UPDATE
+        SET owner_id = EXCLUDED.owner_id, run_id = EXCLUDED.run_id, claimed_at = NOW()
+      WHERE cells.owner_id <> EXCLUDED.owner_id
+     RETURNING cell_x, cell_y`,
+    [xs, ys, userId, runId],
+  );
+  const total = puestas.length;
+
+  // Al cercado se le resta 1 punto por celda, lo mismo que cuando le roban
+  // pisando. El territorio perdido ya es el castigo gordo.
+  for (const [victima, n] of victimas) {
+    await cliente.query(
+      `UPDATE user_stats
+          SET total_cells  = GREATEST(0, COALESCE(total_cells, 0) - $2),
+              total_points = GREATEST(0, total_points - $2)
+        WHERE user_id = $1`,
+      [victima, n],
+    );
+  }
+  return { total, libres: total - robadas, robadas, victimas };
+}
+
+/** Avisa dentro de la app a quien se ha quedado sin territorio por un cerco. */
+async function avisarCercados(
+  cliente: { query: (sql: string, params?: any[]) => Promise<{ rows: any[]; rowCount: number | null }> },
+  victimas: Map<string, number>,
+  quienCerca: string,
+): Promise<void> {
+  for (const [victima, n] of victimas) {
+    const { rows } = await cliente.query('SELECT display_name FROM users WHERE id = $1', [victima]);
+    const nombre = rows[0]?.display_name;
+    if (!nombre) continue;
+    await cliente.query(
+      `INSERT INTO avisos (titulo, texto, boton, etiqueta, sello, nota, publico, corredor)
+       VALUES ($1, $2, $3, $4, $5, $6, 'corredor', $7)`,
+      [
+        'Te han cercado',
+        `${quienCerca} ha rodeado tu zona y se ha quedado *${n.toLocaleString('es-ES')} celdas* tuyas. Lo que queda dentro de un cerco cambia de dueño: ve a recuperarlo.`,
+        'A por ello',
+        'Mal asunto',
+        'Cercado',
+        `−${n.toLocaleString('es-ES')}\nCELDAS`,
+        nombre,
+      ],
+    ).catch(() => {});
+  }
+}
 
 /** Cobrar los cercos que un corredor ya tiene cerrados.
  *
@@ -4765,41 +4856,38 @@ app.post('/admin/corredores/cercos', { preHandler: requireAdmin }, async (req: a
     return reply.status(400).send({ error: `Saldrían ${encerradas.length} celdas: demasiadas, míralo a mano antes.` });
   }
 
-  const { rows: puestas } = await db.query(
-    `INSERT INTO cells (cell_x, cell_y, owner_id, run_id, claimed_at)
-     SELECT x, y, $3::uuid, NULL, NOW()
-       FROM unnest($1::int[], $2::int[]) AS t(x, y)
-     ON CONFLICT (cell_x, cell_y) DO NOTHING
-     RETURNING cell_x, cell_y`,
-    [encerradas.map(c => c.x), encerradas.map(c => c.y), userId],
-  );
-  const nuevas = puestas.length;
+  const cerco = await ocuparCercadas(db, userId, encerradas, null);
+  const puntos = (cerco.total - cerco.robadas) + cerco.robadas * 2;
 
-  if (nuevas > 0) {
-    // Territorio, no puntos: la misma regla que para los cercos normales.
+  if (cerco.total > 0) {
+    // Una celda vale lo mismo pisada que rodeada: +1 la libre, +2 la que le
+    // quitas a alguien (y a ese se le resta 1, dentro de ocuparCercadas).
     await db.query(
-      `UPDATE user_stats SET total_cells = COALESCE(total_cells, 0) + $2 WHERE user_id = $1`,
-      [userId, nuevas],
+      `UPDATE user_stats SET total_cells = COALESCE(total_cells, 0) + $2,
+                             total_points = total_points + $3
+        WHERE user_id = $1`,
+      [userId, cerco.total, puntos],
     );
-    invalidateViewportCache(puestas.map((c: any) => ({ x: c.cell_x, y: c.cell_y })));
+    invalidateViewportCache(encerradas);
+    await avisarCercados(db, cerco.victimas, nombre);
     await db.query(
       `INSERT INTO avisos (titulo, texto, boton, etiqueta, sello, nota, publico, corredor)
        VALUES ($1, $2, $3, $4, $5, $6, 'corredor', $7)`,
       [
         'Cerco cobrado',
-        `Ya vale cerrar una zona *entre varios días*: lo que rodea tu territorio es tuyo. Acabas de cobrar *${nuevas.toLocaleString('es-ES')} celdas* que tenías cercadas.`,
+        `Ya vale cerrar una zona *entre varios días*: lo que rodea tu territorio es tuyo. Acabas de cobrar *${cerco.total.toLocaleString('es-ES')} celdas* y *${puntos.toLocaleString('es-ES')} puntos*.`,
         'Ver el mapa',
         'Regla nueva',
         'Territorio',
-        `+${nuevas.toLocaleString('es-ES')}\nCELDAS`,
+        `+${cerco.total.toLocaleString('es-ES')}\nCELDAS`,
         nombre,
       ],
     ).catch((e: any) => req.log.warn({ err: String(e) }, 'no se pudo crear el aviso del cerco'));
   }
 
   return reply.send({
-    ok: true, corredor: nombre, encerradas: encerradas.length, nuevas,
-    ocupadas: encerradas.length - nuevas,
+    ok: true, corredor: nombre, encerradas: encerradas.length,
+    nuevas: cerco.total, robadas: cerco.robadas, puntos,
   });
 });
 
