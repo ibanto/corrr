@@ -1861,6 +1861,13 @@ Quien usa el enlace del correo se da de baja solo.</p>
     document.getElementById('a_ciudad').style.display = e.target.value === 'ciudad' ? 'block' : 'none';
     document.getElementById('a_corredor').style.display = e.target.value === 'corredor' ? 'block' : 'none';
   });
+  // Lo que va entre *asteriscos* sale en naranja, igual que en el móvil: en
+  // el listado se veían los asteriscos en crudo y parecía un error.
+  function resaltes(texto) {
+    return esc(texto).split('*').map(function (trozo, i) {
+      return i % 2 === 1 ? '<b style="color:#FF5500">' + trozo + '</b>' : trozo;
+    }).join('');
+  }
   function pintar(avisos) {
     document.getElementById('lista_avisos').innerHTML = avisos.length === 0
       ? '<p class="nota">Todavía no has publicado ninguno.</p>'
@@ -1872,7 +1879,7 @@ Quien usa el enlace del correo se da de baja solo.</p>
           ios: 'solo a los de iPhone', android: 'solo a los de Android' }[a.publico];
         return '<div class="aviso' + (a.activo ? '' : ' apagado') + '">'
           + '<h3>' + esc(a.titulo) + (a.activo ? '' : ' · APAGADO') + '</h3>'
-          + '<p>' + esc(a.texto) + '</p>'
+          + '<p>' + resaltes(a.texto) + '</p>'
           + '<div class="meta">' + quien + ' · lo han visto ' + a.vistas + ' de ' + a.publico_total + '</div>'
           + '<button class="mini" data-encender="' + a.id + '">' + (a.activo ? 'Apagar' : 'Encender') + '</button>'
           + '<button class="mini" data-borrar="' + a.id + '">Borrar</button></div>';
