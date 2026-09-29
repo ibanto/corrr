@@ -245,6 +245,16 @@ más coja y sale su nombre en el cartel de avisos un par de días. Para que se
 vean hace falta la **1.11.11 publicada antes del 29** (subir como muy tarde el
 24-25 de octubre). Ojo: quien siga en 1.11.10 las recogerá sin verlas.
 
+## 9-ter. El panel de administración
+
+Vive entero en la plantilla HTML de `apps/backend/src/routes/index.ts` (no hay
+build ni framework: se escribe el HTML a mano y Railway lo sirve). Desde el
+29-sep-2026 está repartido en **seis pestañas** —Resumen, Gente, Avisos, Juego,
+Correos, Herramientas— con una barra superior fija. Al añadir un apartado nuevo,
+métele `<h2>` dentro de la pestaña que le toque y envuélvelo en `.caja`; la
+pestaña activa se recuerda en `sessionStorage` (`corrr_panel_pestana`). Lo que
+borra o manda algo va en Herramientas o Correos, nunca en Resumen.
+
 ## 10. Workflow típico de release
 
 Ver `docs/publicar-version.md` (el usuario lo sigue a mano). Resumen:
