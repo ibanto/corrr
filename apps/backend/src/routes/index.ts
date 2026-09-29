@@ -1624,45 +1624,114 @@ app.get('/admin/panel', { preHandler: requireAdmin }, async (req: any, reply) =>
 <meta http-equiv="cache-control" content="no-store">
 <title>CORRR — Panel</title>
 <style>
-  body{margin:0;background:#0A0A0A;color:#eee;font-family:-apple-system,Roboto,sans-serif;padding:16px;}
-  h1{color:#FF6600;font-size:22px;margin:0 0 4px;} .sub{color:#888;font-size:12px;margin-bottom:16px;}
-  h2{font-size:15px;color:#FF6600;margin:24px 0 8px;text-transform:uppercase;letter-spacing:1px;}
-  .kpis{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;}
-  .kpi{background:#161616;border:1px solid #262626;border-radius:12px;padding:12px;}
-  .kpi .v{font-size:26px;font-weight:800;color:#fff;} .kpi .l{font-size:11px;color:#999;margin-top:2px;}
-  .kpi .s{font-size:11px;color:#FF6600;margin-top:2px;}
-  table{width:100%;border-collapse:collapse;font-size:13px;} .wrap{overflow-x:auto;}
-  th{color:#888;text-align:left;font-weight:600;padding:6px 8px;border-bottom:1px solid #262626;font-size:11px;text-transform:uppercase;}
-  td{padding:7px 8px;border-bottom:1px solid #1c1c1c;white-space:nowrap;}
-  .ok{color:#4caf50;} .no{color:#f44336;}
-  .bar{background:#FF6600;height:10px;border-radius:5px;display:inline-block;vertical-align:middle;margin-right:8px;}
-  .day{color:#999;font-size:12px;padding:3px 0;}
-  .btn{background:#FF6600;color:#fff;border:none;border-radius:20px;padding:8px 20px;font-weight:700;cursor:pointer;font-size:13px;}
-  .form{display:grid;gap:8px;max-width:520px;}
-  .form input,.form textarea,.form select{background:#0A0A0A;border:1px solid #333;border-radius:8px;
-    padding:10px;color:#fff;font-size:14px;font-family:inherit;box-sizing:border-box;width:100%;}
-  .form textarea{min-height:76px;resize:vertical;}
-  .nota{color:#888;font-size:12px;margin:0 0 10px;}
-  /* La respuesta de un botón que no navega a ningún sitio: si no se ve, parece
-     que el botón no hace nada. */
-  .resultado{margin-top:12px;max-width:520px;background:#161616;border:1px solid #333;
-    border-left-width:4px;border-radius:8px;padding:12px 14px;font-size:15px;line-height:1.35;}
-  .aviso{background:#161616;border:1px solid #262626;border-radius:12px;padding:12px;margin-top:10px;max-width:520px;}
-  .aviso h3{margin:0 0 4px;font-size:15px;color:#fff;} .aviso p{margin:0 0 8px;color:#bbb;font-size:13px;white-space:pre-wrap;}
-  .aviso .meta{color:#888;font-size:12px;margin-bottom:8px;}
+  :root{
+    --naranja:#FF5500; --naranja-flojo:rgba(255,85,0,.12);
+    --fondo:#0A0A0A; --tarjeta:#141414; --tarjeta-alt:#1B1B1B;
+    --borde:#282828; --texto:#ECECEC; --apagado:#8C8C8C; --rojo:#F44336; --verde:#4CAF50;
+    --radio:14px;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--fondo);color:var(--texto);
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+    font-size:15px;line-height:1.45;}
+
+  /* Cabecera fija: siempre sabes dónde estás y puedes refrescar. */
+  .barra{position:sticky;top:0;z-index:20;background:rgba(10,10,10,.92);
+    backdrop-filter:blur(8px);border-bottom:1px solid var(--borde);}
+  .barra-dentro{max-width:1120px;margin:0 auto;padding:14px 20px 0;
+    display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;}
+  .barra h1{margin:0;font-size:19px;font-weight:800;letter-spacing:.3px;color:var(--texto);}
+  .barra h1 span{color:var(--naranja);}
+  .meta{color:var(--apagado);font-size:12px;}
+  .meta b{color:var(--apagado);font-weight:600;}
+
+  /* Pestañas: seis sitios, uno visible cada vez. */
+  .pestanas{max-width:1120px;margin:0 auto;padding:10px 20px 0;display:flex;gap:4px;
+    overflow-x:auto;scrollbar-width:none;}
+  .pestanas::-webkit-scrollbar{display:none;}
+  .pestana{appearance:none;background:none;border:0;border-bottom:2px solid transparent;
+    color:var(--apagado);font:inherit;font-size:14px;font-weight:600;
+    padding:10px 14px;cursor:pointer;white-space:nowrap;border-radius:8px 8px 0 0;}
+  .pestana:hover{color:var(--texto);background:var(--tarjeta);}
+  .pestana[aria-selected="true"]{color:var(--naranja);border-bottom-color:var(--naranja);}
+
+  main{max-width:1120px;margin:0 auto;padding:22px 20px 64px;}
+  section[hidden]{display:none;}
+
+  /* Tarjetas: cada cosa en la suya, con su explicación de una línea. */
+  .caja{background:var(--tarjeta);border:1px solid var(--borde);border-radius:var(--radio);
+    padding:20px;margin-bottom:18px;}
+  h2{font-size:13px;color:var(--naranja);margin:0 0 4px;text-transform:uppercase;letter-spacing:1.2px;}
+  .nota{color:var(--apagado);font-size:13px;margin:0 0 16px;max-width:70ch;}
+
+  /* Cifras grandes del resumen. */
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:18px;}
+  .kpi{background:var(--tarjeta);border:1px solid var(--borde);border-radius:var(--radio);padding:16px;}
+  .kpi .v{font-size:30px;font-weight:800;color:#fff;font-variant-numeric:tabular-nums;line-height:1.1;}
+  .kpi .l{font-size:12px;color:var(--apagado);margin-top:4px;text-transform:uppercase;letter-spacing:.6px;}
+  .kpi .s{font-size:12px;color:var(--naranja);margin-top:2px;}
+
+  /* Tablas: cabecera pegada arriba y números alineados. */
+  .wrap{overflow-x:auto;border:1px solid var(--borde);border-radius:10px;}
+  table{width:100%;border-collapse:collapse;font-size:13px;}
+  thead th{position:sticky;top:0;background:var(--tarjeta-alt);color:var(--apagado);
+    text-align:left;font-weight:600;padding:10px;font-size:11px;text-transform:uppercase;
+    letter-spacing:.6px;border-bottom:1px solid var(--borde);}
+  td{padding:9px 10px;border-bottom:1px solid #1E1E1E;white-space:nowrap;}
+  tbody tr:nth-child(even){background:#111;}
+  tbody tr:hover{background:#181818;}
+  tbody tr:last-child td{border-bottom:0;}
+  td:not(:first-child):not(:nth-child(2)){font-variant-numeric:tabular-nums;}
+  .ok{color:var(--verde);} .no{color:var(--rojo);}
+
+  /* Barras de altas por día. */
+  .day{color:var(--apagado);font-size:13px;padding:3px 0;font-variant-numeric:tabular-nums;}
+  .bar{background:var(--naranja);height:10px;border-radius:5px;display:inline-block;
+    vertical-align:middle;margin:0 8px;}
+
+  /* Botones: uno principal por tarjeta, el resto discretos. */
+  .btn{background:var(--naranja);color:#111;border:none;border-radius:10px;
+    padding:11px 20px;font:inherit;font-weight:700;font-size:14px;cursor:pointer;}
+  .btn:hover{filter:brightness(1.08);}
+  .btn:disabled{opacity:.45;cursor:not-allowed;filter:none;}
+  .mini{background:transparent;color:var(--texto);border:1px solid var(--borde);
+    border-radius:10px;padding:8px 14px;font:inherit;font-size:13px;font-weight:600;
+    cursor:pointer;margin-right:8px;}
+  .mini:hover{border-color:var(--apagado);}
+  /* Lo que borra, en rojo: que se vea antes de pulsarlo. */
+  .aviso .mini[data-borrar]{color:var(--rojo);border-color:rgba(244,67,54,.4);}
+
+  /* Formularios. */
+  .form{display:grid;gap:10px;max-width:560px;}
+  .form input,.form textarea,.form select{background:#0C0C0C;border:1px solid var(--borde);
+    border-radius:10px;padding:11px 12px;color:var(--texto);font:inherit;font-size:14px;width:100%;}
+  .form input::placeholder,.form textarea::placeholder{color:#6A6A6A;}
+  .form input:focus,.form textarea:focus,.form select:focus{outline:none;border-color:var(--naranja);
+    box-shadow:0 0 0 3px var(--naranja-flojo);}
+  .form textarea{min-height:84px;resize:vertical;}
+  .form .btn{justify-self:start;}
+
+  /* Respuesta de un botón que no navega: si no se ve, parece que no hace nada. */
+  .resultado{margin-top:4px;max-width:560px;background:var(--tarjeta-alt);
+    border:1px solid var(--borde);border-left-width:4px;border-radius:10px;
+    padding:12px 14px;font-size:14px;line-height:1.4;}
+
+  /* Fichas de aviso / calabazas / campañas. */
+  .aviso{background:var(--tarjeta-alt);border:1px solid var(--borde);border-radius:12px;
+    padding:14px;margin-top:12px;max-width:560px;}
+  .aviso h3{margin:0 0 4px;font-size:15px;color:#fff;}
+  .aviso p{margin:0 0 8px;color:#BEBEBE;font-size:13px;white-space:pre-wrap;}
+  .aviso .meta{color:var(--apagado);font-size:12px;margin-bottom:10px;}
   .apagado{opacity:.5;}
-  .mini{background:#262626;color:#eee;border:0;border-radius:16px;padding:6px 14px;font-size:12px;
-    font-weight:700;cursor:pointer;margin-right:6px;}
-  /* El corte de las esquinas se hace igual que en la app: el marco naranja
-     debajo y el cartel encima, los dos con la misma esquina recortada. */
-  .previo{background:#FF5500;padding:2px;max-width:364px;margin-top:10px;
+
+  /* Vista previa del cartel, tal cual se ve en el móvil. */
+  .previo{background:#FF5500;padding:2px;max-width:364px;margin-top:14px;
     clip-path:polygon(28px 0,100% 0,100% calc(100% - 28px),calc(100% - 28px) 100%,0 100%,0 28px);}
   .previo .dentro{background:#080808;padding:20px;position:relative;overflow:hidden;
     clip-path:polygon(27px 0,100% 0,100% calc(100% - 27px),calc(100% - 27px) 100%,0 100%,0 27px);
     font-family:'Avenir Next Condensed','Roboto Condensed',Impact,sans-serif;}
   .previo .rayas{position:absolute;top:0;right:0;height:30px;width:130px;overflow:hidden;}
-  .previo .rayas i{position:absolute;top:-10px;width:7px;height:56px;background:#FF5500;
-    transform:skewX(-20deg);}
+  .previo .rayas i{position:absolute;top:-10px;width:7px;height:56px;background:#FF5500;transform:skewX(-20deg);}
   .previo .etq{color:#fff;font-size:11px;font-weight:800;letter-spacing:1.6px;}
   .previo .t1{color:#fff;font-size:42px;line-height:40px;font-weight:900;letter-spacing:.5px;}
   .previo .sub{height:5px;background:#FF5500;margin:-4px 0 2px;}
@@ -1677,10 +1746,41 @@ app.get('/admin/panel', { preHandler: requireAdmin }, async (req: any, reply) =>
   .previo .nt{border:1px solid #FF5500;color:#FF5500;font-size:12px;font-weight:700;
     padding:6px 10px;display:flex;flex-direction:column;justify-content:center;max-width:120px;}
 
-</style></head><body>
-<h1>CORRR — Panel de control</h1>
-<div class="sub">Generado ${new Date().toLocaleString('es-ES', { timeZone: 'Europe/Madrid' })} (hora Madrid) · versión ${esc((process.env.RAILWAY_GIT_COMMIT_SHA ?? 'local').slice(0, 7))} · se auto-refresca cada 5 min · <button class="btn" onclick="location.reload()">Actualizar</button></div>
+  /* El cartel, al lado de lo que se está escribiendo. */
+  .dos-columnas{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:26px;align-items:start;}
+  .dos-columnas .previo{margin-top:0;position:sticky;top:104px;}
+  @media (max-width:900px){ .dos-columnas{grid-template-columns:1fr;} .dos-columnas .previo{position:static;} }
 
+  @media (max-width:640px){
+    main{padding:16px 14px 48px;}
+    .caja{padding:16px;}
+    .barra-dentro,.pestanas{padding-left:14px;padding-right:14px;}
+  }
+</style></head>
+<body>
+<header class="barra">
+  <div class="barra-dentro">
+    <h1>CORRR <span>· Panel</span></h1>
+    <div class="meta">
+      ${new Date().toLocaleString('es-ES', { timeZone: 'Europe/Madrid' })} ·
+      versión <b>${esc((process.env.RAILWAY_GIT_COMMIT_SHA ?? 'local').slice(0, 7))}</b> ·
+      se refresca solo cada 5 min
+    </div>
+    <div style="flex:1"></div>
+    <button class="mini" onclick="location.reload()">Actualizar</button>
+  </div>
+  <nav class="pestanas" role="tablist">
+    <button class="pestana" role="tab" aria-selected="false" data-pestana="resumen">Resumen</button>
+    <button class="pestana" role="tab" aria-selected="false" data-pestana="gente">Gente</button>
+    <button class="pestana" role="tab" aria-selected="false" data-pestana="avisos">Avisos</button>
+    <button class="pestana" role="tab" aria-selected="false" data-pestana="juego">Juego</button>
+    <button class="pestana" role="tab" aria-selected="false" data-pestana="correos">Correos</button>
+    <button class="pestana" role="tab" aria-selected="false" data-pestana="herramientas">Herramientas</button>
+  </nav>
+</header>
+
+<main>
+<section id="p-resumen" role="tabpanel" hidden>
 <div class="kpis">
   ${kpi('Usuarios', t.users, `${t.verified} verificados`)}
   ${kpi('Altas 24h', t.users_24h, `${t.users_7d} esta semana`)}
@@ -1688,11 +1788,24 @@ app.get('/admin/panel', { preHandler: requireAdmin }, async (req: any, reply) =>
   ${kpi('Km totales', t.km)}
   ${kpi('Celdas conquistadas', t.cells)}
 </div>
-
+<div class="caja">
 <h2>Altas por día (14 días)</h2>
 ${signups.rows.length === 0 ? '<div class="day">Sin altas todavía</div>' : signups.rows.map((r: any) =>
   `<div class="day">${esc(new Date(r.d).toLocaleDateString('es-ES', { day: '2-digit', month: 'short' }))} <span class="bar" style="width:${Math.round((r.n / maxSignups) * 200)}px"></span>${r.n}</div>`).join('')}
+</div>
+<div class="caja">
+<h2>Últimas carreras (20)</h2>
+<div class="wrap"><table>
+<tr><th>Corredor</th><th>Km</th><th>Tiempo</th><th>Puntos</th><th>Cuándo</th></tr>
+${lastRuns.rows.length === 0 ? '<tr><td colspan="5" style="color:#666">Sin carreras todavía</td></tr>' : lastRuns.rows.map((r: any) =>
+  `<tr><td><b>${esc(r.display_name)}</b></td><td>${Number(r.distance_km).toFixed(2)}</td>
+   <td>${fmtDur(r.duration_secs)}</td><td>${r.points}</td><td>${fmtDate(r.created_at)}</td></tr>`).join('')}
+</table></div>
+</div>
+</section>
 
+<section id="p-gente" role="tabpanel" hidden>
+<div class="caja">
 <h2>Últimos usuarios (50)</h2>
 <div class="wrap"><table>
 <tr><th>Nombre</th><th>Email</th><th>Ciudad</th><th>Verif.</th><th>Alta</th><th>Carreras</th><th>Km</th><th>Celdas</th></tr>
@@ -1701,18 +1814,15 @@ ${lastUsers.rows.map((u: any) =>
    <td class="${u.email_verified ? 'ok' : 'no'}">${u.email_verified ? '✓' : '✗'}</td>
    <td>${fmtDate(u.created_at)}</td><td>${u.total_runs}</td><td>${Number(u.total_km).toFixed(1)}</td><td>${u.total_cells}</td></tr>`).join('')}
 </table></div>
+</div>
+</section>
 
-<h2>Últimas carreras (20)</h2>
-<div class="wrap"><table>
-<tr><th>Corredor</th><th>Km</th><th>Tiempo</th><th>Puntos</th><th>Cuándo</th></tr>
-${lastRuns.rows.length === 0 ? '<tr><td colspan="5" style="color:#666">Sin carreras todavía</td></tr>' : lastRuns.rows.map((r: any) =>
-  `<tr><td><b>${esc(r.display_name)}</b></td><td>${Number(r.distance_km).toFixed(2)}</td>
-   <td>${fmtDur(r.duration_secs)}</td><td>${r.points}</td><td>${fmtDate(r.created_at)}</td></tr>`).join('')}
-</table></div>
-
+<section id="p-avisos" role="tabpanel" hidden>
+<div class="caja">
 <h2>Aviso en la app</h2>
 <p class="nota">El pop-up que sale al abrir la app. Se publica desde aquí, sin sacar versión nueva.
 Sale UNA vez por persona; para repetirlo, se crea otro. Solo lo ven las apps 1.11.10 o más nuevas.</p>
+<div class="dos-columnas">
 <form class="form" id="fa">
   <input id="a_titulo" placeholder="Título — p. ej. NUEVO RETO" maxlength="60" required>
   <textarea id="a_texto" placeholder="Texto del aviso" maxlength="400" required></textarea>
@@ -1748,14 +1858,13 @@ Sale UNA vez por persona; para repetirlo, se crea otro. Solo lo ven las apps 1.1
     <div class="nt" id="p_nota" style="display:none"></div>
   </div>
 </div></div>
+</div>
 <div id="lista_avisos"></div>
+</div>
+</section>
 
-<h2>Strava</h2>
-<p class="nota">Comprueba si nuestra app de Strava sigue funcionando con las claves de siempre.
-La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es anterior.</p>
-<button class="btn" id="bstrava">Comprobar Strava</button>
-<div id="strava_msg" class="resultado" style="display:none"></div>
-
+<section id="p-juego" role="tabpanel" hidden>
+<div class="caja">
 <h2>Juego del mapa</h2>
 <p class="nota">Las calabazas se siembran sobre calles por las que YA ha corrido alguien, así que
 ninguna cae dentro de un edificio. Se cogen pasando por encima al correr, y cuando alguien se come
@@ -1770,7 +1879,11 @@ una, nace otra cerca. <b>Solo las ven las apps 1.11.11 o más nuevas.</b></p>
   <button class="mini" id="o_quitar" type="button">Quitar las que queden sin coger</button>
   <div id="o_msg" class="resultado" style="display:none"></div>
 </form>
+</div>
+</section>
 
+<section id="p-correos" role="tabpanel" hidden>
+<div class="caja">
 <h2>Correos</h2>
 <p class="nota">Cada campaña se manda UNA vez por persona. Quien pidió la baja y quien ya salió a
 correr quedan fuera solos. Manda siempre una prueba a tu correo antes de la tanda.</p>
@@ -1782,37 +1895,8 @@ correr quedan fuera solos. Manda siempre una prueba a tu correo antes de la tand
   <button class="btn" id="c_enviar" type="button" disabled>Enviar la tanda de verdad</button>
   <div id="c_msg" class="resultado" style="display:none"></div>
 </form>
-
-<h2>Arreglar una carrera</h2>
-<p class="nota">Si una carrera cerró el círculo y no se llevó lo de dentro (pasaba con las vueltas
-de más de 2×2 km, arreglado el 29-sep), aquí se le devuelve. <b>Solo ocupa celdas libres</b>: no le
-quita territorio a nadie. Se le avisa dentro de la app.</p>
-<form class="form" id="frc">
-  <select id="rc_carrera"></select>
-  <button class="btn" id="rc_rellenar" type="button" disabled>Devolverle el interior</button>
-  <div id="rc_msg" class="resultado" style="display:none"></div>
-</form>
-
-<h2>Cobrar un cerco</h2>
-<p class="nota">Lo que tu territorio rodea es tuyo, aunque lo hayas cerrado en varios días. La regla
-se aplica sola al guardar una carrera; esto se lo da YA a quien ya lo tenía cerrado, sin esperar a
-que vuelva a salir. Solo ocupa celdas libres.</p>
-<form class="form" id="fcz">
-  <input id="cz_quien" placeholder="Nombre del corredor o su email">
-  <button class="btn" id="cz_dar" type="button">Cobrarle el cerco</button>
-  <div id="cz_msg" class="resultado" style="display:none"></div>
-</form>
-
-<h2>Administradores</h2>
-<p class="nota">Quien esté marcado ve dentro de la app, en su perfil, el resumen de cómo va la cosa
-(altas, quién ha corrido hoy, quién se descuelga). Nadie más lo ve.</p>
-<form class="form" id="fad">
-  <input id="ad_quien" placeholder="Nombre del corredor o su email">
-  <button class="btn" id="ad_dar" type="button">Hacer administrador</button>
-  <button class="mini" id="ad_quitar" type="button">Quitarle la marca</button>
-  <div id="ad_msg" class="resultado" style="display:none"></div>
-</form>
-
+</div>
+<div class="caja">
 <h2>Bajas del correo</h2>
 <p class="nota">Si alguien pide la baja <b>respondiendo al email</b> (Mail de Apple manda un correo a
 hola@corrr.es en vez de avisarnos), apúntala aquí: si no, seguiría recibiendo campañas.
@@ -1822,6 +1906,52 @@ Quien usa el enlace del correo se da de baja solo.</p>
   <button class="btn" type="submit">Dar de baja del correo</button>
   <div id="b_msg" class="resultado" style="display:none"></div>
 </form>
+</div>
+</section>
+
+<section id="p-herramientas" role="tabpanel" hidden>
+<div class="caja">
+<h2>Arreglar una carrera</h2>
+<p class="nota">Si una carrera cerró el círculo y no se llevó lo de dentro (pasaba con las vueltas
+de más de 2×2 km, arreglado el 29-sep), aquí se le devuelve. <b>Solo ocupa celdas libres</b>: no le
+quita territorio a nadie. Se le avisa dentro de la app.</p>
+<form class="form" id="frc">
+  <select id="rc_carrera"></select>
+  <button class="btn" id="rc_rellenar" type="button" disabled>Devolverle el interior</button>
+  <div id="rc_msg" class="resultado" style="display:none"></div>
+</form>
+</div>
+<div class="caja">
+<h2>Cobrar un cerco</h2>
+<p class="nota">Lo que tu territorio rodea es tuyo, aunque lo hayas cerrado en varios días. La regla
+se aplica sola al guardar una carrera; esto se lo da YA a quien ya lo tenía cerrado, sin esperar a
+que vuelva a salir. Solo ocupa celdas libres.</p>
+<form class="form" id="fcz">
+  <input id="cz_quien" placeholder="Nombre del corredor o su email">
+  <button class="btn" id="cz_dar" type="button">Cobrarle el cerco</button>
+  <div id="cz_msg" class="resultado" style="display:none"></div>
+</form>
+</div>
+<div class="caja">
+<h2>Administradores</h2>
+<p class="nota">Quien esté marcado ve dentro de la app, en su perfil, el resumen de cómo va la cosa
+(altas, quién ha corrido hoy, quién se descuelga). Nadie más lo ve.</p>
+<form class="form" id="fad">
+  <input id="ad_quien" placeholder="Nombre del corredor o su email">
+  <button class="btn" id="ad_dar" type="button">Hacer administrador</button>
+  <button class="mini" id="ad_quitar" type="button">Quitarle la marca</button>
+  <div id="ad_msg" class="resultado" style="display:none"></div>
+</form>
+</div>
+<div class="caja">
+<h2>Strava</h2>
+<p class="nota">Comprueba si nuestra app de Strava sigue funcionando con las claves de siempre.
+La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es anterior.</p>
+<button class="btn" id="bstrava">Comprobar Strava</button>
+<div id="strava_msg" class="resultado" style="display:none"></div>
+</div>
+</section>
+</main>
 
 <script>
   var K = sessionStorage.getItem('corrr_admin_key');
@@ -2222,6 +2352,30 @@ Quien usa el enlace del correo se da de baja solo.</p>
   cargarObjetos();
   cargarCampanas();
   cargar();
+</script>
+
+<script>
+  // Pestañas: el panel tenía nueve apartados en una sola columna de tres mil
+  // píxeles y había que recordar dónde estaba cada cosa. La elegida se guarda,
+  // así que al recargar (o al auto-refrescarse) sigues donde estabas.
+  (function () {
+    var botones = [].slice.call(document.querySelectorAll('.pestana'));
+    function abrir(clave) {
+      botones.forEach(function (b) {
+        var suya = b.dataset.pestana === clave;
+        b.setAttribute('aria-selected', suya ? 'true' : 'false');
+        document.getElementById('p-' + b.dataset.pestana).hidden = !suya;
+      });
+      try { sessionStorage.setItem('corrr_panel_pestana', clave); } catch (e) {}
+    }
+    botones.forEach(function (b) {
+      b.addEventListener('click', function () { abrir(b.dataset.pestana); });
+    });
+    var guardada;
+    try { guardada = sessionStorage.getItem('corrr_panel_pestana'); } catch (e) {}
+    abrir(botones.some(function (b) { return b.dataset.pestana === guardada; })
+      ? guardada : botones[0].dataset.pestana);
+  })();
 </script>
 </body></html>`;
 
