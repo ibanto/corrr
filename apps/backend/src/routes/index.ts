@@ -408,6 +408,14 @@ async function initDB() {
   // Qué teléfono usa cada corredor. Se apunta cuando la app pide su aviso, y
   // sirve para mandar un aviso solo a iPhone o solo a Android.
   await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS plataforma TEXT`).catch(() => {});
+  // Última vez que la app habló con el servidor. Se pisa a sí misma: NO es un
+  // historial de cuándo entra cada uno, solo la fecha más reciente, para poder
+  // distinguir "se ha ido" de "lleva unos días sin correr". Anunciado en la
+  // política de privacidad.
+  await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS ultimo_acceso_at TIMESTAMPTZ`).catch(() => {});
+  // Quién ve el resumen de administración dentro de la app. Se marca desde el
+  // panel, no en el código: el repositorio es público.
+  await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS es_admin BOOLEAN NOT NULL DEFAULT FALSE`).catch(() => {});
   // Objetos del mapa (las calabazas de Halloween y lo que venga después).
   await db.query(`
     CREATE TABLE IF NOT EXISTS objetos (
@@ -605,6 +613,14 @@ const requireAuth = async (req: any, reply: any) => {
       return reply.status(401).send({ error: 'Sesión caducada, vuelve a entrar' });
     }
     req.userId = userId;
+    // Fecha del último acceso, como mucho una vez por hora y sin esperar a que
+    // termine: es un apunte de mantenimiento, no puede retrasar ni romper la
+    // petición de nadie.
+    db.query(
+      `UPDATE users SET ultimo_acceso_at = NOW()
+        WHERE id = $1 AND (ultimo_acceso_at IS NULL OR ultimo_acceso_at < NOW() - INTERVAL '1 hour')`,
+      [userId],
+    ).catch(() => {});
   } catch {
     return reply.status(401).send({ error: 'Token inválido' });
   }
@@ -1048,7 +1064,7 @@ app.get('/users/me', { preHandler: requireAuth }, async (req: any, reply) => {
     `SELECT id, email, display_name, city, avatar_url,
             first_name, surname, war_cry, shoe_brand, shoe_brand_other,
             birth_year, gender, usual_distance, weekly_frequency,
-            profile_bonus_claimed
+            profile_bonus_claimed, es_admin
        FROM users WHERE id = $1`, [req.userId]
   );
   if (!rows.length) return reply.status(404).send({ error: 'Usuario no encontrado' });
@@ -1758,6 +1774,16 @@ correr quedan fuera solos. Manda siempre una prueba a tu correo antes de la tand
   <div id="c_msg" class="resultado" style="display:none"></div>
 </form>
 
+<h2>Administradores</h2>
+<p class="nota">Quien esté marcado ve dentro de la app, en su perfil, el resumen de cómo va la cosa
+(altas, quién ha corrido hoy, quién se descuelga). Nadie más lo ve.</p>
+<form class="form" id="fad">
+  <input id="ad_quien" placeholder="Nombre del corredor o su email">
+  <button class="btn" id="ad_dar" type="button">Hacer administrador</button>
+  <button class="mini" id="ad_quitar" type="button">Quitarle la marca</button>
+  <div id="ad_msg" class="resultado" style="display:none"></div>
+</form>
+
 <h2>Bajas del correo</h2>
 <p class="nota">Si alguien pide la baja <b>respondiendo al email</b> (Mail de Apple manda un correo a
 hola@corrr.es en vez de avisarnos), apúntala aquí: si no, seguiría recibiendo campañas.
@@ -1973,16 +1999,67 @@ Quien usa el enlace del correo se da de baja solo.</p>
     api('/admin/objetos', { method: 'POST', body: JSON.stringify(cuerpo) }).then(function (r) {
       msgObjetos('Sembradas ' + r.puestas + ' de ' + r.pedidas
         + (r.puestas < r.pedidas ? ' (el resto caían demasiado cerca de otra)' : ''), true);
-      cargarObjetos();
+      function administrador(dar) {
+    var m = document.getElementById('ad_msg');
+    m.style.display = 'block'; m.style.color = '#bbb'; m.style.borderLeftColor = '#555';
+    m.textContent = 'Un momento…';
+    api('/admin/administrador', {
+      method: 'POST', body: JSON.stringify({ quien: val('ad_quien'), dar: dar }),
+    }).then(function (r) {
+      m.style.color = '#4caf50'; m.style.borderLeftColor = '#4caf50';
+      m.textContent = '✓ ' + r.quienes.join(', ') + (dar ? ' ya es administrador.' : ' ya no lo es.');
+      document.getElementById('fad').reset();
+    }).catch(function (e) {
+      m.style.color = '#f44336'; m.style.borderLeftColor = '#f44336';
+      m.textContent = '✗ ' + e.message;
+    });
+  }
+  document.getElementById('ad_dar').addEventListener('click', function () { administrador(true); });
+  document.getElementById('ad_quitar').addEventListener('click', function () { administrador(false); });
+  cargarObjetos();
     }).catch(function (e) { msgObjetos(e.message, false); });
   });
   document.getElementById('o_quitar').addEventListener('click', function () {
     if (!confirm('¿Quitar del mapa las calabazas sin coger? Las ya cogidas se quedan.')) return;
     api('/admin/objetos?tipo=calabaza', { method: 'DELETE' }).then(function (r) {
       msgObjetos('Quitadas ' + r.quitadas + '.', true);
-      cargarObjetos();
+      function administrador(dar) {
+    var m = document.getElementById('ad_msg');
+    m.style.display = 'block'; m.style.color = '#bbb'; m.style.borderLeftColor = '#555';
+    m.textContent = 'Un momento…';
+    api('/admin/administrador', {
+      method: 'POST', body: JSON.stringify({ quien: val('ad_quien'), dar: dar }),
+    }).then(function (r) {
+      m.style.color = '#4caf50'; m.style.borderLeftColor = '#4caf50';
+      m.textContent = '✓ ' + r.quienes.join(', ') + (dar ? ' ya es administrador.' : ' ya no lo es.');
+      document.getElementById('fad').reset();
+    }).catch(function (e) {
+      m.style.color = '#f44336'; m.style.borderLeftColor = '#f44336';
+      m.textContent = '✗ ' + e.message;
+    });
+  }
+  document.getElementById('ad_dar').addEventListener('click', function () { administrador(true); });
+  document.getElementById('ad_quitar').addEventListener('click', function () { administrador(false); });
+  cargarObjetos();
     }).catch(function (e) { msgObjetos(e.message, false); });
   });
+  function administrador(dar) {
+    var m = document.getElementById('ad_msg');
+    m.style.display = 'block'; m.style.color = '#bbb'; m.style.borderLeftColor = '#555';
+    m.textContent = 'Un momento…';
+    api('/admin/administrador', {
+      method: 'POST', body: JSON.stringify({ quien: val('ad_quien'), dar: dar }),
+    }).then(function (r) {
+      m.style.color = '#4caf50'; m.style.borderLeftColor = '#4caf50';
+      m.textContent = '✓ ' + r.quienes.join(', ') + (dar ? ' ya es administrador.' : ' ya no lo es.');
+      document.getElementById('fad').reset();
+    }).catch(function (e) {
+      m.style.color = '#f44336'; m.style.borderLeftColor = '#f44336';
+      m.textContent = '✗ ' + e.message;
+    });
+  }
+  document.getElementById('ad_dar').addEventListener('click', function () { administrador(true); });
+  document.getElementById('ad_quitar').addEventListener('click', function () { administrador(false); });
   cargarObjetos();
   cargarCampanas();
   cargar();
@@ -4367,6 +4444,92 @@ app.get('/app/version', async (req: any, reply) => {
       ? (IOS_UPDATE_URL ? { updateUrl: IOS_UPDATE_URL } : {})
       : { updateUrl: ANDROID_UPDATE_URL }),
   });
+});
+
+// ── Resumen para el administrador ───────────────────────────────────────────
+
+/** Solo para quien tenga la marca de administrador (users.es_admin), que se
+ *  pone desde el panel. No basta con estar autenticado. */
+const requireAdminApp = async (req: any, reply: any) => {
+  const { rows } = await db.query('SELECT es_admin FROM users WHERE id = $1', [req.userId]);
+  if (!rows[0]?.es_admin) return reply.status(403).send({ error: 'Solo para administración' });
+};
+
+/** Lo que Ibanto ve en su perfil y nadie más: cómo va la cosa hoy, quién sigue
+ *  vivo y quién se está descolgando. Números agregados y nombres, nunca
+ *  emails ni por dónde corre nadie. */
+app.get('/admin/resumen', { preHandler: [requireAuth, requireAdminApp] }, async (_req: any, reply) => {
+  const [hoy, semana, gente, avisos, correos, marcadas] = await Promise.all([
+    db.query(`SELECT
+       (SELECT COUNT(*)::int FROM runs WHERE (created_at AT TIME ZONE 'Europe/Madrid')::date = (NOW() AT TIME ZONE 'Europe/Madrid')::date) AS carreras,
+       (SELECT COUNT(DISTINCT user_id)::int FROM runs WHERE (created_at AT TIME ZONE 'Europe/Madrid')::date = (NOW() AT TIME ZONE 'Europe/Madrid')::date) AS corredores,
+       (SELECT COUNT(*)::int FROM users WHERE (ultimo_acceso_at AT TIME ZONE 'Europe/Madrid')::date = (NOW() AT TIME ZONE 'Europe/Madrid')::date) AS han_abierto,
+       (SELECT COUNT(*)::int FROM users WHERE (created_at AT TIME ZONE 'Europe/Madrid')::date = (NOW() AT TIME ZONE 'Europe/Madrid')::date) AS altas`),
+    db.query(`SELECT
+       (SELECT COUNT(*)::int FROM users WHERE created_at >= NOW() - INTERVAL '7 days') AS altas,
+       (SELECT COUNT(*)::int FROM runs WHERE created_at >= NOW() - INTERVAL '7 days') AS carreras,
+       (SELECT COALESCE(ROUND(SUM(distance_km)::numeric, 1), 0) FROM runs WHERE created_at >= NOW() - INTERVAL '7 days') AS km,
+       (SELECT COUNT(*)::int FROM cells WHERE claimed_at >= NOW() - INTERVAL '7 days') AS celdas`),
+    db.query(`SELECT
+       (SELECT COUNT(*)::int FROM users) AS total,
+       (SELECT COUNT(*)::int FROM users u WHERE NOT EXISTS (SELECT 1 FROM runs r WHERE r.user_id = u.id)) AS sin_estrenar,
+       (SELECT COUNT(*)::int FROM users u WHERE EXISTS (SELECT 1 FROM runs r WHERE r.user_id = u.id)
+          AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.user_id = u.id AND r.created_at >= NOW() - INTERVAL '14 days')) AS dormidos,
+       (SELECT COUNT(*)::int FROM users WHERE ultimo_acceso_at >= NOW() - INTERVAL '7 days') AS activos_semana`),
+    db.query(`SELECT COUNT(*)::int AS activos FROM avisos WHERE activo AND (hasta IS NULL OR hasta > NOW())`),
+    db.query(`SELECT campana, COUNT(*)::int AS enviados,
+                     COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM runs r WHERE r.user_id = e.user_id AND r.created_at > e.enviado_at))::int AS salieron
+                FROM email_envios e GROUP BY campana ORDER BY MAX(enviado_at) DESC LIMIT 3`),
+    db.query(`SELECT COUNT(*)::int AS n FROM runs WHERE flagged_reason IS NOT NULL AND created_at >= NOW() - INTERVAL '30 days'`),
+  ]);
+
+  // Quién se está descolgando: entró pero lleva sin correr. Con nombre, para
+  // poder escribirle o picarle; sin email ni ubicación.
+  const { rows: flojos } = await db.query(
+    `SELECT u.display_name AS nombre,
+            (SELECT MAX(r.created_at) FROM runs r WHERE r.user_id = u.id) AS ultima_carrera,
+            u.ultimo_acceso_at
+       FROM users u
+      WHERE u.email NOT ILIKE '%@corrr.es'
+      ORDER BY (SELECT MAX(r.created_at) FROM runs r WHERE r.user_id = u.id) ASC NULLS FIRST
+      LIMIT 12`,
+  );
+
+  const { rows: versiones } = await db.query(
+    `SELECT COALESCE(plataforma, 'sin saber') AS plataforma, COUNT(*)::int AS n
+       FROM users WHERE ultimo_acceso_at >= NOW() - INTERVAL '30 days'
+      GROUP BY 1 ORDER BY n DESC`,
+  );
+
+  return reply.send({
+    hoy: hoy.rows[0],
+    semana: semana.rows[0],
+    gente: gente.rows[0],
+    avisosActivos: avisos.rows[0].activos,
+    correos: correos.rows,
+    carrerasMarcadas: marcadas.rows[0].n,
+    flojos: flojos.map((f: any) => ({
+      nombre: f.nombre,
+      ultimaCarrera: f.ultima_carrera ? new Date(f.ultima_carrera).toISOString() : null,
+      ultimoAcceso: f.ultimo_acceso_at ? new Date(f.ultimo_acceso_at).toISOString() : null,
+    })),
+    porPlataforma: versiones,
+  });
+});
+
+/** Dar (o quitar) la marca de administrador. Desde el panel. */
+app.post('/admin/administrador', { preHandler: requireAdmin }, async (req: any, reply) => {
+  const quien = String(req.body?.quien ?? '').trim();
+  const dar = req.body?.dar !== false;
+  if (!quien) return reply.status(400).send({ error: 'Falta el nombre o el email' });
+  const { rows } = await db.query(
+    `UPDATE users SET es_admin = $2
+      WHERE LOWER(email) = LOWER($1) OR LOWER(display_name) = LOWER($1)
+      RETURNING display_name`,
+    [quien, dar],
+  );
+  if (rows.length === 0) return reply.status(404).send({ error: `No hay nadie con nombre o email "${quien}"` });
+  return reply.send({ ok: true, quienes: rows.map((r: any) => r.display_name), dar });
 });
 
 // ── Objetos del mapa (calabazas de Halloween y lo que venga) ────────────────

@@ -146,6 +146,18 @@ interface FichaCorredor {
   mine: boolean;
 }
 
+/** El resumen que solo ve quien está marcado como administrador. */
+interface ResumenAdmin {
+  hoy: { carreras: number; corredores: number; han_abierto: number; altas: number };
+  semana: { altas: number; carreras: number; km: string | number; celdas: number };
+  gente: { total: number; sin_estrenar: number; dormidos: number; activos_semana: number };
+  avisosActivos: number;
+  correos: { campana: string; enviados: number; salieron: number }[];
+  carrerasMarcadas: number;
+  flojos: { nombre: string; ultimaCarrera: string | null; ultimoAcceso: string | null }[];
+  porPlataforma: { plataforma: string; n: number }[];
+}
+
 interface ProfileData {
   id: string;
   email: string;
@@ -162,6 +174,8 @@ interface ProfileData {
   usual_distance: '1-3' | '3-5' | '5-10' | '10+' | null;
   weekly_frequency: '1-2' | '3-4' | '5+' | null;
   profile_bonus_claimed: boolean;
+  /** Marca puesta desde el panel: enseña el resumen de administración. */
+  es_admin?: boolean;
 }
 
 interface ProfileUpdate {
@@ -526,6 +540,15 @@ class ApiService {
     }
   }
 
+  /** Resumen de administración. Null si no eres administrador o si falla. */
+  async getResumenAdmin(): Promise<ResumenAdmin | null> {
+    try {
+      return await this.request<ResumenAdmin>('/admin/resumen');
+    } catch {
+      return null;
+    }
+  }
+
   async getAllRuns(limit = 30, offset = 0): Promise<{ runs: RunRecord[]; total: number; limit: number; offset: number }> {
     return this.request<{ runs: RunRecord[]; total: number; limit: number; offset: number }>(
       `/runs/my?limit=${limit}&offset=${offset}`
@@ -695,7 +718,7 @@ interface Friend {
 }
 
 export const api = new ApiService();
-export type { LoginResponse, RankingEntry, Challenge, Achievement, RunRecord, UserStats, MyStats, RemoteZone, ZonePayload, FriendRequest, Friend, Cell, RemoteCell, MapOwner, MapTerritory, Aviso, ObjetoMapa, FichaCorredor, CellRunPayload, RunSaveResult, TauntInbox, ProfileData, ProfileUpdate };
+export type { LoginResponse, RankingEntry, Challenge, Achievement, RunRecord, UserStats, MyStats, RemoteZone, ZonePayload, FriendRequest, Friend, Cell, RemoteCell, MapOwner, MapTerritory, Aviso, ObjetoMapa, FichaCorredor, ResumenAdmin, CellRunPayload, RunSaveResult, TauntInbox, ProfileData, ProfileUpdate };
 
 const MOCK_RANKING: RankingEntry[] = [
   { position: 1, username: 'Laura R.', city: 'Barcelona', points: 28480, zones: 87 },

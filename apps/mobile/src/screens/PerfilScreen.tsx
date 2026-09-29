@@ -20,6 +20,7 @@ import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
 import { colors, spacing, radius } from '../theme';
 import { api, MyStats, RunRecord, Achievement, ProfileData } from '../services/api';
+import ResumenAdminPanel from '../components/ResumenAdmin';
 import EditProfileScreen from './EditProfileScreen';
 import { checkForUpdates, CURRENT_VERSION } from '../utils/checkForUpdates';
 import { STRAVA_ENABLED } from '../config/features';
@@ -520,6 +521,10 @@ export default function PerfilScreen({ user, onLogout }: Props) {
           </TouchableOpacity>
         </View>
       )}
+
+      {/* Solo para quien tenga la marca de administrador. Al resto ni se le
+          pide: el servidor responde 403 y aquí no se monta nada. */}
+      {profileData?.es_admin && <ResumenAdminPanel />}
 
       {/* "Tus otras carreras" (vía Salud), solo iPhone: lo que se graba con
           Strava, con el Apple Watch o con cualquier app que escriba en Salud
