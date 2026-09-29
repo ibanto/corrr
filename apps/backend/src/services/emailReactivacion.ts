@@ -18,11 +18,21 @@
 export const CAMPANA_REACTIVACION = 'una-vuelta-basta';
 export const ASUNTO_REACTIVACION = 'Una vuelta basta';
 
-/** 'nada': ninguna carrera. 'poco': alguna, pero 100 puntos o menos. */
-export type Variante = 'nada' | 'poco';
+/** Segundo aviso, una semana después, para quien sigue sin estrenarse. El
+ *  gancho ya no es "sal a correr" —eso ya se lo dijimos— sino que mientras
+ *  tenga 100 puntos o menos su carrera cuenta doble, que es verdad y está
+ *  activo en el servidor desde el 23-sep. */
+export const CAMPANA_DOBLE = 'cuenta-doble';
+export const ASUNTO_DOBLE = 'Tu primera carrera cuenta doble';
+
+/** 'nada': ninguna carrera. 'poco': alguna, pero 100 puntos o menos.
+ *  'doble': ninguna carrera, y se le recuerda con el x2 por delante. */
+export type Variante = 'nada' | 'poco' | 'doble';
 
 const TEXTOS: Record<Variante, {
   preheader: string; intro: string; circuito: string; misiones: string; boton: string;
+  /** El bloque naranja grande y la imagen de cabecera cambian por campaña. */
+  bloque: string; hero: string; asunto: string;
 }> = {
   nada: {
     preheader: 'Te uniste a CORRR y tu primera zona sigue sin dueño.',
@@ -30,6 +40,9 @@ const TEXTOS: Record<Variante, {
     circuito: 'CORRR solo necesita que salgas y cierres un circuito.',
     misiones: '// PRIMERA ZONA: ELIGE TU MISIÓN',
     boton: 'Reclama tu primera zona',
+    bloque: 'Da igual que corras<br>o que camines',
+    hero: 'https://ibanto.github.io/corrr/email/una-vuelta-basta.jpg',
+    asunto: ASUNTO_REACTIVACION,
   },
   poco: {
     preheader: 'Ya saliste con CORRR. Tu territorio todavía cabe en una calle.',
@@ -37,10 +50,22 @@ const TEXTOS: Record<Variante, {
     circuito: 'Cierra un circuito y todo lo que queda dentro es tuyo.',
     misiones: '// SIGUIENTE ZONA: ELIGE TU MISIÓN',
     boton: 'Amplía tu territorio',
+    bloque: 'Da igual que corras<br>o que camines',
+    hero: 'https://ibanto.github.io/corrr/email/una-vuelta-basta.jpg',
+    asunto: ASUNTO_REACTIVACION,
+  },
+  doble: {
+    preheader: 'Mientras tengas menos de 100 puntos, cada carrera te cuenta el doble.',
+    intro: 'Sigues sin estrenar tu primera zona, así que te hemos puesto los puntos al doble.',
+    circuito: 'Sal, cierra un circuito y todo lo de dentro es tuyo. Y esta vez, puntúa el doble.',
+    misiones: '// ESTRÉNATE: ELIGE TU MISIÓN',
+    boton: 'Estrenar el doble',
+    bloque: 'Tu primera carrera<br>cuenta doble',
+    hero: 'https://ibanto.github.io/corrr/email/cuenta-doble.jpg',
+    asunto: ASUNTO_DOBLE,
   },
 };
 
-const HERO_URL = 'https://ibanto.github.io/corrr/email/una-vuelta-basta.jpg';
 export const PRIVACIDAD_URL = 'https://ibanto.github.io/corrr/privacy.html';
 
 const NARANJA = '#FF5500';
@@ -78,7 +103,7 @@ export function htmlReactivacion({ nombre, urlAbrir, urlBaja, variante }: DatosE
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="dark">
 <meta name="supported-color-schemes" content="dark">
-<title>${ASUNTO_REACTIVACION}</title>
+<title>${t.asunto}</title>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono&family=Oswald:wght@500;600&display=swap" rel="stylesheet">
 </head>
 <body style="margin:0;padding:0;background:#000000;" bgcolor="#000000">
@@ -89,7 +114,7 @@ export function htmlReactivacion({ nombre, urlAbrir, urlBaja, variante }: DatosE
 
   <tr><td>
     <a href="${urlAbrir}" style="text-decoration:none;">
-      <img src="${HERO_URL}" width="600" alt="CORRR — Una vuelta basta" style="display:block;width:100%;max-width:600px;height:auto;border:0;color:#FFFFFF;font-family:${CONDENSADA};font-size:32px;">
+      <img src="${t.hero}" width="600" alt="CORRR — ${t.asunto}" style="display:block;width:100%;max-width:600px;height:auto;border:0;color:#FFFFFF;font-family:${CONDENSADA};font-size:32px;">
     </a>
   </td></tr>
 
@@ -109,7 +134,7 @@ export function htmlReactivacion({ nombre, urlAbrir, urlBaja, variante }: DatosE
 
         <tr><td bgcolor="${NARANJA}" style="background:${NARANJA};padding:14px 16px;">
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
-            <td style="font-family:${CONDENSADA};font-weight:600;font-size:28px;line-height:32px;color:#000000;text-transform:uppercase;">Da igual que corras<br>o que camines</td>
+            <td style="font-family:${CONDENSADA};font-weight:600;font-size:28px;line-height:32px;color:#000000;text-transform:uppercase;">${t.bloque}</td>
             <td width="36" align="right" style="font-family:${CONDENSADA};font-weight:600;font-size:34px;color:#000000;">//</td>
           </tr></table>
         </td></tr>
@@ -173,7 +198,7 @@ export function textoReactivacion({ nombre, urlAbrir, urlBaja, variante }: Datos
 
 ${t.intro}
 
-Da igual que corras o que camines. ${t.circuito}
+${t.bloque.replace('<br>', ' ')}. ${t.circuito}
 
 Elige tu misión:
 01 · Una vuelta a la manzana

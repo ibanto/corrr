@@ -13,7 +13,8 @@ import { randomBytes, createHmac, timingSafeEqual } from 'crypto';
 import { SUPABASE_ROOT_CA } from '../db/supabase-ca.js';
 import { agruparEnTiras, Dueno } from '../services/tiras.js';
 import {
-  CAMPANA_REACTIVACION, ASUNTO_REACTIVACION, htmlReactivacion, textoReactivacion, Variante,
+  CAMPANA_REACTIVACION, ASUNTO_REACTIVACION, CAMPANA_DOBLE, ASUNTO_DOBLE,
+  htmlReactivacion, textoReactivacion, Variante,
 } from '../services/emailReactivacion.js';
 
 /**
@@ -1707,6 +1708,18 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
 <button class="btn" id="bstrava">Comprobar Strava</button>
 <div id="strava_msg" class="resultado" style="display:none"></div>
 
+<h2>Correos</h2>
+<p class="nota">Cada campaña se manda UNA vez por persona. Quien pidió la baja y quien ya salió a
+correr quedan fuera solos. Manda siempre una prueba a tu correo antes de la tanda.</p>
+<div id="campanas"></div>
+<form class="form" id="fc">
+  <select id="c_campana"></select>
+  <input id="c_prueba" placeholder="Tu email, para la prueba" type="email">
+  <button class="btn" id="c_test" type="button">Mandarme una prueba</button>
+  <button class="btn" id="c_enviar" type="button">Enviar la tanda de verdad</button>
+  <div id="c_msg" class="resultado" style="display:none"></div>
+</form>
+
 <h2>Bajas del correo</h2>
 <p class="nota">Si alguien pide la baja <b>respondiendo al email</b> (Mail de Apple manda un correo a
 hola@corrr.es en vez de avisarnos), apúntala aquí: si no, seguiría recibiendo campañas.
@@ -1841,6 +1854,48 @@ Quien usa el enlace del correo se da de baja solo.</p>
       m.textContent = '✗ ' + e.message;
     }).then(function () { b.disabled = false; b.textContent = 'Comprobar Strava'; });
   });
+  function pintarCampanas(lista) {
+    document.getElementById('campanas').innerHTML = lista.map(function (c) {
+      return '<div class="aviso"><h3>' + esc(c.titulo) + '</h3>'
+        + '<div class="meta">Asunto: "' + esc(c.asunto) + '"</div>'
+        + '<p>Le toca a <b>' + c.pendientes + '</b> · ya enviados ' + c.enviados
+        + ' · han salido a correr después <b>' + c.salieron_despues + '</b>'
+        + ' · bajas ' + c.bajas + '</p></div>';
+    }).join('');
+    var sel = document.getElementById('c_campana');
+    if (sel.options.length === 0) {
+      sel.innerHTML = lista.map(function (c) {
+        return '<option value="' + esc(c.campana) + '">' + esc(c.titulo) + '</option>';
+      }).join('');
+    }
+  }
+  function cargarCampanas() { api('/admin/email/campanas').then(pintarCampanas).catch(function () {}); }
+  function mandarCorreo(modo) {
+    var m = document.getElementById('c_msg');
+    var cuerpo = { modo: modo, campana: document.getElementById('c_campana').value };
+    if (modo === 'prueba') {
+      cuerpo.para = val('c_prueba');
+      if (!cuerpo.para) { m.style.display = 'block'; m.style.color = '#f44336'; m.textContent = 'Escribe tu email para la prueba.'; return; }
+    } else if (!confirm('¿Mandar la tanda de verdad? Esto escribe a gente real y no se puede deshacer.')) {
+      return;
+    }
+    m.style.display = 'block'; m.style.color = '#bbb'; m.style.borderLeftColor = '#555';
+    m.textContent = 'Mandando…';
+    api('/admin/email/reactivacion', { method: 'POST', body: JSON.stringify(cuerpo) }).then(function (r) {
+      m.style.color = '#4caf50'; m.style.borderLeftColor = '#4caf50';
+      m.textContent = modo === 'prueba'
+        ? '✓ Prueba enviada. Míralo en tu correo antes de lanzar la tanda.'
+        : '✓ Enviados ' + r.enviados + '. Quedan ' + r.quedan + ' para la próxima tanda.'
+          + (r.fallos && r.fallos.length ? ' Fallaron ' + r.fallos.length + '.' : '');
+      cargarCampanas();
+    }).catch(function (e) {
+      m.style.color = '#f44336'; m.style.borderLeftColor = '#f44336';
+      m.textContent = '✗ ' + e.message;
+    });
+  }
+  document.getElementById('c_test').addEventListener('click', function () { mandarCorreo('prueba'); });
+  document.getElementById('c_enviar').addEventListener('click', function () { mandarCorreo('enviar'); });
+  cargarCampanas();
   cargar();
 </script>
 </body></html>`;
@@ -4341,9 +4396,39 @@ const SQL_PENDIENTES_REACTIVACION = `
                         AND r.created_at >= NOW() - make_interval(days => ${DIAS_SIN_CORRER}))
       AND NOT EXISTS (SELECT 1 FROM email_envios e WHERE e.user_id = u.id AND e.campana = $1)`;
 
+/** Público del segundo aviso (el del x2): los que siguen SIN estrenarse. A
+ *  quien ya salió no se le repite; y quien pidió la baja queda fuera, como en
+ *  todas. */
+const SQL_PENDIENTES_DOBLE = `
+      (u.email_verified OR u.google_id IS NOT NULL)
+      AND u.email_baja_at IS NULL
+      AND ${SQL_ALTA_CON_MARGEN}
+      AND u.email NOT ILIKE '%@corrr.es'
+      AND u.email NOT ILIKE '%+googletest@%'
+      AND COALESCE(s.total_points, 0) <= ${MAX_PUNTOS_REACTIVACION}
+      AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.user_id = u.id)
+      AND NOT EXISTS (SELECT 1 FROM email_envios e WHERE e.user_id = u.id AND e.campana = $1)`;
+
 /** Qué versión del email le toca: 'poco' si tiene alguna carrera, 'nada' si no. */
 const SQL_VARIANTE_REACTIVACION =
   `CASE WHEN EXISTS (SELECT 1 FROM runs r WHERE r.user_id = u.id) THEN 'poco' ELSE 'nada' END`;
+
+/** Las campañas que se pueden lanzar, cada una con su público y su versión del
+ *  texto. Añadir una es añadir una entrada aquí. */
+const CAMPANAS: Record<string, { asunto: string; pendientes: string; variante: string; titulo: string }> = {
+  [CAMPANA_REACTIVACION]: {
+    asunto: ASUNTO_REACTIVACION,
+    pendientes: SQL_PENDIENTES_REACTIVACION,
+    variante: SQL_VARIANTE_REACTIVACION,
+    titulo: 'Una vuelta basta — a quien ha salido poco o nada',
+  },
+  [CAMPANA_DOBLE]: {
+    asunto: ASUNTO_DOBLE,
+    pendientes: SQL_PENDIENTES_DOBLE,
+    variante: `'doble'`,
+    titulo: 'Cuenta doble — a quien no se ha estrenado',
+  },
+};
 
 function enviarReactivacion(
   para: string, nombre: string, urlBaja: string, variante: Variante, asunto = ASUNTO_REACTIVACION,
@@ -4471,6 +4556,26 @@ app.post('/admin/email/baja', { preHandler: requireAdmin }, async (req: any, rep
   return reply.send({ ok: true, dados_de_baja: rows.map((r: any) => r.display_name) });
 });
 
+/** Estado de cada campaña: a cuántos les toca, a cuántos se les mandó y a
+ *  cuántos de esos les hizo salir a correr. Es lo que se ve en el panel. */
+app.get('/admin/email/campanas', { preHandler: requireAdmin }, async (_req, reply) => {
+  const salida = [];
+  for (const [campana, conf] of Object.entries(CAMPANAS)) {
+    const { rows } = await db.query(
+      `SELECT
+         (SELECT COUNT(*)::int FROM ${FROM_REACTIVACION} WHERE ${conf.pendientes}) AS pendientes,
+         (SELECT COUNT(*)::int FROM email_envios e WHERE e.campana = $1) AS enviados,
+         (SELECT COUNT(*)::int FROM email_envios e WHERE e.campana = $1
+            AND EXISTS (SELECT 1 FROM runs r WHERE r.user_id = e.user_id AND r.created_at > e.enviado_at)) AS salieron_despues,
+         (SELECT COUNT(*)::int FROM email_envios e JOIN users b ON b.id = e.user_id
+            WHERE e.campana = $1 AND b.email_baja_at IS NOT NULL) AS bajas`,
+      [campana],
+    );
+    salida.push({ campana, titulo: conf.titulo, asunto: conf.asunto, ...rows[0] });
+  }
+  return reply.send(salida);
+});
+
 app.get('/admin/email/reactivacion', { preHandler: requireAdmin }, async (_req: any, reply) => {
   const pocos = `COALESCE(s.total_points, 0) <= ${MAX_PUNTOS_REACTIVACION}`;
   const { rows } = await db.query(`
@@ -4512,13 +4617,17 @@ app.get('/admin/email/reactivacion', { preHandler: requireAdmin }, async (_req: 
  *  POST { modo: 'enviar', max?: 80 }        → una tanda a los pendientes. */
 app.post('/admin/email/reactivacion', { preHandler: requireAdmin }, async (req: any, reply) => {
   const { modo, para, max, variante } = req.body ?? {};
+  const campana = String(req.body?.campana ?? CAMPANA_REACTIVACION);
+  const conf = CAMPANAS[campana];
+  if (!conf) return reply.status(400).send({ error: `No existe la campaña "${campana}"` });
 
   if (modo === 'prueba') {
     if (typeof para !== 'string' || !para.includes('@')) return reply.status(400).send({ error: 'Falta "para"' });
     const { rows } = await db.query('SELECT display_name FROM users WHERE email = $1', [para]);
+    const cual: Variante = campana === CAMPANA_DOBLE ? 'doble' : (variante === 'poco' ? 'poco' : 'nada');
     const { data, error } = await enviarReactivacion(
       para, rows[0]?.display_name ?? 'Corredor', urlBajaEmail(USUARIO_PRUEBA),
-      variante === 'poco' ? 'poco' : 'nada', `[PRUEBA] ${ASUNTO_REACTIVACION}`,
+      cual, `[PRUEBA] ${conf.asunto}`,
     );
     if (error) return reply.status(502).send({ error: error.message });
     return reply.send({ ok: true, id: data?.id });
@@ -4528,11 +4637,11 @@ app.post('/admin/email/reactivacion', { preHandler: requireAdmin }, async (req: 
 
   const limite = Math.min(Math.max(1, Number(max) || MAX_ENVIOS_POR_TANDA), MAX_ENVIOS_POR_TANDA);
   const { rows } = await db.query(
-    `SELECT u.id, u.email, u.display_name, ${SQL_VARIANTE_REACTIVACION} AS variante
+    `SELECT u.id, u.email, u.display_name, ${conf.variante} AS variante
        FROM ${FROM_REACTIVACION}
-      WHERE ${SQL_PENDIENTES_REACTIVACION}
+      WHERE ${conf.pendientes}
       ORDER BY u.created_at LIMIT $2`,
-    [CAMPANA_REACTIVACION, limite],
+    [campana, limite],
   );
 
   let enviados = 0;
@@ -4543,13 +4652,15 @@ app.post('/admin/email/reactivacion', { preHandler: requireAdmin }, async (req: 
     // choca con la clave primaria y no manda el mismo email dos veces.
     const hueco = await db.query(
       `INSERT INTO email_envios (user_id, campana) VALUES ($1, $2) ON CONFLICT DO NOTHING RETURNING user_id`,
-      [u.id, CAMPANA_REACTIVACION],
+      [u.id, campana],
     );
     if (!hueco.rowCount) continue;
 
     let error: string | null = null;
     try {
-      const r = await enviarReactivacion(u.email, u.display_name ?? 'Corredor', urlBajaEmail(u.id), u.variante);
+      const r = await enviarReactivacion(
+        u.email, u.display_name ?? 'Corredor', urlBajaEmail(u.id), u.variante, conf.asunto,
+      );
       if (r.error) error = r.error.message;
     } catch (err) {
       error = String(err);
@@ -4557,7 +4668,7 @@ app.post('/admin/email/reactivacion', { preHandler: requireAdmin }, async (req: 
 
     if (error) {
       // No salió: se quita la marca para que entre en la próxima tanda.
-      await db.query('DELETE FROM email_envios WHERE user_id = $1 AND campana = $2', [u.id, CAMPANA_REACTIVACION]);
+      await db.query('DELETE FROM email_envios WHERE user_id = $1 AND campana = $2', [u.id, campana]);
       fallos.push({ userId: u.id, error });
       // Tres seguidos suele ser la cuota del día o la clave: el resto fallaría igual.
       if (++fallosSeguidos >= 3) break;
@@ -4570,9 +4681,9 @@ app.post('/admin/email/reactivacion', { preHandler: requireAdmin }, async (req: 
   }
 
   const quedan = await db.query(
-    `SELECT COUNT(*)::int AS n FROM ${FROM_REACTIVACION} WHERE ${SQL_PENDIENTES_REACTIVACION}`, [CAMPANA_REACTIVACION],
+    `SELECT COUNT(*)::int AS n FROM ${FROM_REACTIVACION} WHERE ${conf.pendientes}`, [campana],
   );
-  return reply.send({ enviados, fallos, quedan: quedan.rows[0].n });
+  return reply.send({ campana, enviados, fallos, quedan: quedan.rows[0].n });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
