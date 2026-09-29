@@ -638,7 +638,13 @@ app.get('/health', async (req, reply) => {
     await client.query('SELECT 1');
     const stream: any = (client as any).connection?.stream;
     const dbTls = { encrypted: stream?.encrypted === true, verified: stream?.authorized === true };
-    return reply.send({ ok: true, ts: Date.now(), dbTls });
+    // La versión desplegada, para saber SIEMPRE si lo que hay arriba es lo
+    // último que subimos. Sin esto hay que adivinar cuándo termina Railway, y
+    // hoy (29-sep) se ha tardado más de diez minutos en varios despliegues.
+    return reply.send({
+      ok: true, ts: Date.now(), dbTls,
+      version: (process.env.RAILWAY_GIT_COMMIT_SHA ?? 'local').slice(0, 7),
+    });
   } catch (err) {
     return reply.status(503).send({ ok: false, error: String(err) });
   } finally {
