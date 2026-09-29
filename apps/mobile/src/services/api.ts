@@ -148,6 +148,8 @@ interface FichaCorredor {
 
 /** El resumen que solo ve quien está marcado como administrador. */
 interface ResumenAdmin {
+  /** Desde cuándo se guardan los accesos (empezó el 29-sep-2026). */
+  accesosDesde: string | null;
   hoy: { carreras: number; corredores: number; han_abierto: number; altas: number };
   semana: { altas: number; carreras: number; km: string | number; celdas: number };
   gente: { total: number; sin_estrenar: number; dormidos: number; activos_semana: number };

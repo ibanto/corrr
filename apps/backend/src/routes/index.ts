@@ -4471,8 +4471,9 @@ app.get('/admin/resumen', { preHandler: [requireAuth, requireAdminApp] }, async 
        (SELECT COALESCE(ROUND(SUM(distance_km)::numeric, 1), 0) FROM runs WHERE created_at >= NOW() - INTERVAL '7 days') AS km,
        (SELECT COUNT(*)::int FROM cells WHERE claimed_at >= NOW() - INTERVAL '7 days') AS celdas`),
     db.query(`SELECT
-       (SELECT COUNT(*)::int FROM users) AS total,
-       (SELECT COUNT(*)::int FROM users u WHERE NOT EXISTS (SELECT 1 FROM runs r WHERE r.user_id = u.id)) AS sin_estrenar,
+       (SELECT COUNT(*)::int FROM users WHERE email NOT ILIKE '%@corrr.es' AND email NOT ILIKE '%+googletest@%') AS total,
+       (SELECT COUNT(*)::int FROM users u WHERE NOT EXISTS (SELECT 1 FROM runs r WHERE r.user_id = u.id)
+          AND u.email NOT ILIKE '%@corrr.es' AND u.email NOT ILIKE '%+googletest@%') AS sin_estrenar,
        (SELECT COUNT(*)::int FROM users u WHERE EXISTS (SELECT 1 FROM runs r WHERE r.user_id = u.id)
           AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.user_id = u.id AND r.created_at >= NOW() - INTERVAL '14 days')) AS dormidos,
        (SELECT COUNT(*)::int FROM users WHERE ultimo_acceso_at >= NOW() - INTERVAL '7 days') AS activos_semana`),
@@ -4490,9 +4491,14 @@ app.get('/admin/resumen', { preHandler: [requireAuth, requireAdminApp] }, async 
             (SELECT MAX(r.created_at) FROM runs r WHERE r.user_id = u.id) AS ultima_carrera,
             u.ultimo_acceso_at
        FROM users u
-      WHERE u.email NOT ILIKE '%@corrr.es'
-      ORDER BY (SELECT MAX(r.created_at) FROM runs r WHERE r.user_id = u.id) ASC NULLS FIRST
-      LIMIT 12`,
+      WHERE u.email NOT ILIKE '%@corrr.es' AND u.email NOT ILIKE '%+googletest@%'
+        -- Solo quien LLEGÓ A CORRER y ha dejado de hacerlo: los que no se han
+        -- estrenado ya salen contados arriba, y repetirlos aquí solo tapaba a
+        -- los que de verdad se están descolgando.
+        AND EXISTS (SELECT 1 FROM runs r WHERE r.user_id = u.id)
+        AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.user_id = u.id AND r.created_at >= NOW() - INTERVAL '5 days')
+      ORDER BY (SELECT MAX(r.created_at) FROM runs r WHERE r.user_id = u.id) ASC
+      LIMIT 10`,
   );
 
   const { rows: versiones } = await db.query(
@@ -4501,7 +4507,14 @@ app.get('/admin/resumen', { preHandler: [requireAuth, requireAdminApp] }, async 
       GROUP BY 1 ORDER BY n DESC`,
   );
 
+  const { rows: desdeCuando } = await db.query(
+    `SELECT MIN(ultimo_acceso_at) AS desde FROM users WHERE ultimo_acceso_at IS NOT NULL`,
+  );
+
   return reply.send({
+    // Los accesos se empezaron a guardar el 29-sep-2026: hasta que pase una
+    // semana, "cuántos entran" se queda corto y hay que decirlo.
+    accesosDesde: desdeCuando[0]?.desde ? new Date(desdeCuando[0].desde).toISOString() : null,
     hoy: hoy.rows[0],
     semana: semana.rows[0],
     gente: gente.rows[0],

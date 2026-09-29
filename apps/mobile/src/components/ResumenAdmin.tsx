@@ -81,8 +81,19 @@ export default function ResumenAdminPanel() {
             <Cifra valor={numero(datos.gente.sin_estrenar)} etiqueta="SIN ESTRENAR" />
             <Cifra valor={numero(datos.gente.dormidos)} etiqueta="DORMIDOS" />
           </View>
+          {/* Los primeros días "cuántos entran" se queda corto, porque el dato
+              se empezó a guardar hace nada. Mejor decirlo que dar un número
+              que parece malo y no lo es. */}
+          {datos.accesosDesde && Date.now() - new Date(datos.accesosDesde).getTime() < 7 * 86_400_000 && (
+            <Text style={styles.suelto}>
+              "Entran" cuenta desde {desde(datos.accesosDesde)}, que es cuando se empezó a guardar.
+            </Text>
+          )}
 
           <Text style={styles.seccion}>QUIÉN SE ESTÁ DESCOLGANDO</Text>
+          {datos.flojos.length === 0 && (
+            <Text style={styles.suelto}>Nadie: todos los que han corrido alguna vez lo han hecho esta semana.</Text>
+          )}
           {datos.flojos.slice(0, 8).map((f, i) => (
             <View key={i} style={styles.flojo}>
               <Text style={styles.flojoNombre} numberOfLines={1}>{f.nombre}</Text>
