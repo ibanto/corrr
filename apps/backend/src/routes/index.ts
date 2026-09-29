@@ -1793,6 +1793,16 @@ quita territorio a nadie. Se le avisa dentro de la app.</p>
   <div id="rc_msg" class="resultado" style="display:none"></div>
 </form>
 
+<h2>Cobrar un cerco</h2>
+<p class="nota">Lo que tu territorio rodea es tuyo, aunque lo hayas cerrado en varios días. La regla
+se aplica sola al guardar una carrera; esto se lo da YA a quien ya lo tenía cerrado, sin esperar a
+que vuelva a salir. Solo ocupa celdas libres.</p>
+<form class="form" id="fcz">
+  <input id="cz_quien" placeholder="Nombre del corredor o su email">
+  <button class="btn" id="cz_dar" type="button">Cobrarle el cerco</button>
+  <div id="cz_msg" class="resultado" style="display:none"></div>
+</form>
+
 <h2>Administradores</h2>
 <p class="nota">Quien esté marcado ve dentro de la app, en su perfil, el resumen de cómo va la cosa
 (altas, quién ha corrido hoy, quién se descuelga). Nadie más lo ve.</p>
@@ -2066,6 +2076,21 @@ Quien usa el enlace del correo se da de baja solo.</p>
       m.textContent = '✗ ' + e.message;
     });
   });
+  document.getElementById('cz_dar').addEventListener('click', function () {
+    var m = document.getElementById('cz_msg');
+    m.style.display = 'block'; m.style.color = '#bbb'; m.style.borderLeftColor = '#555';
+    m.textContent = 'Calculando el cerco…';
+    api('/admin/corredores/cercos', { method: 'POST', body: JSON.stringify({ quien: val('cz_quien') }) })
+      .then(function (r) {
+        m.style.color = '#4caf50'; m.style.borderLeftColor = '#4caf50';
+        m.textContent = '✓ ' + (r.nuevas
+          ? r.corredor + ' cobra ' + r.nuevas + ' celdas (' + r.ocupadas + ' de dentro son de otros y siguen siéndolo). Le sale un aviso en la app.'
+          : (r.mensaje || 'No había ningún cerco.'));
+      }).catch(function (e) {
+        m.style.color = '#f44336'; m.style.borderLeftColor = '#f44336';
+        m.textContent = '✗ ' + e.message;
+      });
+  });
   cargarObjetos();
     }).catch(function (e) { msgObjetos(e.message, false); });
   });
@@ -2114,6 +2139,21 @@ Quien usa el enlace del correo se da de baja solo.</p>
       m.textContent = '✗ ' + e.message;
     });
   });
+  document.getElementById('cz_dar').addEventListener('click', function () {
+    var m = document.getElementById('cz_msg');
+    m.style.display = 'block'; m.style.color = '#bbb'; m.style.borderLeftColor = '#555';
+    m.textContent = 'Calculando el cerco…';
+    api('/admin/corredores/cercos', { method: 'POST', body: JSON.stringify({ quien: val('cz_quien') }) })
+      .then(function (r) {
+        m.style.color = '#4caf50'; m.style.borderLeftColor = '#4caf50';
+        m.textContent = '✓ ' + (r.nuevas
+          ? r.corredor + ' cobra ' + r.nuevas + ' celdas (' + r.ocupadas + ' de dentro son de otros y siguen siéndolo). Le sale un aviso en la app.'
+          : (r.mensaje || 'No había ningún cerco.'));
+      }).catch(function (e) {
+        m.style.color = '#f44336'; m.style.borderLeftColor = '#f44336';
+        m.textContent = '✗ ' + e.message;
+      });
+  });
   cargarObjetos();
     }).catch(function (e) { msgObjetos(e.message, false); });
   });
@@ -2157,6 +2197,21 @@ Quien usa el enlace del correo se da de baja solo.</p>
       m.style.color = '#f44336'; m.style.borderLeftColor = '#f44336';
       m.textContent = '✗ ' + e.message;
     });
+  });
+  document.getElementById('cz_dar').addEventListener('click', function () {
+    var m = document.getElementById('cz_msg');
+    m.style.display = 'block'; m.style.color = '#bbb'; m.style.borderLeftColor = '#555';
+    m.textContent = 'Calculando el cerco…';
+    api('/admin/corredores/cercos', { method: 'POST', body: JSON.stringify({ quien: val('cz_quien') }) })
+      .then(function (r) {
+        m.style.color = '#4caf50'; m.style.borderLeftColor = '#4caf50';
+        m.textContent = '✓ ' + (r.nuevas
+          ? r.corredor + ' cobra ' + r.nuevas + ' celdas (' + r.ocupadas + ' de dentro son de otros y siguen siéndolo). Le sale un aviso en la app.'
+          : (r.mensaje || 'No había ningún cerco.'));
+      }).catch(function (e) {
+        m.style.color = '#f44336'; m.style.borderLeftColor = '#f44336';
+        m.textContent = '✗ ' + e.message;
+      });
   });
   cargarObjetos();
   cargarCampanas();
@@ -4671,6 +4726,80 @@ app.post('/admin/carreras/:id/rellenar', { preHandler: requireAdmin }, async (re
   return reply.send({
     ok: true, corredor: nombre, interior: interior.length, nuevas,
     ocupadas: interior.length - nuevas,
+  });
+});
+
+/** Cobrar los cercos que un corredor ya tiene cerrados.
+ *
+ *  La regla nueva (lo que rodeas es tuyo) se aplica al guardar una carrera,
+ *  así que quien cerró su cerco DÍAS ATRÁS no lo cobra hasta que vuelva a
+ *  correr por allí. Esto se lo da ya, sin esperar. Como el resto: solo celdas
+ *  libres, territorio y no puntos, y se le avisa dentro de la app. */
+app.post('/admin/corredores/cercos', { preHandler: requireAdmin }, async (req: any, reply) => {
+  const quien = String(req.body?.quien ?? '').trim();
+  if (!quien) return reply.status(400).send({ error: 'Falta el nombre o el email' });
+  const { rows: usuarios } = await db.query(
+    `SELECT id, display_name FROM users
+      WHERE LOWER(email) = LOWER($1) OR LOWER(display_name) = LOWER($1)`, [quien],
+  );
+  if (usuarios.length === 0) return reply.status(404).send({ error: `No hay nadie con nombre o email "${quien}"` });
+  if (usuarios.length > 1) return reply.status(400).send({ error: 'Ese nombre lo tienen varios; usa el email' });
+  const { id: userId, display_name: nombre } = usuarios[0];
+
+  const { rows: suyas } = await db.query(
+    `SELECT cell_x, cell_y FROM cells WHERE owner_id = $1`, [userId],
+  );
+  if (suyas.length === 0) return reply.status(400).send({ error: `${nombre} no tiene territorio todavía` });
+
+  const propias: Celda[] = suyas.map((c: any) => ({ x: c.cell_x, y: c.cell_y }));
+  const caja = cajaDe(propias);
+  const ancho = caja.x1 - caja.x0 + 1, alto = caja.y1 - caja.y0 + 1;
+  if (ancho * alto > MAX_CAJA_CERCO) {
+    return reply.status(400).send({
+      error: `Su territorio abarca ${(ancho / 100).toFixed(1)} × ${(alto / 100).toFixed(1)} km: demasiado para calcularlo de una vez.`,
+    });
+  }
+  const encerradas = celdasEncerradas(propias, caja);
+  if (encerradas.length === 0) return reply.send({ ok: true, corredor: nombre, nuevas: 0, mensaje: `${nombre} no tiene ningún cerco cerrado.` });
+  if (encerradas.length > MAX_CELDAS_RELLENO) {
+    return reply.status(400).send({ error: `Saldrían ${encerradas.length} celdas: demasiadas, míralo a mano antes.` });
+  }
+
+  const { rows: puestas } = await db.query(
+    `INSERT INTO cells (cell_x, cell_y, owner_id, run_id, claimed_at)
+     SELECT x, y, $3::uuid, NULL, NOW()
+       FROM unnest($1::int[], $2::int[]) AS t(x, y)
+     ON CONFLICT (cell_x, cell_y) DO NOTHING
+     RETURNING cell_x, cell_y`,
+    [encerradas.map(c => c.x), encerradas.map(c => c.y), userId],
+  );
+  const nuevas = puestas.length;
+
+  if (nuevas > 0) {
+    // Territorio, no puntos: la misma regla que para los cercos normales.
+    await db.query(
+      `UPDATE user_stats SET total_cells = COALESCE(total_cells, 0) + $2 WHERE user_id = $1`,
+      [userId, nuevas],
+    );
+    invalidateViewportCache(puestas.map((c: any) => ({ x: c.cell_x, y: c.cell_y })));
+    await db.query(
+      `INSERT INTO avisos (titulo, texto, boton, etiqueta, sello, nota, publico, corredor)
+       VALUES ($1, $2, $3, $4, $5, $6, 'corredor', $7)`,
+      [
+        'Cerco cobrado',
+        `Ya vale cerrar una zona *entre varios días*: lo que rodea tu territorio es tuyo. Acabas de cobrar *${nuevas.toLocaleString('es-ES')} celdas* que tenías cercadas.`,
+        'Ver el mapa',
+        'Regla nueva',
+        'Territorio',
+        `+${nuevas.toLocaleString('es-ES')}\nCELDAS`,
+        nombre,
+      ],
+    ).catch((e: any) => req.log.warn({ err: String(e) }, 'no se pudo crear el aviso del cerco'));
+  }
+
+  return reply.send({
+    ok: true, corredor: nombre, encerradas: encerradas.length, nuevas,
+    ocupadas: encerradas.length - nuevas,
   });
 });
 
