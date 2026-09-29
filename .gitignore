@@ -22,3 +22,6 @@ store/apple-reply-4000.txt
 # Documentación legal interna (EIPD): describe puntos débiles del sistema.
 # El repositorio es público.
 legal/
+
+# Copia de un repositorio ajeno que quedó de probar plugins; no es del proyecto.
+apps/backend/awesome-claude-skills/
