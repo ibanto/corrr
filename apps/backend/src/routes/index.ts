@@ -1925,7 +1925,8 @@ quita territorio a nadie. Se le avisa dentro de la app.</p>
 <h2>Cobrar un cerco</h2>
 <p class="nota">Lo que tu territorio rodea es tuyo, aunque lo hayas cerrado en varios días. La regla
 se aplica sola al guardar una carrera; esto se lo da YA a quien ya lo tenía cerrado, sin esperar a
-que vuelva a salir. Solo ocupa celdas libres.</p>
+que vuelva a salir. <b>Las celdas de otros que queden dentro también se las lleva</b>: cuentan como
+robo (+2 para él, −1 para el dueño, que recibe un aviso). Las libres valen +1.</p>
 <form class="form" id="fcz">
   <input id="cz_quien" placeholder="Nombre del corredor o su email">
   <button class="btn" id="cz_dar" type="button">Cobrarle el cerco</button>
