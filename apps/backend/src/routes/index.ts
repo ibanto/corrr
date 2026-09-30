@@ -1723,6 +1723,9 @@ app.get('/admin/panel', { preHandler: requireAdmin }, async (req: any, reply) =>
   .aviso p{margin:0 0 8px;color:#BEBEBE;font-size:13px;white-space:pre-wrap;}
   .aviso .meta{color:var(--apagado);font-size:12px;margin-bottom:10px;}
   .apagado{opacity:.5;}
+  .entregados{margin-top:18px;border-top:1px solid var(--borde);padding-top:12px;max-width:560px;}
+  .entregados summary{cursor:pointer;color:var(--apagado);font-size:13px;padding:4px 0;}
+  .entregados summary:hover{color:var(--texto);}
 
   /* Vista previa del cartel, tal cual se ve en el móvil. */
   .previo{background:#FF5500;padding:2px;max-width:364px;margin-top:14px;
@@ -2012,22 +2015,33 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
       return i % 2 === 1 ? '<b style="color:#FF5500">' + trozo + '</b>' : trozo;
     }).join('');
   }
+  function unAviso(a) {
+    var quien = { todos: 'a todo el mundo', ciudad: 'solo en ' + esc(a.ciudad || ''),
+      'sin-carreras': 'a quien no ha corrido nunca', dormidos: 'a quien no corre hace 2 semanas',
+      'pocos-puntos': 'a quien tiene 100 puntos o menos',
+      corredor: 'solo a ' + esc(a.corredor || ''),
+      ios: 'solo a los de iPhone', android: 'solo a los de Android' }[a.publico];
+    return '<div class="aviso' + (a.activo ? '' : ' apagado') + '">'
+      + '<h3>' + esc(a.titulo) + (a.activo ? '' : ' · APAGADO') + '</h3>'
+      + '<p>' + resaltes(a.texto) + '</p>'
+      + '<div class="meta">' + quien + ' · lo han visto ' + a.vistas + ' de ' + a.publico_total + '</div>'
+      + '<button class="mini" data-encender="' + a.id + '">' + (a.activo ? 'Apagar' : 'Encender') + '</button>'
+      + '<button class="mini" data-borrar="' + a.id + '">Borrar</button></div>';
+  }
+  // Arriba lo que todavía espera a alguien; abajo, plegado, lo ya entregado.
+  // Los carteles automáticos se apagan solos al verlos, así que caen ahí sin
+  // que haya que tocar nada: la lista de arriba es siempre lo que queda vivo.
   function pintar(avisos) {
-    document.getElementById('lista_avisos').innerHTML = avisos.length === 0
-      ? '<p class="nota">Todavía no has publicado ninguno.</p>'
-      : avisos.map(function (a) {
-        var quien = { todos: 'a todo el mundo', ciudad: 'solo en ' + esc(a.ciudad || ''),
-          'sin-carreras': 'a quien no ha corrido nunca', dormidos: 'a quien no corre hace 2 semanas',
-          'pocos-puntos': 'a quien tiene 100 puntos o menos',
-          corredor: 'solo a ' + esc(a.corredor || ''),
-          ios: 'solo a los de iPhone', android: 'solo a los de Android' }[a.publico];
-        return '<div class="aviso' + (a.activo ? '' : ' apagado') + '">'
-          + '<h3>' + esc(a.titulo) + (a.activo ? '' : ' · APAGADO') + '</h3>'
-          + '<p>' + resaltes(a.texto) + '</p>'
-          + '<div class="meta">' + quien + ' · lo han visto ' + a.vistas + ' de ' + a.publico_total + '</div>'
-          + '<button class="mini" data-encender="' + a.id + '">' + (a.activo ? 'Apagar' : 'Encender') + '</button>'
-          + '<button class="mini" data-borrar="' + a.id + '">Borrar</button></div>';
-      }).join('');
+    var vivos = avisos.filter(function (a) { return a.activo; });
+    var hechos = avisos.filter(function (a) { return !a.activo; });
+    var html = vivos.length === 0
+      ? '<p class="nota">Ninguno esperando. Todo lo que había, entregado.</p>'
+      : vivos.map(unAviso).join('');
+    if (hechos.length > 0) {
+      html += '<details class="entregados"><summary>Ya entregados ('
+        + hechos.length + ')</summary>' + hechos.map(unAviso).join('') + '</details>';
+    }
+    document.getElementById('lista_avisos').innerHTML = html;
   }
   function cargar() { api('/admin/avisos').then(pintar).catch(function () {}); }
   document.getElementById('lista_avisos').addEventListener('click', function (ev) {
@@ -5231,6 +5245,21 @@ app.post('/app/aviso/:id/visto', { preHandler: requireAuth }, async (req: any, r
   if (!Number.isInteger(id)) return reply.status(400).send({ error: 'id no válido' });
   await db.query(
     `INSERT INTO aviso_vistas (aviso_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+    [id, req.userId],
+  ).catch(() => {});
+  // Un aviso personal tiene UN destinatario: en cuanto lo ha visto, ya no
+  // pinta nada encendido. Se apaga solo y se va de la lista de pendientes del
+  // panel, que si no se llena de carteles automáticos («Cerco cobrado», «Te
+  // han cercado») y hay que ir repasándolos a mano.
+  //
+  // Se exige que quien lo cierra sea su destinatario: si no, cualquiera
+  // podría apagar el aviso de otro llamando aquí con su número.
+  await db.query(
+    `UPDATE avisos a SET activo = FALSE
+       FROM users u
+      WHERE a.id = $1 AND u.id = $2 AND a.activo
+        AND a.publico = 'corredor'
+        AND LOWER(a.corredor) = LOWER(u.display_name)`,
     [id, req.userId],
   ).catch(() => {});
   return reply.send({ ok: true });
