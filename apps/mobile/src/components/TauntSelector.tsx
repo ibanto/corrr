@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -24,40 +24,89 @@ interface TauntMessage {
   full: ImageSourcePropType;
 }
 
+/* Las miniaturas son VERTICALES (9:16), no cuadradas: el cartel se lee entero
+ * en la cuadrícula en vez de salir recortado por la mitad. Son un archivo
+ * aparte (-v.jpg, 288×512) y no la imagen grande encogida, porque diez
+ * imágenes de 576×1024 a la vez se comen la memoria del móvil. */
+
 const TAUNTS: TauntMessage[] = [
-  { id: 1,  thumb: require('../../assets/taunts/mensaje1-s.png'),  full: require('../../assets/taunts/mensaje1.png') },
-  { id: 2,  thumb: require('../../assets/taunts/mensaje2-s.png'),  full: require('../../assets/taunts/mensaje2.png') },
-  { id: 3,  thumb: require('../../assets/taunts/mensaje3-s.png'),  full: require('../../assets/taunts/mensaje3.png') },
-  { id: 4,  thumb: require('../../assets/taunts/mensaje4-s.png'),  full: require('../../assets/taunts/mensaje4.png') },
-  { id: 5,  thumb: require('../../assets/taunts/mensaje5-s.png'),  full: require('../../assets/taunts/mensaje5.png') },
-  { id: 6,  thumb: require('../../assets/taunts/mensaje6-s.png'),  full: require('../../assets/taunts/mensaje6.png') },
-  { id: 7,  thumb: require('../../assets/taunts/mensaje7-s.png'),  full: require('../../assets/taunts/mensaje7.png') },
-  { id: 8,  thumb: require('../../assets/taunts/mensaje8-s.png'),  full: require('../../assets/taunts/mensaje8.png') },
-  { id: 9,  thumb: require('../../assets/taunts/mensaje9-s.png'),  full: require('../../assets/taunts/mensaje9.png') },
-  { id: 10, thumb: require('../../assets/taunts/mensaje10-s.png'), full: require('../../assets/taunts/mensaje10.png') },
+  { id: 1,  thumb: require('../../assets/taunts/mensaje1-v.jpg'),  full: require('../../assets/taunts/mensaje1.png') },
+  { id: 2,  thumb: require('../../assets/taunts/mensaje2-v.jpg'),  full: require('../../assets/taunts/mensaje2.png') },
+  { id: 3,  thumb: require('../../assets/taunts/mensaje3-v.jpg'),  full: require('../../assets/taunts/mensaje3.png') },
+  { id: 4,  thumb: require('../../assets/taunts/mensaje4-v.jpg'),  full: require('../../assets/taunts/mensaje4.png') },
+  { id: 5,  thumb: require('../../assets/taunts/mensaje5-v.jpg'),  full: require('../../assets/taunts/mensaje5.png') },
+  { id: 6,  thumb: require('../../assets/taunts/mensaje6-v.jpg'),  full: require('../../assets/taunts/mensaje6.png') },
+  { id: 7,  thumb: require('../../assets/taunts/mensaje7-v.jpg'),  full: require('../../assets/taunts/mensaje7.png') },
+  { id: 8,  thumb: require('../../assets/taunts/mensaje8-v.jpg'),  full: require('../../assets/taunts/mensaje8.png') },
+  { id: 9,  thumb: require('../../assets/taunts/mensaje9-v.jpg'),  full: require('../../assets/taunts/mensaje9.png') },
+  { id: 10, thumb: require('../../assets/taunts/mensaje10-v.jpg'), full: require('../../assets/taunts/mensaje10.png') },
 ];
 
 const RESPONSES: TauntMessage[] = [
-  { id: 1,  thumb: require('../../assets/taunts/respuestas/respuesta1-s.png'),  full: require('../../assets/taunts/respuestas/respuesta1.png') },
-  { id: 2,  thumb: require('../../assets/taunts/respuestas/respuesta2-s.png'),  full: require('../../assets/taunts/respuestas/respuesta2.png') },
-  { id: 3,  thumb: require('../../assets/taunts/respuestas/respuesta3-s.png'),  full: require('../../assets/taunts/respuestas/respuesta3.png') },
-  { id: 4,  thumb: require('../../assets/taunts/respuestas/respuesta4-s.png'),  full: require('../../assets/taunts/respuestas/respuesta4.png') },
-  { id: 5,  thumb: require('../../assets/taunts/respuestas/respuesta5-s.png'),  full: require('../../assets/taunts/respuestas/respuesta5.png') },
-  { id: 6,  thumb: require('../../assets/taunts/respuestas/respuesta6-s.png'),  full: require('../../assets/taunts/respuestas/respuesta6.png') },
-  { id: 7,  thumb: require('../../assets/taunts/respuestas/respuesta7-s.png'),  full: require('../../assets/taunts/respuestas/respuesta7.png') },
-  { id: 8,  thumb: require('../../assets/taunts/respuestas/respuesta8-s.png'),  full: require('../../assets/taunts/respuestas/respuesta8.png') },
-  { id: 9,  thumb: require('../../assets/taunts/respuestas/respuesta9-s.png'),  full: require('../../assets/taunts/respuestas/respuesta9.png') },
-  { id: 10, thumb: require('../../assets/taunts/respuestas/respuesta10-s.png'), full: require('../../assets/taunts/respuestas/respuesta10.png') },
+  { id: 1,  thumb: require('../../assets/taunts/respuestas/respuesta1-v.jpg'),  full: require('../../assets/taunts/respuestas/respuesta1.png') },
+  { id: 2,  thumb: require('../../assets/taunts/respuestas/respuesta2-v.jpg'),  full: require('../../assets/taunts/respuestas/respuesta2.png') },
+  { id: 3,  thumb: require('../../assets/taunts/respuestas/respuesta3-v.jpg'),  full: require('../../assets/taunts/respuestas/respuesta3.png') },
+  { id: 4,  thumb: require('../../assets/taunts/respuestas/respuesta4-v.jpg'),  full: require('../../assets/taunts/respuestas/respuesta4.png') },
+  { id: 5,  thumb: require('../../assets/taunts/respuestas/respuesta5-v.jpg'),  full: require('../../assets/taunts/respuestas/respuesta5.png') },
+  { id: 6,  thumb: require('../../assets/taunts/respuestas/respuesta6-v.jpg'),  full: require('../../assets/taunts/respuestas/respuesta6.png') },
+  { id: 7,  thumb: require('../../assets/taunts/respuestas/respuesta7-v.jpg'),  full: require('../../assets/taunts/respuestas/respuesta7.png') },
+  { id: 8,  thumb: require('../../assets/taunts/respuestas/respuesta8-v.jpg'),  full: require('../../assets/taunts/respuestas/respuesta8.png') },
+  { id: 9,  thumb: require('../../assets/taunts/respuestas/respuesta9-v.jpg'),  full: require('../../assets/taunts/respuestas/respuesta9.png') },
+  { id: 10, thumb: require('../../assets/taunts/respuestas/respuesta10-v.jpg'), full: require('../../assets/taunts/respuestas/respuesta10.png') },
+];
+
+/** Los de Halloween empiezan en 101 A PROPÓSITO.
+ *
+ *  El identificador del mensaje viaja al servidor y vuelve al móvil de quien
+ *  lo recibe, que lo busca en su catálogo. Si los de Halloween fueran también
+ *  del 1 al 10, a quien los recibiera le saldría el mensaje clásico con ese
+ *  número: otro dibujo, otra frase. El hueco del 11 al 100 deja sitio para
+ *  ampliar los clásicos sin volver a pisarse. */
+const PRIMER_ID_HALLOWEEN = 101;
+
+const HALLOWEEN_TAUNTS: TauntMessage[] = [
+  { id: 101, thumb: require('../../assets/taunts/halloween/halloween_taunt_01-v.jpg'), full: require('../../assets/taunts/halloween/halloween_taunt_01.png') },
+  { id: 102, thumb: require('../../assets/taunts/halloween/halloween_taunt_02-v.jpg'), full: require('../../assets/taunts/halloween/halloween_taunt_02.png') },
+  { id: 103, thumb: require('../../assets/taunts/halloween/halloween_taunt_03-v.jpg'), full: require('../../assets/taunts/halloween/halloween_taunt_03.png') },
+  { id: 104, thumb: require('../../assets/taunts/halloween/halloween_taunt_04-v.jpg'), full: require('../../assets/taunts/halloween/halloween_taunt_04.png') },
+  { id: 105, thumb: require('../../assets/taunts/halloween/halloween_taunt_05-v.jpg'), full: require('../../assets/taunts/halloween/halloween_taunt_05.png') },
+  { id: 106, thumb: require('../../assets/taunts/halloween/halloween_taunt_06-v.jpg'), full: require('../../assets/taunts/halloween/halloween_taunt_06.png') },
+  { id: 107, thumb: require('../../assets/taunts/halloween/halloween_taunt_07-v.jpg'), full: require('../../assets/taunts/halloween/halloween_taunt_07.png') },
+  { id: 108, thumb: require('../../assets/taunts/halloween/halloween_taunt_08-v.jpg'), full: require('../../assets/taunts/halloween/halloween_taunt_08.png') },
+  { id: 109, thumb: require('../../assets/taunts/halloween/halloween_taunt_09-v.jpg'), full: require('../../assets/taunts/halloween/halloween_taunt_09.png') },
+  { id: 110, thumb: require('../../assets/taunts/halloween/halloween_taunt_10-v.jpg'), full: require('../../assets/taunts/halloween/halloween_taunt_10.png') },
+];
+
+const HALLOWEEN_RESPONSES: TauntMessage[] = [
+  { id: 101, thumb: require('../../assets/taunts/halloween_replies/halloween_reply_01-v.jpg'), full: require('../../assets/taunts/halloween_replies/halloween_reply_01.png') },
+  { id: 102, thumb: require('../../assets/taunts/halloween_replies/halloween_reply_02-v.jpg'), full: require('../../assets/taunts/halloween_replies/halloween_reply_02.png') },
+  { id: 103, thumb: require('../../assets/taunts/halloween_replies/halloween_reply_03-v.jpg'), full: require('../../assets/taunts/halloween_replies/halloween_reply_03.png') },
+  { id: 104, thumb: require('../../assets/taunts/halloween_replies/halloween_reply_04-v.jpg'), full: require('../../assets/taunts/halloween_replies/halloween_reply_04.png') },
+  { id: 105, thumb: require('../../assets/taunts/halloween_replies/halloween_reply_05-v.jpg'), full: require('../../assets/taunts/halloween_replies/halloween_reply_05.png') },
+  { id: 106, thumb: require('../../assets/taunts/halloween_replies/halloween_reply_06-v.jpg'), full: require('../../assets/taunts/halloween_replies/halloween_reply_06.png') },
+  { id: 107, thumb: require('../../assets/taunts/halloween_replies/halloween_reply_07-v.jpg'), full: require('../../assets/taunts/halloween_replies/halloween_reply_07.png') },
+  { id: 108, thumb: require('../../assets/taunts/halloween_replies/halloween_reply_08-v.jpg'), full: require('../../assets/taunts/halloween_replies/halloween_reply_08.png') },
+  { id: 109, thumb: require('../../assets/taunts/halloween_replies/halloween_reply_09-v.jpg'), full: require('../../assets/taunts/halloween_replies/halloween_reply_09.png') },
+  { id: 110, thumb: require('../../assets/taunts/halloween_replies/halloween_reply_10-v.jpg'), full: require('../../assets/taunts/halloween_replies/halloween_reply_10.png') },
 ];
 
 export type TauntMode = 'taunt' | 'response';
+type Coleccion = 'clasicos' | 'halloween';
 
-/** Used by MapScreen to render received taunts full-screen. The shared list
- *  is the same one we expose via the picker. */
+function lista(coleccion: Coleccion, mode: TauntMode): TauntMessage[] {
+  if (coleccion === 'halloween') return mode === 'response' ? HALLOWEEN_RESPONSES : HALLOWEEN_TAUNTS;
+  return mode === 'response' ? RESPONSES : TAUNTS;
+}
+
+/** La imagen grande de un mensaje, para enseñarlo al recibirlo.
+ *
+ *  Busca en las dos colecciones: el identificador ya dice de cuál es (los de
+ *  Halloween van del 101 para arriba). Devuelve null si no lo conoce, que es
+ *  lo que le pasa a un móvil con una versión antigua cuando le llega uno
+ *  nuevo — mejor eso que enseñar el dibujo equivocado. */
 export function getTauntFullImage(mode: TauntMode, id: number): ImageSourcePropType | null {
-  const list = mode === 'response' ? RESPONSES : TAUNTS;
-  const item = list.find(t => t.id === id);
-  return item?.full ?? null;
+  const donde = id >= PRIMER_ID_HALLOWEEN ? 'halloween' : 'clasicos';
+  return lista(donde, mode).find(t => t.id === id)?.full ?? null;
 }
 
 interface Props {
@@ -72,23 +121,30 @@ interface Props {
   // Robos totales del usuario, para calcular cuánto le falta al próximo
   // desbloqueo y enseñárselo al usuario cuando pulsa un mensaje bloqueado.
   totalSteals?: number;
+  // Calabazas recogidas. Cada una desbloquea UN mensaje de Halloween. Con
+  // cero, la pestaña entera sale como "próximamente".
+  calabazas?: number;
   onSend: (messageId: number, mode: TauntMode) => void;
   onClose: () => void;
 }
 
 export default function TauntSelector({
   visible, mode = 'taunt', rivalName, zoneName,
-  unlockedCount = 1, totalSteals = 0,
+  unlockedCount = 1, totalSteals = 0, calabazas = 0,
   onSend, onClose,
 }: Props) {
   const [preview, setPreview] = useState<TauntMessage | null>(null);
+  const [coleccion, setColeccion] = useState<Coleccion>('clasicos');
 
-  const messages = mode === 'taunt' ? TAUNTS : RESPONSES;
   const title = mode === 'taunt' ? 'RESPONDER' : 'DEVOLVER';
   // Clamp al rango [1, 10] por seguridad.
   const unlocked = Math.max(1, Math.min(10, unlockedCount));
   // Robos que faltan para el próximo desbloqueo (siguiente bloque de 10).
   const stealsToNext = unlocked >= 10 ? 0 : 10 - (totalSteals % 10);
+  // Una calabaza, un mensaje. Sin calabazas no hay nada que enseñar todavía.
+  const halloweenAbiertos = Math.max(0, Math.min(10, calabazas));
+
+  const mensajes = useMemo(() => lista(coleccion, mode), [coleccion, mode]);
 
   if (!visible) return null;
 
@@ -126,7 +182,8 @@ export default function TauntSelector({
     );
   }
 
-  // Grid selector 2x5
+  const esHalloween = coleccion === 'halloween';
+
   return (
     <Modal visible transparent animationType="slide" statusBarTranslucent>
       <View style={styles.container}>
@@ -142,10 +199,30 @@ export default function TauntSelector({
           <View style={{ width: 40 }} />
         </View>
 
-        {/* Hint con progreso de desbloqueo. Solo se muestra si aún quedan
-            mensajes por desbloquear, para no ensuciar la UI cuando ya están
-            todos disponibles. */}
-        {unlocked < 10 && (
+        {/* Las dos colecciones. La de Halloween se queda puesta si se cambia de
+            pestaña y se vuelve, que es lo que uno espera al comparar. */}
+        <View style={styles.pestanas}>
+          {(['clasicos', 'halloween'] as Coleccion[]).map(c => {
+            const activa = coleccion === c;
+            return (
+              <TouchableOpacity
+                key={c}
+                style={[styles.pestana, activa && styles.pestanaActiva]}
+                onPress={() => setColeccion(c)}
+                activeOpacity={0.8}
+              >
+                <Text style={[styles.pestanaTexto, activa && styles.pestanaTextoActiva]}>
+                  {c === 'clasicos' ? 'CLÁSICOS' : 'HALLOWEEN'}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+
+        {/* Progreso de desbloqueo. Cada colección se gana de una forma, así que
+            la línea dice cuál toca — si no, el usuario no sabe qué hacer para
+            abrir los de Halloween. */}
+        {!esHalloween && unlocked < 10 && (
           <View style={styles.unlockHint}>
             <Ionicons name="lock-closed" size={14} color={colors.orange} />
             <Text style={styles.unlockHintText}>
@@ -153,50 +230,81 @@ export default function TauntSelector({
             </Text>
           </View>
         )}
+        {esHalloween && halloweenAbiertos > 0 && halloweenAbiertos < 10 && (
+          <View style={styles.unlockHint}>
+            <Text style={styles.unlockHintEmoji}>🎃</Text>
+            <Text style={styles.unlockHintText}>
+              {halloweenAbiertos}/10 desbloqueado · coge otra calabaza para el siguiente
+            </Text>
+          </View>
+        )}
 
-        {/* Grid */}
-        <ScrollView
-          style={styles.scrollView}
-          contentContainerStyle={styles.grid}
-          showsVerticalScrollIndicator={false}
-        >
-          {messages.map(msg => {
-            const isLocked = msg.id > unlocked;
-            return (
-              <TouchableOpacity
-                key={msg.id}
-                style={styles.thumbContainer}
-                onPress={() => {
-                  if (isLocked) {
-                    // Bloqueado: feedback claro al usuario en vez de silencio.
-                    // Calculamos cuántos robos faltan para que ESTE mensaje en
-                    // concreto se desbloquee (cada mensaje #N requiere
-                    // (N-1)*10 robos).
-                    const need = Math.max(1, (msg.id - 1) * 10 - totalSteals);
-                    Alert.alert(
-                      'Mensaje bloqueado',
-                      `Roba ${need} ${need === 1 ? 'celda' : 'celdas'} más a rivales para desbloquearlo.`,
-                    );
-                    return;
-                  }
-                  setPreview(msg);
-                }}
-                activeOpacity={isLocked ? 1 : 0.8}
-              >
-                <Image
-                  source={msg.thumb}
-                  style={[styles.thumbImage, isLocked && styles.thumbLocked]}
-                  resizeMode="cover"
-                />
-                {isLocked && (
-                  <View style={styles.lockOverlay}>
-                    <Ionicons name="lock-closed" size={28} color="#fff" />
-                  </View>
-                )}
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
+        {/* Halloween sin calabazas: no se enseña la cuadrícula entera con diez
+            candados, que es deprimente y además chafa las diez sorpresas. */}
+        {esHalloween && halloweenAbiertos === 0 ? (
+          <View style={styles.proximamente}>
+            <Text style={styles.proximamenteEmoji}>🎃</Text>
+            <Text style={styles.proximamenteTitulo}>PRÓXIMAMENTE</Text>
+            <Text style={styles.proximamenteTexto}>
+              Diez mensajes nuevos, solo para Halloween.{'\n'}
+              Cada calabaza que cojas del mapa te abre uno.
+            </Text>
+          </View>
+        ) : (
+          <ScrollView
+            style={styles.scrollView}
+            contentContainerStyle={styles.grid}
+            showsVerticalScrollIndicator={false}
+          >
+            {mensajes.map((msg, i) => {
+              // En clásicos manda el número del mensaje; en Halloween, cuántas
+              // calabazas lleva. `i` es la posición, que es lo que se compara.
+              const isLocked = esHalloween ? i >= halloweenAbiertos : msg.id > unlocked;
+              return (
+                <TouchableOpacity
+                  key={msg.id}
+                  style={styles.thumbContainer}
+                  onPress={() => {
+                    if (isLocked) {
+                      if (esHalloween) {
+                        const faltan = i + 1 - halloweenAbiertos;
+                        Alert.alert(
+                          'Mensaje bloqueado',
+                          `Coge ${faltan} ${faltan === 1 ? 'calabaza más' : 'calabazas más'} del mapa para desbloquearlo.`,
+                        );
+                        return;
+                      }
+                      // Cada mensaje #N pide (N-1)*10 robos.
+                      const need = Math.max(1, (msg.id - 1) * 10 - totalSteals);
+                      Alert.alert(
+                        'Mensaje bloqueado',
+                        `Roba ${need} ${need === 1 ? 'celda' : 'celdas'} más a rivales para desbloquearlo.`,
+                      );
+                      return;
+                    }
+                    setPreview(msg);
+                  }}
+                  activeOpacity={isLocked ? 1 : 0.8}
+                >
+                  <Image
+                    source={msg.thumb}
+                    style={[styles.thumbImage, isLocked && styles.thumbLocked]}
+                    // 'contain' y no 'cover': los carteles no miden todos
+                    // exactamente lo mismo y recortar se comería palabras.
+                    resizeMode="contain"
+                  />
+                  {isLocked && (
+                    <View style={styles.lockOverlay}>
+                      {esHalloween
+                        ? <Text style={styles.lockEmoji}>🎃</Text>
+                        : <Ionicons name="lock-closed" size={28} color="#fff" />}
+                    </View>
+                  )}
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        )}
       </View>
     </Modal>
   );
@@ -237,6 +345,30 @@ const styles = StyleSheet.create({
     color: colors.orange,
     fontWeight: '600',
   },
+  pestanas: {
+    flexDirection: 'row',
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  pestana: {
+    flex: 1,
+    paddingVertical: 14,
+    alignItems: 'center',
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent',
+  },
+  pestanaActiva: {
+    borderBottomColor: colors.orange,
+  },
+  pestanaTexto: {
+    fontSize: 13,
+    fontWeight: '800',
+    letterSpacing: 1.2,
+    color: colors.textSecondary,
+  },
+  pestanaTextoActiva: {
+    color: colors.orange,
+  },
   scrollView: {
     flex: 1,
   },
@@ -250,11 +382,13 @@ const styles = StyleSheet.create({
   },
   thumbContainer: {
     width: THUMB_WIDTH,
-    aspectRatio: 1,
+    // Vertical, como el cartel: así se ve entero en la cuadrícula.
+    aspectRatio: 9 / 16,
     borderRadius: radius.md,
     overflow: 'hidden',
     borderWidth: 1,
     borderColor: colors.border,
+    backgroundColor: '#000',
   },
   thumbImage: {
     width: '100%',
@@ -273,6 +407,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: 'rgba(0,0,0,0.45)',
   },
+  lockEmoji: {
+    fontSize: 30,
+  },
   unlockHint: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -289,6 +426,31 @@ const styles = StyleSheet.create({
     color: colors.orange,
     fontWeight: '700',
     letterSpacing: 0.3,
+  },
+  unlockHintEmoji: {
+    fontSize: 14,
+  },
+  proximamente: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: spacing.xl,
+    gap: spacing.sm,
+  },
+  proximamenteEmoji: {
+    fontSize: 64,
+  },
+  proximamenteTitulo: {
+    fontSize: 22,
+    fontWeight: '900',
+    letterSpacing: 3,
+    color: colors.orange,
+  },
+  proximamenteTexto: {
+    fontSize: 14,
+    lineHeight: 21,
+    color: colors.textSecondary,
+    textAlign: 'center',
   },
   // Preview
   previewContainer: {

@@ -5214,8 +5214,16 @@ app.get('/objetos/ranking', { preHandler: requireAuth }, async (req: any, reply)
       LIMIT 20`,
     [tipo],
   );
+  // Las mías van aparte del ranking: el ranking son los 20 primeros, y quien
+  // va el 25.º también necesita saber cuántas lleva — con ellas se desbloquean
+  // los mensajes de Halloween.
+  const { rows: mias } = await db.query(
+    `SELECT COUNT(*)::int AS n FROM objetos WHERE tipo = $1 AND tomado_por = $2`,
+    [tipo, req.userId],
+  );
   return reply.send({
     tipo,
+    mias: mias[0]?.n ?? 0,
     ranking: rows.map((r: any) => ({
       userId: r.id, name: r.display_name, cuantos: r.cuantos, puntos: r.puntos,
       mine: r.id === req.userId,

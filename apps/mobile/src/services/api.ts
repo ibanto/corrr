@@ -532,6 +532,18 @@ class ApiService {
     }
   }
 
+  /** Cuántas calabazas llevo recogidas. Con ellas se abren los mensajes de
+   *  Halloween. Si falla, cero: como mucho salen bloqueados, que es el estado
+   *  de casi todo el mundo casi todo el año. */
+  async getCalabazasMias(): Promise<number> {
+    try {
+      const res = await this.request<{ mias?: number }>('/objetos/ranking?tipo=calabaza');
+      return res?.mias ?? 0;
+    } catch {
+      return 0;
+    }
+  }
+
   /** La ficha de otro corredor. Null si no se puede: es para mirar, no puede
    *  romper la pantalla de quien la abre. */
   async getFichaCorredor(userId: string): Promise<FichaCorredor | null> {

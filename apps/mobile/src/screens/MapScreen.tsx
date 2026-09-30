@@ -593,6 +593,10 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
   // desbloqueo progresivo de taunts: cada 10 robos desbloquea el siguiente
   // mensaje y la siguiente respuesta. Se refresca tras cada saveRun.
   const [totalSteals, setTotalSteals] = useState(0);
+  // Calabazas recogidas: cada una abre un mensaje de Halloween. Se pide junto
+  // con el resto de las cifras y se refresca tras cada carrera, que es cuando
+  // el servidor decide si has pisado alguna.
+  const [calabazas, setCalabazas] = useState(0);
   // True mientras saveRun + loadCells están en vuelo después de pulsar STOP.
   // Mostramos LoadingScreen para que el usuario sienta que algo está pasando
   // entre pulsar STOP y aparecer el resumen.
@@ -897,6 +901,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       // y el usuario empieza con solo el primer mensaje desbloqueado.
       setTotalSteals(data?.stats?.total_steals ?? 0);
     } catch {}
+    api.getCalabazasMias().then(setCalabazas).catch(() => {});
   };
 
   useEffect(() => { loadUserXP(); }, []);
@@ -2232,6 +2237,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         // — el usuario lo entiende como "subes de nivel robando".
         unlockedCount={Math.max(1, Math.min(10, 1 + Math.floor(totalSteals / 10)))}
         totalSteals={totalSteals}
+        calabazas={calabazas}
         onSend={async (messageId) => {
           // Either the user is responding to a robo/received taunt (tauntTarget
           // is set), or responding to their OWN post-run "stolen_by_you" popup
