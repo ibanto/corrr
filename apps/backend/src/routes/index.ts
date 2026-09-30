@@ -586,8 +586,22 @@ async function enviarPushEnLote(tokens: string[], titulo: string, cuerpo: string
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(lote),
       });
-      if (r.ok) enviadas += lote.length;
-      else console.error('[Push] lote rechazado:', r.status, await r.text().catch(() => ''));
+      if (!r.ok) {
+        console.error('[Push] lote rechazado:', r.status, await r.text().catch(() => ''));
+        continue;
+      }
+      // Expo contesta 200 aunque los mensajes fallen uno a uno: trae un
+      // recibo por móvil y el fallo está AHÍ ("DeviceNotRegistered", credencial
+      // mal...). Contar el 200 como envío daba un número que no quería decir
+      // nada — "se lo he pedido a Expo", no "ha llegado".
+      const cuerpo: any = await r.json().catch(() => null);
+      const recibos: any[] = Array.isArray(cuerpo?.data) ? cuerpo.data : [];
+      for (const recibo of recibos) {
+        if (recibo?.status === 'ok') enviadas++;
+        else console.error('[Push] rechazado por Expo:', recibo?.details?.error ?? recibo?.message ?? recibo);
+      }
+      // Si Expo no manda recibos, no inventamos: no se sabe.
+      if (recibos.length === 0) console.error('[Push] Expo no devolvió recibos para', lote.length, 'móviles');
     } catch (e) {
       console.error('[Push] error mandando el lote:', e);
     }
@@ -2105,9 +2119,12 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
     }) }).then(function (r) {
       document.getElementById('fa').reset(); previo(); cargar();
       if (r && r.push_enviados !== undefined) {
-        err.style.color = '#4caf50';
-        err.textContent = 'Aviso creado. Notificación enviada a ' + r.push_enviados
-          + ' de ' + r.push_posibles + ' móviles (el resto no la tiene permitida).';
+        err.style.color = r.push_enviados === 0 && r.push_posibles > 0 ? '#f44336' : '#4caf50';
+        err.textContent = 'Aviso creado. Notificación aceptada por ' + r.push_enviados
+          + ' de ' + r.push_posibles + ' móviles con notificaciones permitidas'
+          + (r.push_enviados < r.push_posibles
+              ? ' (los que faltan la tienen caducada: han desinstalado o no abren hace mucho).'
+              : '.');
       }
     }).catch(function (e) { err.style.color = '#f44336'; err.textContent = e.message; });
   });
