@@ -401,6 +401,10 @@ async function initDB() {
       PRIMARY KEY (aviso_id, user_id)
     )
   `).catch(() => {});
+  // Cuántas notificaciones salieron al crear el aviso (0 = no se pidió). Sirve
+  // para saber, cuando el contador de vistos no sube, si es que no ha llegado
+  // o es que la gente no abre.
+  await db.query(`ALTER TABLE avisos ADD COLUMN IF NOT EXISTS push_enviados INTEGER NOT NULL DEFAULT 0`).catch(() => {});
   // Adornos del cartel (la línea de arriba, el sello de la esquina y la nota
   // del botón). Opcionales: un aviso sin ellos se ve bien igual.
   await db.query(`ALTER TABLE avisos ADD COLUMN IF NOT EXISTS etiqueta TEXT`).catch(() => {});
@@ -563,6 +567,32 @@ async function sendPushNotification(pushToken: string, title: string, body: stri
   } catch (e) {
     console.error('[Push] Error:', e);
   }
+}
+
+/** La misma notificación a muchos móviles de una vez. Expo acepta hasta 100
+ *  mensajes por llamada; de uno en uno sería un viaje por persona.
+ *
+ *  Devuelve a cuántos salió. Un fallo aquí no puede tumbar la creación del
+ *  aviso: el cartel ya está guardado y saldrá igual al abrir la app. */
+async function enviarPushEnLote(tokens: string[], titulo: string, cuerpo: string): Promise<number> {
+  let enviadas = 0;
+  for (let i = 0; i < tokens.length; i += 100) {
+    const lote = tokens.slice(i, i + 100).map(to => ({
+      to, sound: 'default', title: titulo, body: cuerpo, channelId: 'zones',
+    }));
+    try {
+      const r = await fetch('https://exp.host/--/api/v2/push/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(lote),
+      });
+      if (r.ok) enviadas += lote.length;
+      else console.error('[Push] lote rechazado:', r.status, await r.text().catch(() => ''));
+    } catch (e) {
+      console.error('[Push] error mandando el lote:', e);
+    }
+  }
+  return enviadas;
 }
 
 /** Envía un email SIN bloquear la respuesta (fire-and-forget). Antes cada
@@ -1723,6 +1753,10 @@ app.get('/admin/panel', { preHandler: requireAdmin }, async (req: any, reply) =>
   .aviso p{margin:0 0 8px;color:#BEBEBE;font-size:13px;white-space:pre-wrap;}
   .aviso .meta{color:var(--apagado);font-size:12px;margin-bottom:10px;}
   .apagado{opacity:.5;}
+  .casilla{display:flex;align-items:center;gap:9px;color:var(--texto);font-size:14px;
+    padding:4px 2px;cursor:pointer;}
+  .casilla input{width:auto;margin:0;accent-color:var(--naranja);}
+  .casilla span{color:var(--apagado);font-size:13px;}
   .entregados{margin-top:18px;border-top:1px solid var(--borde);padding-top:12px;max-width:560px;}
   .entregados summary{cursor:pointer;color:var(--apagado);font-size:13px;padding:4px 0;}
   .entregados summary:hover{color:var(--texto);}
@@ -1845,6 +1879,8 @@ Sale UNA vez por persona; para repetirlo, se crea otro. Solo lo ven las apps 1.1
     <option value="android">Solo a los de Android</option>
     <option value="corredor">Solo a un corredor (para probarlo tú antes)</option>
   </select>
+  <label class="casilla"><input type="checkbox" id="a_push">
+    Avisar también por notificación al móvil <span>(solo a quien la tenga permitida)</span></label>
   <input id="a_ciudad" placeholder="Ciudad (p. ej. Barcelona)" style="display:none">
   <input id="a_corredor" placeholder="Nombre del corredor (p. ej. Ibanto)" style="display:none">
   <button class="btn" type="submit">Publicar aviso</button>
@@ -2024,7 +2060,8 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
     return '<div class="aviso' + (a.activo ? '' : ' apagado') + '">'
       + '<h3>' + esc(a.titulo) + (a.activo ? '' : ' · APAGADO') + '</h3>'
       + '<p>' + resaltes(a.texto) + '</p>'
-      + '<div class="meta">' + quien + ' · lo han visto ' + a.vistas + ' de ' + a.publico_total + '</div>'
+      + '<div class="meta">' + quien + ' · lo han visto ' + a.vistas + ' de ' + a.publico_total
+        + (a.push_enviados > 0 ? ' · notificación a ' + a.push_enviados : '') + '</div>'
       + '<button class="mini" data-encender="' + a.id + '">' + (a.activo ? 'Apagar' : 'Encender') + '</button>'
       + '<button class="mini" data-borrar="' + a.id + '">Borrar</button></div>';
   }
@@ -2063,10 +2100,16 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
       publico: document.getElementById('a_publico').value, ciudad: val('a_ciudad') || null,
       etiqueta: val('a_etiqueta') || null, sello: val('a_sello') || null,
       corredor: val('a_corredor') || null,
+      push: document.getElementById('a_push').checked,
       nota: val('a_nota').split('/').slice(0, 2).map(function (l) { return l.trim(); }).join('\\n') || null,
-    }) }).then(function () {
+    }) }).then(function (r) {
       document.getElementById('fa').reset(); previo(); cargar();
-    }).catch(function (e) { err.textContent = e.message; });
+      if (r && r.push_enviados !== undefined) {
+        err.style.color = '#4caf50';
+        err.textContent = 'Aviso creado. Notificación enviada a ' + r.push_enviados
+          + ' de ' + r.push_posibles + ' móviles (el resto no la tiene permitida).';
+      }
+    }).catch(function (e) { err.style.color = '#f44336'; err.textContent = e.message; });
   });
   document.getElementById('fb').addEventListener('submit', function (ev) {
     ev.preventDefault();
@@ -5303,7 +5346,27 @@ app.post('/admin/avisos', { preHandler: requireAdmin }, async (req: any, reply) 
      etiqueta || null, sello || null, nota || null,
      pub === 'corredor' ? corredor.trim() : null],
   );
-  return reply.status(201).send(rows[0]);
+  const aviso = rows[0];
+
+  // La notificación al móvil es OPCIONAL y se pide aviso a aviso: el cartel
+  // solo se ve al abrir CORRR, así que para lo que corre prisa hace falta
+  // llamar a la puerta — pero hacerlo con todos los avisos quema a la gente.
+  if (req.body?.push === true) {
+    const { rows: destinos } = await db.query(
+      `SELECT u.push_token FROM users u, avisos a
+        WHERE a.id = $1 AND u.push_token IS NOT NULL AND ${SQL_PUBLICO_AVISO}`,
+      [aviso.id],
+    );
+    // Sin asteriscos ni saltos: en la barra de notificaciones caben dos líneas.
+    const cuerpo = String(aviso.texto).replace(/\*/g, '').replace(/\s+/g, ' ').trim().slice(0, 140);
+    const enviadas = await enviarPushEnLote(
+      destinos.map((d: any) => d.push_token), aviso.titulo, cuerpo,
+    );
+    await db.query('UPDATE avisos SET push_enviados = $2 WHERE id = $1', [aviso.id, enviadas]);
+    aviso.push_enviados = enviadas;
+    aviso.push_posibles = destinos.length;
+  }
+  return reply.status(201).send(aviso);
 });
 
 /** Encender, apagar o corregir un aviso ya creado. */
