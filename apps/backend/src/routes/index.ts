@@ -100,6 +100,28 @@ dotenv.config();
 // móvil del usuario. Cada usuario tiene su propia cuota.
 const app = Fastify({ logger: true, bodyLimit: 10 * 1024 * 1024, trustProxy: true });
 
+// Un POST sin cuerpo pero con cabecera JSON no puede ser un error 400.
+//
+// Fastify, de fábrica, responde FST_ERR_CTP_EMPTY_JSON_BODY antes de mirar
+// siquiera quién llama. La app manda así `POST /app/aviso/:id/visto` (no tiene
+// nada que contar: el aviso ya se ha visto y punto), y ese 400 se tragaba en
+// silencio del lado del móvil. Resultado: NINGÚN aviso registraba una sola
+// vista, el contador del panel se quedaba a 0 para siempre y el mismo cartel
+// volvía a salir cada vez que alguien abría la app.
+//
+// Se arregla aquí, en el servidor, y no en la app, porque las apps ya
+// instaladas no se pueden cambiar sin sacar versión en las tiendas.
+app.addContentTypeParser('application/json', { parseAs: 'string' }, (_req, cuerpo: any, hecho) => {
+  const texto = typeof cuerpo === 'string' ? cuerpo.trim() : '';
+  if (texto === '') return hecho(null, {});
+  try {
+    hecho(null, JSON.parse(texto));
+  } catch (e: any) {
+    e.statusCode = 400;
+    hecho(e, undefined);
+  }
+});
+
 const STRAVA_CLIENT_ID     = process.env.STRAVA_CLIENT_ID;
 const STRAVA_CLIENT_SECRET = process.env.STRAVA_CLIENT_SECRET;
 const RAILWAY_URL = process.env.RAILWAY_PUBLIC_DOMAIN
