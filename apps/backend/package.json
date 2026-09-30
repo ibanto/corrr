@@ -7,7 +7,8 @@
     "build": "tsc --project tsconfig.json",
     "start": "node dist/routes/index.js",
     "test:panel": "node scripts/panel-check.mjs",
-    "test:territorio": "npm run build --silent && node scripts/territorio-check.mjs"
+    "test:territorio": "npm run build --silent && node scripts/territorio-check.mjs",
+    "cercos": "npm run build --silent && node scripts/cercos-pendientes.mjs"
   },
   "dependencies": {
     "@fastify/compress": "^7.0.3",

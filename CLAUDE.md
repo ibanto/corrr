@@ -4,6 +4,67 @@ Instrucciones para Claude trabajando en este repo. Léelo entero antes de tocar 
 
 ---
 
+## 0. Dónde estamos (leer esto primero)
+
+*Al día a 30-sep-2026. Si algo de aquí abajo contradice a este apartado, manda este.*
+
+**En las tiendas**: **1.11.10** (Android vc67, iPhone build 17), publicada y anunciada
+en las dos. 46 corredores registrados.
+
+**Lo siguiente es la 1.11.11, y tiene fecha**: debe estar publicada **antes del 29 de
+octubre** para que se vean las calabazas de Halloween, así que hay que subirla a las
+tiendas el **24-25 de octubre** como muy tarde. Calendario completo en §9-bis.
+
+### Ya funcionando en producción (servidor, sin build)
+
+| Qué | Dónde está explicado |
+|---|---|
+| **Cercos entre días**: si el perímetro es todo tuyo, el interior pasa a serlo | §9-quater |
+| **Avisos** (pop-up al abrir la app) escritos desde `/admin`, con notificación al móvil opcional | §9-ter |
+| **Panel `/admin` por pestañas** | §9-ter |
+| **Calabazas**: sembrar, recoger y ranking, todo del lado del servidor | §9-bis |
+| **Mapa por tiras**, sin tope de celdas | §9 (bugs) |
+
+### Escrito y esperando a la 1.11.11
+
+- Los **10 + 10 mensajes de Halloween** y el selector rehecho: cuadrícula vertical,
+  dos pestañas (Clásicos / Halloween), sin candados, calabaza dibujada.
+- Las **calabazas en el mapa** (la app todavía no las pinta).
+
+### Falta por hacer ANTES de esa build
+
+1. **Detector automático de carrera en Android** (permiso de actividad física, sin
+   ubicación "siempre"): notificación "¿estás corriendo?".
+2. **Los tres avisos de Google Play**: edge-to-edge, pantallas grandes y DEX/R8
+   (plazo de Google: febrero de 2027).
+
+### Estado del juego
+
+Cercos ya repartidos: DaniRC, fausrunner, Oriol15, Zuckerbax, afarbis, GER, raul,
+Luiso y Ansgar. **Queda uno sin cobrar a propósito: KarolK** — 34.644 celdas, de las
+que 4.553 son de otros (39.197 puntos). Mueve el ranking de verdad, así que lo decide
+el usuario. Para ver si hay cercos pendientes: `cd apps/backend && npm run cercos`
+(solo lee la BD).
+
+### Cómo trabajar con Iban
+
+- **No es programador.** Todo en castellano y en corto: qué pasa, por qué, y qué tiene
+  que pulsar él. Nada de jerga sin traducir.
+- **Los botones los pulsa él.** No tengo su clave de administrador; los correos y los
+  mensajes a la gente los manda él desde el panel. Yo preparo el texto y le digo dónde.
+- **La BD de producción es de SOLO LECTURA**, y pidiendo permiso. No se borra nada sin
+  preguntar.
+- **No se saca ninguna build a las tiendas** sin que él lo diga.
+- **Si manda un boceto, se clava**: proporciones, tipografía y adornos igual, y se
+  compara el resultado con el boceto antes de darlo por bueno.
+- El repositorio es **público**: ni un secreto en el código.
+- Cuando algo no cuadre, **comprobarlo antes de afirmarlo**. En este proyecto ya han
+  aparecido tres fallos que se veían "bien" desde fuera y estaban rotos por dentro
+  (el panel sin JavaScript, los avisos sin contar vistas, los cercos saltándose en
+  silencio). Ninguno daba error: los tres se encontraron mirando.
+
+---
+
 ## 1. ¿Qué es CORRR?
 
 App de running con captura de territorio: el usuario corre por la calle, sus pisadas se convierten en celdas de 10×10m que conquista en un grid global. Otros usuarios pueden "robar" celdas pisándolas. Mecánica tipo Pokémon GO + Strava con guerra de bandos.
@@ -19,7 +80,7 @@ App de running con captura de territorio: el usuario corre por la calle, sus pis
 ```
 corrr/
   apps/
-    mobile/                React Native app (Android only por ahora)
+    mobile/                React Native app (Android e iPhone)
       android/             Native Android project (firmado con corrr-release.keystore)
       assets/              Iconos, logos, sprites, sounds, etc.
       builds/              AABs versionados (corrr-vX.Y.Z-vcN.aab)
@@ -90,11 +151,13 @@ curl https://corrr-api-production.up.railway.app/app/version
 
 Paso a paso completo (Xcode, App Store Connect, Play Console, Railway): `docs/publicar-version.md`.
 
-**Versión actual** (23-sep-2026): Android `1.11.9` vc66 y iPhone `1.11.9` build 16 publicadas y **anunciadas las dos** (`/app/version`). **La próxima build es la 1.11.10: build 17 / vc67.** El usuario pidió no generarla aún (habrá más cambios).
+**Versión actual** (30-sep-2026): Android `1.11.10` vc67 y iPhone `1.11.10` build 17 publicadas y **anunciadas las dos** (`/app/version`). **La próxima build es la 1.11.11: build 18 / vc68**, y tiene fecha (§0).
+
+**Bloqueo por versión mínima** (`MIN_APP_VERSION` en Railway, hoy en `1.0.0`): el aviso normal de "hay versión nueva" es **descartable** y sale una vez por sesión, así que no garantiza que nadie actualice. El bloqueo sí, y se pone sin build ni tiendas. Se usará el 28 de octubre (§9-bis).
 
 **Avisos en la app** (desde 23-sep): el pop-up que sale al abrir se escribe en `/admin` → "Aviso en la app" (tablas `avisos` y `aviso_vistas`, endpoints `/app/aviso` y `/admin/avisos`). No necesita build: el contenido, a quién le toca y si está encendido viven en el servidor. La parte de la app llega con la 1.11.10.
 
-**Convención de commits**: `vX.Y.Z (vcN): summary` para releases, `fix(backend|mobile): summary` para fixes puntuales. Cada commit con `Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>`.
+**Convención de commits**: `vX.Y.Z (vcN): summary` para releases, `fix(backend|mobile): summary` para fixes puntuales. Cada commit con `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>`.
 
 ## 5. Secrets críticos
 
