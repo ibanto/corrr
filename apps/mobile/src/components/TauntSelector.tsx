@@ -228,7 +228,6 @@ export default function TauntSelector({
             abrir los de Halloween. */}
         {!esHalloween && unlocked < 10 && (
           <View style={styles.unlockHint}>
-            <Ionicons name="lock-closed" size={14} color={colors.orange} />
             <Text style={styles.unlockHintText}>
               {unlocked}/10 desbloqueado · roba {stealsToNext} {stealsToNext === 1 ? 'celda' : 'celdas'} más para el siguiente
             </Text>
