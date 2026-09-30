@@ -36,21 +36,54 @@ export type Celda = { x: number; y: number };
  *  la par. */
 export const MAX_CELDAS_CERCO = 100_000;
 
-/** Caja de trabajo máxima. Inundar es recorrer celda a celda: con 700×700
- *  (7×7 km) se cubre cualquier cerco real sin que el servidor sude. */
-export const MAX_CAJA_CERCO = 500_000;
+/** Caja de trabajo máxima: 10×10 km.
+ *
+ *  Estuvo en 500.000 (7×7 km) por miedo a que inundar fuera caro, y no lo es:
+ *  medido, el peor caso de una caja de 10×10 km son 16 ms y 15 MB. Lo que sí
+ *  costaba caro era el tope: al sumarle el margen de 3 km que se pide desde
+ *  las carreras, CUALQUIER carrera de más de 1,1 km de ancho se pasaba de
+ *  caja y se quedaba sin mirar si había cercado algo — en silencio. */
+export const MAX_CAJA_CERCO = 1_000_000;
 
 export type Caja = { x0: number; x1: number; y0: number; y1: number };
 
 /** La caja donde buscar el cerco: lo que abarcan las celdas indicadas, con un
  *  margen de una celda para que la inundación pueda rodearlas. */
 export function cajaDe(celdas: Celda[], margen = 1): Caja {
-  const xs = celdas.map(c => c.x);
-  const ys = celdas.map(c => c.y);
+  // A mano, no con Math.min(...xs): el spread pasa cada celda como un
+  // argumento y por encima de unas 65.000 revienta la pila. KarolK ya tiene
+  // más de 46.000 celdas, así que era cuestión de tiempo.
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const c of celdas) {
+    if (c.x < minX) minX = c.x;
+    if (c.x > maxX) maxX = c.x;
+    if (c.y < minY) minY = c.y;
+    if (c.y > maxY) maxY = c.y;
+  }
   return {
-    x0: Math.min(...xs) - margen, x1: Math.max(...xs) + margen,
-    y0: Math.min(...ys) - margen, y1: Math.max(...ys) + margen,
+    x0: minX - margen, x1: maxX + margen,
+    y0: minY - margen, y1: maxY + margen,
   };
+}
+
+/** La caja para buscar el cerco de una carrera: la de sus celdas con el mayor
+ *  margen que quepa, hasta `margen`.
+ *
+ *  El margen existe porque el cerco casi nunca se cierra entero dentro de la
+ *  carrera de hoy: el resto del perímetro se corrió otro día y hay que
+ *  alcanzarlo. Antes el margen era fijo y, si no cabía, NO SE MIRABA EL CERCO
+ *  y nadie se enteraba. Es mejor mirar con menos margen que no mirar.
+ *
+ *  Devuelve null solo si ni con el margen mínimo cabe (una carrera que abarca
+ *  más de 10 km de lado). */
+export function cajaDeTrabajo(celdas: Celda[], margen: number): Caja | null {
+  if (celdas.length === 0) return null;
+  const base = cajaDe(celdas, 0);
+  const ancho = base.x1 - base.x0 + 1, alto = base.y1 - base.y0 + 1;
+  let m = Math.max(1, Math.floor(margen));
+  while (m > 1 && (ancho + 2 * m) * (alto + 2 * m) > MAX_CAJA_CERCO) m--;
+  if ((ancho + 2 * m) * (alto + 2 * m) > MAX_CAJA_CERCO) return null;
+  return cajaDe(celdas, m);
 }
 
 /**
@@ -77,16 +110,20 @@ export function celdasEncerradas(propias: Celda[], caja?: Caja): Celda[] {
 
   // Inundación desde el borde de la caja, solo por lo que no es tuyo.
   const fuera = new Uint8Array(ancho * alto);
-  const cola: number[] = [];
+  // La cola, en enteros de 32 bits en vez de un array normal: cada casilla
+  // entra en ella como mucho una vez, así que cabe de sobra, y en una caja
+  // grande esto es la diferencia entre 4 MB y 30.
+  const cola = new Int32Array(ancho * alto);
+  let cima = 0;
   const empujar = (i: number) => {
     if (dentro[i] || fuera[i]) return;
     fuera[i] = 1;
-    cola.push(i);
+    cola[cima++] = i;
   };
   for (let x = x0; x <= x1; x++) { empujar(idx(x, y0)); empujar(idx(x, y1)); }
   for (let y = y0; y <= y1; y++) { empujar(idx(x0, y)); empujar(idx(x1, y)); }
-  while (cola.length) {
-    const i = cola.pop()!;
+  while (cima > 0) {
+    const i = cola[--cima];
     const cx = i % ancho, cy = (i - cx) / ancho;
     if (cx > 0) empujar(i - 1);
     if (cx < ancho - 1) empujar(i + 1);

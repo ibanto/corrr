@@ -7,7 +7,7 @@
  * mapa le estaría dando a alguien territorio que no ha rodeado — o quitándole
  * el que sí — así que no se sube nada con esto en rojo.
  */
-import { celdasEncerradas, cajaDe } from '../dist/services/territorio.js';
+import { celdasEncerradas, cajaDe, cajaDeTrabajo } from '../dist/services/territorio.js';
 
 let fallos = 0;
 function comprueba(nombre, ok, detalle) {
@@ -85,6 +85,28 @@ function marco(n) {
   comprueba('un cerco de casi 10 km² se calcula entero y rápido',
     dentro.length === esperado && ms < 2000,
     `${dentro.length} celdas en ${ms} ms (esperadas ${esperado})`);
+}
+
+{
+  // Lo que le pasó a Zuckerbax (30-sep-2026): una carrera ancha pedía 3 km de
+  // margen, no cabía en la caja de trabajo y el servidor se SALTABA el cerco
+  // entero sin decir nada, así que hubo que dárselo a mano desde el panel.
+  // Ahora el margen se encoge y se mira igual.
+  for (const km of [1, 2, 4, 8]) {
+    const carrera = [{ x: 0, y: 0 }, { x: km * 100, y: km * 100 }];
+    const caja = cajaDeTrabajo(carrera, 300);
+    comprueba(`una carrera de ${km} km de ancho sigue teniendo caja`, caja !== null,
+      caja ? `margen de ${-caja.x0} celdas` : 'NO SE MIRA EL CERCO');
+  }
+}
+
+{
+  // Y que el cerco grande de verdad se llene, con esa caja encogida.
+  const anillo = marco(200); // 2 km de lado
+  const caja = cajaDeTrabajo(anillo, 300);
+  const dentro = caja ? celdasEncerradas(anillo, caja) : [];
+  comprueba('un anillo de 2 km de lado se llena entero', dentro.length === 198 * 198,
+    `${dentro.length} celdas (esperadas ${198 * 198})`);
 }
 
 console.log(fallos ? `\n${fallos} comprobaciones FALLAN.` : '\nCercos en orden.');

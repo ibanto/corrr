@@ -14,7 +14,7 @@ import { SUPABASE_ROOT_CA } from '../db/supabase-ca.js';
 import { agruparEnTiras, Dueno } from '../services/tiras.js';
 import { sembrar, recoger, Objeto } from '../services/objetos.js';
 import {
-  celdasEncerradas, cajaDe, MAX_CELDAS_CERCO, MAX_CAJA_CERCO, Celda,
+  celdasEncerradas, cajaDe, cajaDeTrabajo, MAX_CELDAS_CERCO, MAX_CAJA_CERCO, Celda,
 } from '../services/territorio.js';
 import {
   CAMPANA_REACTIVACION, ASUNTO_REACTIVACION, CAMPANA_DOBLE, ASUNTO_DOBLE,
@@ -3194,13 +3194,14 @@ app.post('/runs', {
     let victimasCerco = new Map<string, number>();
     if (Array.isArray(claimedCells) && claimedCells.length > 0) {
       try {
-        // Solo la zona de esta carrera, con margen: el cerco que se acaba de
-        // cerrar está aquí, y así no se repasa el territorio de toda la
-        // ciudad en cada carrera.
-        const margen = 300; // celdas = 3 km alrededor
-        const caja = cajaDe(claimedCells as Celda[], margen);
-        const ancho = caja.x1 - caja.x0 + 1, alto = caja.y1 - caja.y0 + 1;
-        if (ancho * alto <= MAX_CAJA_CERCO) {
+        // Solo la zona de esta carrera, con hasta 3 km de margen: el cerco
+        // que se acaba de cerrar está aquí, y así no se repasa el territorio
+        // de toda la ciudad en cada carrera. El margen se encoge si no cabe,
+        // que es mejor que no mirar (antes era fijo, no cabía en cuanto la
+        // carrera pasaba de 1,1 km de ancho, y se saltaba el cerco entero sin
+        // decir nada: por eso hubo que dar cercos a mano desde el panel).
+        const caja = cajaDeTrabajo(claimedCells as Celda[], 300);
+        if (caja) {
           const { rows: mias } = await client.query(
             `SELECT cell_x, cell_y FROM cells
               WHERE owner_id = $1 AND cell_x BETWEEN $2 AND $3 AND cell_y BETWEEN $4 AND $5`,
@@ -3226,6 +3227,11 @@ app.post('/runs', {
             cercadasRobadas = cerco.robadas;
             victimasCerco = cerco.victimas;
           }
+        } else {
+          req.log.warn(
+            { userId, celdas: claimedCells.length },
+            '[cerco] la carrera abarca más de 10 km de lado, no se mira el cerco',
+          );
         }
       } catch (e) {
         // Un fallo aquí no puede costarle la carrera a nadie.

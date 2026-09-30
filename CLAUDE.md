@@ -269,6 +269,20 @@ demasiado poco: KarolK cerró 4,7 km² en una vuelta real. Cuando se pasa del
 tope **se avisa al corredor** (`avisarCercoEnorme`, uno solo mientras el cerco
 siga ahí) en vez de callarse, y ese aviso sale también en la lista del panel.
 
+**Dos topes, no uno.** Además del de 10 km² está la CAJA DE TRABAJO
+(`MAX_CAJA_CERCO`, 10×10 km): el trozo de mapa que se inunda. Al guardar una
+carrera se pide la caja de lo corrido **con hasta 3 km de margen**, porque el
+resto del perímetro se corrió otro día. Ese margen se **encoge** si no cabe
+(`cajaDeTrabajo`): antes era fijo, se comía él solo 361.201 de las 500.000
+celdas que se permitían, y CUALQUIER carrera de más de 1,1 km de ancho se
+saltaba el cerco **en silencio** — por eso hubo que darle cercos a mano a
+Zuckerbax y a fausrunner. **No volver a saltarse el cálculo sin dejar rastro:
+si algo no cabe, se encoge o se avisa.**
+
+Inundar es barato (medido: peor caso de 10×10 km, 16 ms y 15 MB), así que el
+tope de la caja no es por velocidad sino por memoria. La cola va en
+`Int32Array` justo por eso.
+
 Tras tocar esto: `npm run test:territorio`.
 
 ## 9-ter. El panel de administración
