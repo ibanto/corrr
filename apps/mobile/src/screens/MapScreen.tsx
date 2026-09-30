@@ -76,6 +76,10 @@ function tauntImageById(mode: string, id: number) {
 
 // Keep screen awake using ExpoKeepAwake native module directly
 // This avoids Metro resolution issues with expo-keep-awake package
+/** La calabaza de Halloween: en el mapa, al pisarla y en la pantalla de
+ *  carrera. Un dibujo y no el emoji, que cambia de cara en cada teléfono. */
+const CALABAZA = require('../../assets/calabaza.png');
+
 const ExpoKeepAwake = NativeModules.ExpoKeepAwake;
 const activateScreenAwake = async () => {
   try { if (ExpoKeepAwake?.activate) ExpoKeepAwake.activate('corrr-run'); } catch {}
@@ -2761,7 +2765,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
               anchor={{ x: 0.5, y: 0.5 }}
               tracksViewChanges={false}
             >
-              <Text style={styles.objeto}>🎃</Text>
+              <Image source={CALABAZA} style={styles.objeto} resizeMode="contain" />
             </Marker>
           ))}
 
@@ -2815,7 +2819,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
             que es donde está mirando quien corre. */}
         {objetoCogido && (
           <View style={styles.cogido} pointerEvents="none">
-            <Text style={styles.objeto}>🎃</Text>
+            <Image source={CALABAZA} style={styles.objeto} resizeMode="contain" />
             <Text style={styles.cogidoTexto}>¡CALABAZA! +{objetoCogido.puntos}</Text>
           </View>
         )}
@@ -2920,7 +2924,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
           <View style={styles.avisoSlot} pointerEvents="none">
             {objetoCogido && (
               <View style={styles.cogidoRun}>
-                <Text style={styles.objeto}>🎃</Text>
+                <Image source={CALABAZA} style={styles.objeto} resizeMode="contain" />
                 <Text style={styles.cogidoTexto}>¡CALABAZA! +{objetoCogido.puntos}</Text>
               </View>
             )}
@@ -3589,7 +3593,7 @@ const styles = StyleSheet.create({
   },
   // La calabaza del mapa. Es un emoji y no una imagen: no pesa, se ve igual en
   // Android y en iPhone, y no hay que mantener otro archivo.
-  objeto: { fontSize: 30 },
+  objeto: { width: 38, height: 38 },
   cogido: {
     position: 'absolute', left: spacing.md, right: spacing.md, top: 96,
     backgroundColor: colors.orange, borderRadius: radius.lg,

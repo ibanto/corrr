@@ -64,6 +64,10 @@ const RESPONSES: TauntMessage[] = [
  *  ampliar los clásicos sin volver a pisarse. */
 const PRIMER_ID_HALLOWEEN = 101;
 
+/** La calabaza del juego. La misma que se ve en el mapa, para que quien la
+ *  recoja reconozca de qué van estos mensajes. */
+const CALABAZA = require('../../assets/calabaza.png');
+
 const HALLOWEEN_TAUNTS: TauntMessage[] = [
   { id: 101, thumb: require('../../assets/taunts/halloween/halloween_taunt_01-v.jpg'), full: require('../../assets/taunts/halloween/halloween_taunt_01.png') },
   { id: 102, thumb: require('../../assets/taunts/halloween/halloween_taunt_02-v.jpg'), full: require('../../assets/taunts/halloween/halloween_taunt_02.png') },
@@ -232,7 +236,7 @@ export default function TauntSelector({
         )}
         {esHalloween && halloweenAbiertos > 0 && halloweenAbiertos < 10 && (
           <View style={styles.unlockHint}>
-            <Text style={styles.unlockHintEmoji}>🎃</Text>
+            <Image source={CALABAZA} style={styles.unlockHintCalabaza} resizeMode="contain" />
             <Text style={styles.unlockHintText}>
               {halloweenAbiertos}/10 desbloqueado · coge otra calabaza para el siguiente
             </Text>
@@ -243,7 +247,7 @@ export default function TauntSelector({
             candados, que es deprimente y además chafa las diez sorpresas. */}
         {esHalloween && halloweenAbiertos === 0 ? (
           <View style={styles.proximamente}>
-            <Text style={styles.proximamenteEmoji}>🎃</Text>
+            <Image source={CALABAZA} style={styles.proximamenteCalabaza} resizeMode="contain" />
             <Text style={styles.proximamenteTitulo}>PRÓXIMAMENTE</Text>
             <Text style={styles.proximamenteTexto}>
               Diez mensajes nuevos, solo para Halloween.{'\n'}
@@ -293,13 +297,6 @@ export default function TauntSelector({
                     // exactamente lo mismo y recortar se comería palabras.
                     resizeMode="contain"
                   />
-                  {isLocked && (
-                    <View style={styles.lockOverlay}>
-                      {esHalloween
-                        ? <Text style={styles.lockEmoji}>🎃</Text>
-                        : <Ionicons name="lock-closed" size={28} color="#fff" />}
-                    </View>
-                  )}
                 </TouchableOpacity>
               );
             })}
@@ -400,16 +397,6 @@ const styles = StyleSheet.create({
   thumbLocked: {
     opacity: 0.25,
   },
-  lockOverlay: {
-    position: 'absolute',
-    top: 0, left: 0, right: 0, bottom: 0,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(0,0,0,0.45)',
-  },
-  lockEmoji: {
-    fontSize: 30,
-  },
   unlockHint: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -427,8 +414,9 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: 0.3,
   },
-  unlockHintEmoji: {
-    fontSize: 14,
+  unlockHintCalabaza: {
+    width: 18,
+    height: 18,
   },
   proximamente: {
     flex: 1,
@@ -437,8 +425,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.xl,
     gap: spacing.sm,
   },
-  proximamenteEmoji: {
-    fontSize: 64,
+  proximamenteCalabaza: {
+    width: 120,
+    height: 120,
   },
   proximamenteTitulo: {
     fontSize: 22,
