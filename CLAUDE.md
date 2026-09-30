@@ -299,6 +299,13 @@ saltaba el cerco **en silencio** — por eso hubo que darle cercos a mano a
 Zuckerbax y a fausrunner. **No volver a saltarse el cálculo sin dejar rastro:
 si algo no cabe, se encoge o se avisa.**
 
+**Y por ZONAS, no por territorio entero** (`gruposDeCeldas`). Quien ha corrido
+en Barcelona y un fin de semana fuera tiene una caja con cientos de km de vacío
+en medio: no cabía, y a esa persona no se le miraba el cerco NUNCA (ni la regla
+ni el botón del panel). Se separan las zonas —celdas cuyas casillas de 1,28 km
+se tocan— y se mira cada una por su cuenta. Con eso pasaron de 13 a 18 los
+corredores que se pueden comprobar, y aparecieron 3 cercos sin cobrar más.
+
 Inundar es barato (medido: peor caso de 10×10 km, 16 ms y 15 MB), así que el
 tope de la caja no es por velocidad sino por memoria. La cola va en
 `Int32Array` justo por eso.

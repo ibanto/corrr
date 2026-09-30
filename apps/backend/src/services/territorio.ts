@@ -87,6 +87,66 @@ export function cajaDeTrabajo(celdas: Celda[], margen: number): Caja | null {
 }
 
 /**
+ * Parte las celdas de alguien en las ZONAS donde corre de verdad.
+ *
+ * Quien ha corrido en Barcelona y un fin de semana en Asturias tiene un
+ * territorio cuya caja abarca 600 km de vacío. Mirar esa caja entera es
+ * imposible, y hasta ahora eso significaba no mirarle el cerco NUNCA: ni la
+ * regla automática ni el botón del panel podían con él.
+ *
+ * Así que primero se separan las zonas y luego se mira cada una por su cuenta.
+ * Dos celdas van juntas si sus casillas gordas (de `separacion` celdas de
+ * lado, 1,28 km por defecto) se tocan, en cruz o en diagonal. Un cerco de
+ * verdad cabe de sobra dentro de una zona: lo que separa las zonas son
+ * kilómetros de nada.
+ */
+export function gruposDeCeldas(celdas: Celda[], separacion = 128): Celda[][] {
+  if (celdas.length === 0) return [];
+
+  // Casillas gordas ocupadas, cada una con sus celdas.
+  const casillas = new Map<string, Celda[]>();
+  const clave = (gx: number, gy: number) => `${gx},${gy}`;
+  for (const c of celdas) {
+    const k = clave(Math.floor(c.x / separacion), Math.floor(c.y / separacion));
+    const lista = casillas.get(k);
+    if (lista) lista.push(c); else casillas.set(k, [c]);
+  }
+
+  // Unir las que se tocan (conjuntos disjuntos, con compresión de camino).
+  const padre = new Map<string, string>();
+  for (const k of casillas.keys()) padre.set(k, k);
+  const raiz = (k: string): string => {
+    let r = k;
+    while (padre.get(r) !== r) r = padre.get(r)!;
+    while (padre.get(k) !== r) { const sig = padre.get(k)!; padre.set(k, r); k = sig; }
+    return r;
+  };
+  const unir = (a: string, b: string) => {
+    const ra = raiz(a), rb = raiz(b);
+    if (ra !== rb) padre.set(ra, rb);
+  };
+  for (const k of casillas.keys()) {
+    const [gx, gy] = k.split(',').map(Number);
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        if (dx === 0 && dy === 0) continue;
+        const vecino = clave(gx + dx, gy + dy);
+        if (casillas.has(vecino)) unir(k, vecino);
+      }
+    }
+  }
+
+  const grupos = new Map<string, Celda[]>();
+  for (const [k, lista] of casillas) {
+    const r = raiz(k);
+    const g = grupos.get(r);
+    if (g) g.push(...lista); else grupos.set(r, [...lista]);
+  }
+  // De mayor a menor: la zona donde alguien corre a diario va primero.
+  return [...grupos.values()].sort((a, b) => b.length - a.length);
+}
+
+/**
  * Las celdas que `propias` deja encerradas dentro de `caja`.
  *
  * Devuelve TODAS las encerradas, sean libres o de otro: quien llama decide

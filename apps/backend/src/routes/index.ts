@@ -14,7 +14,8 @@ import { SUPABASE_ROOT_CA } from '../db/supabase-ca.js';
 import { agruparEnTiras, Dueno } from '../services/tiras.js';
 import { sembrar, recoger, Objeto } from '../services/objetos.js';
 import {
-  celdasEncerradas, cajaDe, cajaDeTrabajo, MAX_CELDAS_CERCO, MAX_CAJA_CERCO, Celda,
+  celdasEncerradas, cajaDe, cajaDeTrabajo, gruposDeCeldas,
+  MAX_CELDAS_CERCO, MAX_CAJA_CERCO, Celda,
 } from '../services/territorio.js';
 import {
   CAMPANA_REACTIVACION, ASUNTO_REACTIVACION, CAMPANA_DOBLE, ASUNTO_DOBLE,
@@ -5028,14 +5029,25 @@ app.post('/admin/corredores/cercos', { preHandler: requireAdmin }, async (req: a
   if (suyas.length === 0) return reply.status(400).send({ error: `${nombre} no tiene territorio todavía` });
 
   const propias: Celda[] = suyas.map((c: any) => ({ x: c.cell_x, y: c.cell_y }));
-  const caja = cajaDe(propias);
-  const ancho = caja.x1 - caja.x0 + 1, alto = caja.y1 - caja.y0 + 1;
-  if (ancho * alto > MAX_CAJA_CERCO) {
+
+  // Zona por zona, no todo el territorio de golpe. Quien ha corrido en
+  // Barcelona y un fin de semana fuera tiene una caja con cientos de km de
+  // vacío en medio: antes eso era un "demasiado para calcularlo" y a esa
+  // persona no se le podía mirar el cerco nunca.
+  const encerradas: Celda[] = [];
+  let zonasSinMirar = 0;
+  for (const zona of gruposDeCeldas(propias)) {
+    const caja = cajaDe(zona);
+    const ancho = caja.x1 - caja.x0 + 1, alto = caja.y1 - caja.y0 + 1;
+    if (ancho * alto > MAX_CAJA_CERCO) { zonasSinMirar++; continue; }
+    // Sin spread: con decenas de miles de celdas, push(...) revienta la pila.
+    for (const c of celdasEncerradas(zona, caja)) encerradas.push(c);
+  }
+  if (encerradas.length === 0 && zonasSinMirar > 0) {
     return reply.status(400).send({
-      error: `Su territorio abarca ${(ancho / 100).toFixed(1)} × ${(alto / 100).toFixed(1)} km: demasiado para calcularlo de una vez.`,
+      error: `${nombre} tiene ${zonasSinMirar} zona(s) que abarcan más de 10 × 10 km: demasiado para calcularlo.`,
     });
   }
-  const encerradas = celdasEncerradas(propias, caja);
   if (encerradas.length === 0) return reply.send({ ok: true, corredor: nombre, nuevas: 0, mensaje: `${nombre} no tiene ningún cerco cerrado.` });
   if (encerradas.length > MAX_CELDAS_RELLENO) {
     return reply.status(400).send({ error: `Saldrían ${encerradas.length} celdas: demasiadas, míralo a mano antes.` });

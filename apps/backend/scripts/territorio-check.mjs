@@ -7,7 +7,7 @@
  * mapa le estaría dando a alguien territorio que no ha rodeado — o quitándole
  * el que sí — así que no se sube nada con esto en rojo.
  */
-import { celdasEncerradas, cajaDe, cajaDeTrabajo } from '../dist/services/territorio.js';
+import { celdasEncerradas, cajaDe, cajaDeTrabajo, gruposDeCeldas } from '../dist/services/territorio.js';
 
 let fallos = 0;
 function comprueba(nombre, ok, detalle) {
@@ -107,6 +107,33 @@ function marco(n) {
   const dentro = caja ? celdasEncerradas(anillo, caja) : [];
   comprueba('un anillo de 2 km de lado se llena entero', dentro.length === 198 * 198,
     `${dentro.length} celdas (esperadas ${198 * 198})`);
+}
+
+{
+  // Quien corre en dos ciudades: su caja abarca el vacío de en medio y no se
+  // le podía mirar el cerco NUNCA. Separando las zonas, cada una cabe.
+  const barcelona = marco(60);
+  const asturias = marco(60).map(c => ({ x: c.x + 60000, y: c.y + 30000 }));
+  const grupos = gruposDeCeldas([...barcelona, ...asturias]);
+  comprueba('dos ciudades se separan en dos zonas', grupos.length === 2,
+    `${grupos.length} zonas de ${grupos.map(g => g.length).join(' y ')} celdas`);
+
+  const dentro = grupos.reduce((n, g) => n + celdasEncerradas(g).length, 0);
+  comprueba('y el cerco de cada ciudad se llena', dentro === 58 * 58 * 2,
+    `${dentro} celdas (esperadas ${58 * 58 * 2})`);
+
+  // Sin separar, ni se intenta: es justo el caso que se escapaba.
+  comprueba('sin separar, esa misma caja es inabarcable',
+    celdasEncerradas([...barcelona, ...asturias]).length === 0, 'no se calcula');
+}
+
+{
+  // Un barrio no se parte en trozos por tener huecos: las calles de una zona
+  // están a metros, no a kilómetros.
+  const barrio = [];
+  for (let i = 0; i < 300; i += 3) barrio.push({ x: i, y: 0 }, { x: 0, y: i });
+  comprueba('un barrio con huecos sigue siendo UNA zona',
+    gruposDeCeldas(barrio).length === 1, `${gruposDeCeldas(barrio).length} zona(s)`);
 }
 
 console.log(fallos ? `\n${fallos} comprobaciones FALLAN.` : '\nCercos en orden.');
