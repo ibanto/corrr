@@ -241,10 +241,29 @@ la carrera (`src/services/objetos.ts`), y por cada una comida nace otra cerca
 heredando la fecha de fin. Endpoints: `/objetos/viewport`, `/objetos/ranking`
 y `/admin/objetos` (sembrar, estado, retirar), con su apartado en el panel.
 
-**Halloween 2026**: 29 al 31 de octubre, 200 puntos por calabaza, gana quien
-más coja y sale su nombre en el cartel de avisos un par de días. Para que se
-vean hace falta la **1.11.11 publicada antes del 29** (subir como muy tarde el
-24-25 de octubre). Ojo: quien siga en 1.11.10 las recogerá sin verlas.
+**Halloween 2026**, calendario:
+
+| Cuándo | Qué |
+|---|---|
+| 24-25 oct | Subir la 1.11.11 a las dos tiendas (Apple tarda en revisar) |
+| Al publicarse | Anunciar cada tienda (§4 punto 5) |
+| **28 oct, noche** | `MIN_APP_VERSION = 1.11.11` en Railway **y** sembrar las calabazas desde el panel |
+| 29-31 oct | El evento: 200 puntos por calabaza, la siguiente nace 10 min después y en otro sitio |
+| Después | Nombrar al que más cogió en un aviso, y bajar `MIN_APP_VERSION` |
+
+Lo de `MIN_APP_VERSION` no es capricho: el aviso normal de "hay versión nueva"
+es **descartable** ("Ahora no") y sale una vez por sesión, así que no garantiza
+nada. Quien se quede en 1.11.10 recogerá calabazas **sin verlas** y, si le llega
+un mensaje de Halloween, verá una pantalla negra — los dibujos no están en su
+app. El bloqueo por versión mínima es el único que lo garantiza, y se pone
+desde Railway sin build ni tiendas.
+
+**Mensajes de Halloween** (`TauntSelector.tsx`): 10 + 10 respuestas, ids **101-110**
+(los clásicos son 1-10; si se repitieran, a quien lo recibe le saldría el
+cartel clásico de ese número). Se desbloquean de uno en uno, **una calabaza un
+mensaje**; sin calabazas la pestaña dice "próximamente". Las miniaturas de la
+cuadrícula son verticales (`-v.jpg`, 288×512) y aparte de la imagen grande: la
+grande en veinte celdas a la vez se come la memoria del móvil.
 
 ## 9-quater. Cercos: lo que rodeas es tuyo
 
