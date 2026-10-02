@@ -3423,7 +3423,20 @@ app.post('/runs', {
     // ha pasado la carrera, así que la app no puede inventarse ninguno. Sus
     // puntos se suman al final, sin multiplicadores: 200 son 200, y así el
     // corredor puede echar la cuenta de cabeza.
-    const objetos = Array.isArray(claimedCells) && claimedCells.length > 0
+    // El interruptor de Halloween manda TAMBIÉN aquí, no solo en lo que pinta
+    // la app. Sin esto, durante la prueba del 2-oct fausrunner se llevó una
+    // calabaza corriendo: no podía verla —ni tenía la versión— pero el
+    // servidor se la dio igual y le sumó los 200 puntos.
+    let halloweenLeToca = false;
+    if (Array.isArray(claimedCells) && claimedCells.length > 0) {
+      const valorHw = await valorAjuste('halloween');
+      if (valorHw === 'si') halloweenLeToca = true;
+      else if (valorHw.startsWith('prueba:')) {
+        const { rows: yo } = await client.query('SELECT display_name FROM users WHERE id = $1', [userId]);
+        halloweenLeToca = ajusteLeToca(valorHw, yo[0]?.display_name ?? null);
+      }
+    }
+    const objetos = halloweenLeToca
       ? await recoger(client, userId, claimedCells, new Date(isImport ? runEndMs : nowMs))
       : [];
     const puntosObjetos = objetos.reduce((n: number, o: Objeto) => n + o.puntos, 0);
