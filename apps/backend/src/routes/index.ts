@@ -448,6 +448,13 @@ async function initDB() {
   await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS es_admin BOOLEAN NOT NULL DEFAULT FALSE`).catch(() => {});
   // Objetos del mapa (las calabazas de Halloween y lo que venga después).
   await db.query(`
+    CREATE TABLE IF NOT EXISTS calles (
+      cell_x INT NOT NULL,
+      cell_y INT NOT NULL,
+      PRIMARY KEY (cell_x, cell_y)
+    )
+  `).catch(() => {});
+  await db.query(`
     CREATE TABLE IF NOT EXISTS ajustes_juego (
       clave TEXT PRIMARY KEY,
       valor TEXT NOT NULL,
@@ -1968,9 +1975,14 @@ sale el cartel de "prepárate" y la pestaña de mensajes de Halloween dice "pró
 <p class="nota">Las calabazas se siembran sobre calles por las que YA ha corrido alguien, así que
 ninguna cae dentro de un edificio. Se cogen pasando por encima al correr, y cuando alguien se come
 una, nace otra cerca. <b>Solo las ven las apps 1.11.11 o más nuevas, y con Halloween encendido.</b></p>
+<p class="nota" id="calles_estado">—</p>
 <div id="objetos_estado"></div>
 <form class="form" id="fo">
-  <input id="o_cerca" placeholder="Sembrar cerca de (nombre del corredor; vacío = toda la ciudad)">
+  <select id="o_fuente">
+    <option value="calles">Por cualquier calle (OpenStreetMap)</option>
+    <option value="pisadas">Solo por calles que ya ha pisado alguien</option>
+  </select>
+  <input id="o_cerca" placeholder="Sembrar cerca de (nombre del corredor; vacío = todas las zonas)">
   <input id="o_cuantas" type="number" min="1" max="500" value="100" placeholder="Cuántas">
   <input id="o_puntos" type="number" min="1" max="1000" value="200" placeholder="Puntos cada una">
   <input id="o_desde" type="datetime-local">
@@ -2276,6 +2288,13 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
     m.style.borderLeftColor = ok ? '#4caf50' : '#f44336';
     m.textContent = (ok ? '✓ ' : '✗ ') + texto;
   }
+  api('/admin/calles').then(function (r) {
+    var e = document.getElementById('calles_estado');
+    e.textContent = r.celdas > 0
+      ? 'Mapa de calles cargado: ' + r.celdas.toLocaleString('es-ES') + ' puntos de calle ('
+        + (r.celdas / 10000).toFixed(1) + ' km²). Las calabazas pueden caer por cualquiera de ellas.'
+      : 'Sin mapa de calles cargado: las calabazas solo pueden caer por donde ya ha corrido alguien.';
+  }).catch(function () {});
   function pintarHalloween(r) {
     document.getElementById('hw_modo').value = r.modo || 'apagado';
     document.getElementById('hw_corredor').value = r.corredor || '';
@@ -2309,6 +2328,7 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
   document.getElementById('o_sembrar').addEventListener('click', function () {
     var cuerpo = {
       tipo: 'calabaza',
+      fuente: document.getElementById('o_fuente').value,
       cerca: val('o_cerca') || null,
       cuantos: Number(document.getElementById('o_cuantas').value),
       puntos: Number(document.getElementById('o_puntos').value),
@@ -5424,8 +5444,15 @@ app.get('/admin/objetos', { preHandler: requireAdmin }, async (req: any, reply) 
 
 /** Sembrar el evento: "pon 100 calabazas del 29 al 31". Se puede repetir para
  *  añadir más; nunca borra las que ya están. */
+/** Cuántas calles hay cargadas. El panel lo enseña para que se vea si la
+ *  descarga de OpenStreetMap se hizo o no antes de sembrar. */
+app.get('/admin/calles', { preHandler: requireAdmin }, async (_req, reply) => {
+  const { rows } = await db.query('SELECT COUNT(*)::int AS n FROM calles');
+  return reply.send({ celdas: rows[0]?.n ?? 0 });
+});
+
 app.post('/admin/objetos', { preHandler: requireAdmin }, async (req: any, reply) => {
-  const { tipo, cuantos, puntos, desde, hasta, cerca } = req.body ?? {};
+  const { tipo, cuantos, puntos, desde, hasta, cerca, fuente } = req.body ?? {};
   const n = Math.min(Math.max(1, Number(cuantos) || 0), 500);
   if (!n) return reply.status(400).send({ error: 'Falta cuántas' });
   const d = desde ? new Date(desde) : new Date();
@@ -5454,10 +5481,12 @@ app.post('/admin/objetos', { preHandler: requireAdmin }, async (req: any, reply)
     donde = ` cerca de ${usuarios[0].display_name}`;
   }
 
+  const deDonde = fuente === 'pisadas' ? 'pisadas' : 'calles';
   const puestas = await sembrar(db, {
-    cuantos: n, tipo: String(tipo || 'calabaza'), puntos: Number(puntos) || 200, desde: d, hasta: h, caja,
+    cuantos: n, tipo: String(tipo || 'calabaza'), puntos: Number(puntos) || 200,
+    desde: d, hasta: h, caja, fuente: deDonde,
   });
-  return reply.send({ ok: true, puestas, pedidas: n, donde });
+  return reply.send({ ok: true, puestas, pedidas: n, donde, fuente: deDonde });
 });
 
 /** Quitar del mapa las que queden libres (para cerrar un evento a mano). */

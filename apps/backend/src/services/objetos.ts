@@ -8,10 +8,13 @@
  *
  * Tres decisiones que lo hacen simple y difícil de romper:
  *
- *   · SE SIEMBRAN SOBRE CALLES YA PISADAS. Se eligen celdas que alguien ha
- *     corrido de verdad (tabla `cells`), así que ninguna calabaza cae dentro
- *     de un edificio, en un río o en mitad de una autopista. Y no hace falta
- *     ningún mapa de calles de pago.
+ *   · SE SIEMBRAN SOBRE CALLES DE VERDAD, no al azar por el mapa. España son
+ *     506.000 km² y las calles por las que se puede correr son una porción
+ *     mínima: tirándolas al azar, prácticamente todas caerían en un campo, en
+ *     el monte o en el mar, y una calabaza mide 10×10 m — hay que pisar ese
+ *     cuadrado exacto. Las calles salen de OpenStreetMap (tabla `calles`,
+ *     ver scripts/bajar-calles.mjs), que es libre y gratis. También se puede
+ *     sembrar solo sobre calles YA pisadas (`fuente: 'pisadas'`).
  *
  *   · LAS RECOGE EL SERVIDOR, no la app. Al guardar la carrera se mira qué
  *     objetos libres caen en las celdas que esa carrera reclama. La app no
@@ -43,18 +46,32 @@ export async function sembrar(
     hasta: Date;
     /** Caja en celdas. Sin ella, cualquier celda del mapa. */
     caja?: { x0: number; x1: number; y0: number; y1: number };
+    /** De dónde salen las candidatas:
+     *   · 'calles'  — CUALQUIER calle de OpenStreetMap, la haya pisado alguien
+     *                 o no. Es lo que hace que salgan por sitios nuevos.
+     *   · 'pisadas' — solo calles por las que ya ha corrido alguien.
+     *  Las dos garantizan que la calabaza cae sobre asfalto y se puede coger:
+     *  soltarlas al azar por España dejaría el 99,99% en mitad de un campo. */
+    fuente?: 'calles' | 'pisadas';
   },
 ): Promise<number> {
-  const { cuantos, tipo, puntos, desde, hasta, caja } = opciones;
+  const { cuantos, tipo, puntos, desde, hasta, caja, fuente = 'calles' } = opciones;
   if (cuantos <= 0) return 0;
 
-  // Candidatas: celdas pisadas, en orden aleatorio. Se piden de más porque
-  // muchas se descartarán por estar demasiado cerca de otro objeto.
+  // Candidatas en orden aleatorio. Se piden de más porque muchas se
+  // descartarán por caer demasiado cerca de otro objeto.
+  // Si el mapa de calles aún no se ha cargado, se tira de las pisadas en vez
+  // de sembrar cero calabazas y dejar el evento vacío sin decir nada.
+  let tabla = fuente === 'pisadas' ? 'cells' : 'calles';
+  if (tabla === 'calles') {
+    const { rows: hay } = await db.query('SELECT 1 FROM calles LIMIT 1');
+    if (hay.length === 0) tabla = 'cells';
+  }
   const filtro = caja
     ? `WHERE cell_x BETWEEN ${caja.x0} AND ${caja.x1} AND cell_y BETWEEN ${caja.y0} AND ${caja.y1}`
     : '';
   const { rows: candidatas } = await db.query(
-    `SELECT cell_x, cell_y FROM cells ${filtro} ORDER BY random() LIMIT $1`,
+    `SELECT cell_x, cell_y FROM ${tabla} ${filtro} ORDER BY random() LIMIT $1`,
     [cuantos * 25],
   );
 
