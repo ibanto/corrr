@@ -172,7 +172,7 @@ Paso a paso completo (Xcode, App Store Connect, Play Console, Railway): `docs/pu
 
 **Versión actual** (2-oct-2026): Android `1.11.10` vc67 y iPhone `1.11.10` build 17 publicadas y **anunciadas las dos** (`/app/version`). **La 1.11.11 (vc68 / build 18) está CONSTRUIDA**: AAB en `apps/mobile/builds/corrr-v1.11.11-vc68.aab`; falta archivar el iPhone en Xcode, la prueba de calle y subir a las tiendas. **No anunciar hasta que cada tienda la haya publicado.**
 
-**Bloqueo por versión mínima** (`MIN_APP_VERSION` en Railway, hoy en `1.0.0`): el aviso normal de "hay versión nueva" es **descartable** y sale una vez por sesión, así que no garantiza que nadie actualice. El bloqueo sí, y se pone sin build ni tiendas. Se usará el 28 de octubre (§9-bis).
+**Bloqueo por versión mínima** (`MIN_APP_VERSION` en Railway, hoy en `1.0.0`): el aviso normal de "hay versión nueva" es **descartable** y sale una vez por sesión, así que no garantiza que nadie actualice. El bloqueo sí, y se pone sin build ni tiendas. Se usará la noche del 22 de octubre (§9-bis).
 
 **Comprobación de la 1.11.11 antes de subirla** (2-oct): el AAB se generó y se
 abrió para verificar que lleva dentro la versión 1.11.11, la firma, el permiso
@@ -357,22 +357,21 @@ calabaza son 10×10 m y hay que pisar ese cuadrado, así que casi todas caerían
 el campo o en el mar. Si la tabla está vacía, la siembra se cae con elegancia a
 las celdas ya pisadas.
 
-**Halloween 2026**, calendario:
+**Halloween 2026**, calendario (fijado el 2-oct, contando hacia atrás desde el
+día que tiene que empezar):
 
 | Cuándo | Qué |
 |---|---|
-| 24-25 oct | Subir la 1.11.11 a las dos tiendas (Apple tarda en revisar) |
-| Al publicarse | Anunciar cada tienda (§4 punto 5) |
-| **28 oct, noche** | `MIN_APP_VERSION = 1.11.11` en Railway **y** sembrar las calabazas desde el panel |
-| 29-31 oct | El evento: 200 puntos por calabaza, la siguiente nace 10 min después y en otro sitio |
-| Después | Nombrar al que más cogió en un aviso, y bajar `MIN_APP_VERSION` |
+| **19 oct** (lunes) | **Subir a las dos tiendas.** Es la fecha tope: Apple se toma hasta tres días |
+| En cuanto publique cada una | Anunciar esa tienda (§4 punto 5) |
+| **22 oct** (jueves, noche) | `MIN_APP_VERSION = 1.11.11` en Railway **y** sembrar las calabazas |
+| **23 oct (viernes) – 1 nov (domingo)** | El evento |
+| **2 nov** | Nombrar al que más cogió en un aviso, y bajar `MIN_APP_VERSION` |
 
-Lo de `MIN_APP_VERSION` no es capricho: el aviso normal de "hay versión nueva"
-es **descartable** ("Ahora no") y sale una vez por sesión, así que no garantiza
-nada. Quien se quede en 1.11.10 recogerá calabazas **sin verlas** y, si le llega
-un mensaje de Halloween, verá una pantalla negra — los dibujos no están en su
-app. El bloqueo por versión mínima es el único que lo garantiza, y se pone
-desde Railway sin build ni tiendas.
+**Por qué empieza el 23 y no el 29**: los mensajes que se desbloquean cogiendo
+calabazas hay que poder usarlos. Arrancando el viernes 23 entran el fin de
+semana del 24-25, la semana entera y el fin de semana de Halloween. Con los
+días 29-31 (jueves a sábado) se desbloqueaban casi sin tiempo de mandarlos.
 
 **Mensajes de Halloween** (`TauntSelector.tsx`): 10 + 10 respuestas, ids **101-110**
 (los clásicos son 1-10; si se repitieran, a quien lo recibe le saldría el
