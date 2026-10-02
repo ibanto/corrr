@@ -31,3 +31,4 @@ apps/backend/awesome-claude-skills/
 apps/mobile/builds/
 apps/mobile/CORRR.aab
 *.xcarchive/
+apps/backend/datos/

@@ -29,10 +29,12 @@ const db = new pg.Pool({
   max: 2,
 });
 
-const origen = existsSync('/tmp/calles.json') ? '/tmp/calles.json' : '/tmp/calles-progreso.json';
+const DATOS = new URL('../datos/', import.meta.url);
+const completo = new URL('calles.json', DATOS);
+const origen = existsSync(completo) ? completo : new URL('calles-progreso.json', DATOS);
 const crudo = JSON.parse(readFileSync(origen, 'utf8'));
 const todas = Array.isArray(crudo) ? crudo.map(c => `${c[0]},${c[1]}`) : crudo.celdas;
-console.log(`Leídas ${todas.length.toLocaleString('es-ES')} celdas de ${origen}`);
+console.log(`Leídas ${todas.length.toLocaleString('es-ES')} celdas de ${origen.pathname.split('/').slice(-2).join('/')}`);
 
 const vistos = new Set();
 const finales = [];

@@ -111,9 +111,12 @@ function celdasDeLaCalle(geometria, dentro) {
   }
 }
 
-const PROGRESO = '/tmp/calles-progreso.json';
+const DATOS = new URL('../datos/', import.meta.url);
+const PROGRESO = new URL('calles-progreso.json', DATOS);
+const ZONAS = new URL('zonas.json', DATOS);
+const SALIDA = new URL('calles.json', DATOS);
 
-const zonas = JSON.parse(readFileSync('/tmp/zonas.json', 'utf8'));
+const zonas = JSON.parse(readFileSync(ZONAS, 'utf8'));
 const todos = zonas.flatMap(z => trozos(z));
 
 // Se retoma donde se quedó. Overpass es gratis y a ratos está saturado: esto
@@ -159,7 +162,7 @@ for (const [i, caja] of todos.entries()) {
 }
 
 const lista = [...celdas].map(k => k.split(',').map(Number));
-writeFileSync('/tmp/calles.json', JSON.stringify(lista));
+writeFileSync(SALIDA, JSON.stringify(lista));
 console.log(`\n${hechos.size}/${todos.length} trozos hechos${fallados ? `, ${fallados} pendientes (vuelve a lanzarlo)` : ''}`);
 console.log(`${lista.length.toLocaleString('es-ES')} celdas de calle = ${(lista.length / 10000).toFixed(1)} km²`);
-console.log('Guardadas en /tmp/calles.json');
+console.log('Guardadas en apps/backend/datos/calles.json');
