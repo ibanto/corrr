@@ -38,7 +38,7 @@
     },
     "android": {
       "package": "app.corrr",
-      "versionCode": 68,
+      "versionCode": 69,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#0A0A0A"
