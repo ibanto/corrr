@@ -946,7 +946,17 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     api.getAjustes().then(a => setHalloweenActivo(a.halloween)).catch(() => {});
   };
 
-  useEffect(() => { loadUserXP(); }, []);
+  // Al arrancar Y cada vez que se vuelve a la app. El interruptor de Halloween
+  // se puede dar en cualquier momento desde el panel, y nadie cierra la app del
+  // todo para enterarse: si solo se mirara al arrancar, quien la tuviera en
+  // segundo plano no vería las calabazas aparecer.
+  useEffect(() => {
+    loadUserXP();
+    const sub = AppState.addEventListener('change', (estado) => {
+      if (estado === 'active') loadUserXP();
+    });
+    return () => sub.remove();
+  }, []);
 
   const loadZones = async (lat?: number, lng?: number) => {
     try {
