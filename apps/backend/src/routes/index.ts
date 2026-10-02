@@ -1952,9 +1952,16 @@ Sale UNA vez por persona; para repetirlo, se crea otro. Solo lo ven las apps 1.1
 <p class="nota">La app ya lleva dentro las calabazas y los diez mensajes nuevos, pero <b>apagados</b>.
 Este interruptor los enciende para todo el mundo, sin sacar versión. Mientras esté apagado, en Retos
 sale el cartel de "prepárate" y la pestaña de mensajes de Halloween dice "próximamente".</p>
-<label class="casilla"><input type="checkbox" id="hw_on">
-  <b>Halloween encendido</b> <span id="hw_estado">—</span></label>
-<div id="hw_msg" class="resultado" style="display:none"></div>
+<form class="form" id="fhw">
+  <select id="hw_modo">
+    <option value="apagado">Apagado — nadie lo ve</option>
+    <option value="prueba">Solo para un corredor, para probarlo</option>
+    <option value="todos">Encendido para todo el mundo</option>
+  </select>
+  <input id="hw_corredor" placeholder="Nombre del corredor que lo prueba" style="display:none">
+  <button class="btn" id="hw_guardar" type="button">Guardar</button>
+  <div id="hw_msg" class="resultado" style="display:none"></div>
+</form>
 </div>
 <div class="caja">
 <h2>Juego del mapa</h2>
@@ -1963,6 +1970,7 @@ ninguna cae dentro de un edificio. Se cogen pasando por encima al correr, y cuan
 una, nace otra cerca. <b>Solo las ven las apps 1.11.11 o más nuevas, y con Halloween encendido.</b></p>
 <div id="objetos_estado"></div>
 <form class="form" id="fo">
+  <input id="o_cerca" placeholder="Sembrar cerca de (nombre del corredor; vacío = toda la ciudad)">
   <input id="o_cuantas" type="number" min="1" max="500" value="100" placeholder="Cuántas">
   <input id="o_puntos" type="number" min="1" max="1000" value="200" placeholder="Puntos cada una">
   <input id="o_desde" type="datetime-local">
@@ -2268,28 +2276,32 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
     m.style.borderLeftColor = ok ? '#4caf50' : '#f44336';
     m.textContent = (ok ? '✓ ' : '✗ ') + texto;
   }
-  function pintarHalloween(encendido) {
-    document.getElementById('hw_on').checked = encendido;
-    var e = document.getElementById('hw_estado');
-    e.textContent = encendido ? '· encendido para todos' : '· apagado';
-    e.style.color = encendido ? '#4caf50' : '#8C8C8C';
+  function pintarHalloween(r) {
+    document.getElementById('hw_modo').value = r.modo || 'apagado';
+    document.getElementById('hw_corredor').value = r.corredor || '';
+    document.getElementById('hw_corredor').style.display = r.modo === 'prueba' ? '' : 'none';
   }
-  api('/admin/ajustes').then(function (r) { pintarHalloween(r.halloween); }).catch(function () {});
-  document.getElementById('hw_on').addEventListener('change', function (ev) {
-    var quiere = ev.target.checked;
+  api('/admin/ajustes').then(pintarHalloween).catch(function () {});
+  document.getElementById('hw_modo').addEventListener('change', function (ev) {
+    document.getElementById('hw_corredor').style.display = ev.target.value === 'prueba' ? '' : 'none';
+  });
+  document.getElementById('hw_guardar').addEventListener('click', function () {
+    var modo = document.getElementById('hw_modo').value;
+    if (modo === 'todos' && !confirm('¿Encender Halloween para TODO el mundo?')) return;
     var m = document.getElementById('hw_msg');
     m.style.display = 'block'; m.style.color = '#bbb'; m.style.borderLeftColor = '#555';
     m.textContent = 'Un momento…';
-    api('/admin/ajustes', {
-      method: 'POST', body: JSON.stringify({ clave: 'halloween', encendido: quiere }),
-    }).then(function (r) {
-      pintarHalloween(r.encendido);
+    api('/admin/ajustes', { method: 'POST', body: JSON.stringify({
+      clave: 'halloween', modo: modo, corredor: val('hw_corredor'),
+    }) }).then(function (r) {
+      pintarHalloween(r);
       m.style.color = '#4caf50'; m.style.borderLeftColor = '#4caf50';
-      m.textContent = r.encendido
-        ? '✓ Halloween encendido. Lo verán al abrir la app (o al volver a ella).'
-        : '✓ Halloween apagado. Vuelve a salir el cartel de "prepárate" en Retos.';
+      m.textContent = r.modo === 'todos'
+        ? '✓ Halloween encendido para todos. Lo verán al abrir la app o al volver a ella.'
+        : (r.modo === 'prueba'
+            ? '✓ Solo lo ve ' + r.corredor + '. Para el resto sigue sin existir.'
+            : '✓ Apagado. Vuelve a salir el cartel de "prepárate" en Retos.');
     }).catch(function (e) {
-      pintarHalloween(!quiere);
       m.style.color = '#f44336'; m.style.borderLeftColor = '#f44336';
       m.textContent = '✗ ' + e.message;
     });
@@ -2297,13 +2309,14 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
   document.getElementById('o_sembrar').addEventListener('click', function () {
     var cuerpo = {
       tipo: 'calabaza',
+      cerca: val('o_cerca') || null,
       cuantos: Number(document.getElementById('o_cuantas').value),
       puntos: Number(document.getElementById('o_puntos').value),
       desde: val('o_desde') || null,
       hasta: val('o_hasta') || null,
     };
     api('/admin/objetos', { method: 'POST', body: JSON.stringify(cuerpo) }).then(function (r) {
-      msgObjetos('Sembradas ' + r.puestas + ' de ' + r.pedidas
+      msgObjetos('Sembradas ' + r.puestas + ' de ' + r.pedidas + (r.donde || '')
         + (r.puestas < r.pedidas ? ' (el resto caían demasiado cerca de otra)' : ''), true);
       cargarObjetos();
     }).catch(function (e) { msgObjetos(e.message, false); });
@@ -5263,28 +5276,71 @@ app.get('/objetos/viewport', { preHandler: requireAuth }, async (req: any, reply
  *  octubre: la app lleva las calabazas y los mensajes dentro, pero apagados,
  *  y se encienden desde el panel el día que toca. Sin esto habría que acertar
  *  con la fecha de publicación de dos tiendas, una de ellas Apple. */
-async function ajusteEncendido(clave: string): Promise<boolean> {
+/** Tres estados, no dos: 'no', 'si' o 'prueba:<nombre>'.
+ *
+ *  El de prueba existe porque esto es la primera vez que se monta un evento y
+ *  hay que verlo funcionando antes de soltarlo: se enciende para UNA persona,
+ *  que sale a correr y comprueba que la calabaza se ve, se recoge, suma y
+ *  desbloquea el mensaje. El resto de la gente no se entera de nada. */
+async function valorAjuste(clave: string): Promise<string> {
   const { rows } = await db.query('SELECT valor FROM ajustes_juego WHERE clave = $1', [clave]);
-  return rows[0]?.valor === 'si';
+  return rows[0]?.valor ?? 'no';
 }
 
-app.get('/app/ajustes', { preHandler: requireAuth }, async (_req, reply) => {
-  return reply.send({ halloween: await ajusteEncendido('halloween') });
+/** ¿Le toca a ESTE corredor? */
+function ajusteLeToca(valor: string, nombre: string | null): boolean {
+  if (valor === 'si') return true;
+  if (!valor.startsWith('prueba:')) return false;
+  const soloPara = valor.slice('prueba:'.length).trim().toLowerCase();
+  return !!nombre && nombre.trim().toLowerCase() === soloPara;
+}
+
+app.get('/app/ajustes', { preHandler: requireAuth }, async (req: any, reply) => {
+  const valor = await valorAjuste('halloween');
+  // El nombre solo se pide si hace falta decidir una prueba.
+  let nombre: string | null = null;
+  if (valor.startsWith('prueba:')) {
+    const { rows } = await db.query('SELECT display_name FROM users WHERE id = $1', [req.userId]);
+    nombre = rows[0]?.display_name ?? null;
+  }
+  return reply.send({ halloween: ajusteLeToca(valor, nombre) });
 });
 
 app.get('/admin/ajustes', { preHandler: requireAdmin }, async (_req, reply) => {
-  return reply.send({ halloween: await ajusteEncendido('halloween') });
+  const valor = await valorAjuste('halloween');
+  return reply.send({
+    halloween: valor === 'si',
+    modo: valor === 'si' ? 'todos' : (valor.startsWith('prueba:') ? 'prueba' : 'apagado'),
+    corredor: valor.startsWith('prueba:') ? valor.slice('prueba:'.length) : '',
+  });
 });
 
 app.post('/admin/ajustes', { preHandler: requireAdmin }, async (req: any, reply) => {
-  const { clave, encendido } = req.body ?? {};
+  const { clave, modo, corredor } = req.body ?? {};
   if (clave !== 'halloween') return reply.status(400).send({ error: 'Ajuste desconocido' });
+
+  let valor = 'no';
+  if (modo === 'todos') valor = 'si';
+  else if (modo === 'prueba') {
+    const quien = String(corredor ?? '').trim();
+    if (!quien) return reply.status(400).send({ error: 'Para probarlo hace falta el nombre del corredor' });
+    const { rows } = await db.query(
+      'SELECT display_name FROM users WHERE LOWER(display_name) = LOWER($1)', [quien],
+    );
+    if (rows.length === 0) return reply.status(400).send({ error: `No hay ningún corredor que se llame "${quien}"` });
+    valor = `prueba:${rows[0].display_name}`;
+  }
+
   await db.query(
     `INSERT INTO ajustes_juego (clave, valor) VALUES ($1, $2)
      ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor, cambiado_at = NOW()`,
-    [clave, encendido === true ? 'si' : 'no'],
+    [clave, valor],
   );
-  return reply.send({ ok: true, clave, encendido: encendido === true });
+  return reply.send({
+    ok: true, clave,
+    modo: valor === 'si' ? 'todos' : (valor === 'no' ? 'apagado' : 'prueba'),
+    corredor: valor.startsWith('prueba:') ? valor.slice('prueba:'.length) : '',
+  });
 });
 
 app.get('/objetos/ranking', { preHandler: requireAuth }, async (req: any, reply) => {
@@ -5339,7 +5395,7 @@ app.get('/admin/objetos', { preHandler: requireAdmin }, async (req: any, reply) 
 /** Sembrar el evento: "pon 100 calabazas del 29 al 31". Se puede repetir para
  *  añadir más; nunca borra las que ya están. */
 app.post('/admin/objetos', { preHandler: requireAdmin }, async (req: any, reply) => {
-  const { tipo, cuantos, puntos, desde, hasta } = req.body ?? {};
+  const { tipo, cuantos, puntos, desde, hasta, cerca } = req.body ?? {};
   const n = Math.min(Math.max(1, Number(cuantos) || 0), 500);
   if (!n) return reply.status(400).send({ error: 'Falta cuántas' });
   const d = desde ? new Date(desde) : new Date();
@@ -5347,10 +5403,31 @@ app.post('/admin/objetos', { preHandler: requireAdmin }, async (req: any, reply)
   if (isNaN(d.getTime()) || isNaN(h.getTime()) || h <= d) {
     return reply.status(400).send({ error: 'Las fechas no cuadran' });
   }
+  // "Cerca de" acota la siembra a la zona donde ESA persona corre. Sin esto,
+  // para probar el evento habría que cruzar la ciudad a ver si aparece alguna.
+  let caja;
+  let donde = '';
+  if (typeof cerca === 'string' && cerca.trim()) {
+    const quien = cerca.trim();
+    const { rows: usuarios } = await db.query(
+      `SELECT id, display_name FROM users
+        WHERE LOWER(email) = LOWER($1) OR LOWER(display_name) = LOWER($1)`, [quien],
+    );
+    if (usuarios.length === 0) return reply.status(400).send({ error: `No hay nadie que se llame "${quien}"` });
+    const { rows: suyas } = await db.query(
+      'SELECT cell_x AS x, cell_y AS y FROM cells WHERE owner_id = $1', [usuarios[0].id],
+    );
+    if (suyas.length === 0) return reply.status(400).send({ error: `${usuarios[0].display_name} no tiene territorio todavía` });
+    // Su zona MÁS GRANDE: si ha corrido en dos ciudades, la de casa.
+    const zona = gruposDeCeldas(suyas)[0];
+    caja = cajaDe(zona, 50); // medio km de margen alrededor de su barrio
+    donde = ` cerca de ${usuarios[0].display_name}`;
+  }
+
   const puestas = await sembrar(db, {
-    cuantos: n, tipo: String(tipo || 'calabaza'), puntos: Number(puntos) || 200, desde: d, hasta: h,
+    cuantos: n, tipo: String(tipo || 'calabaza'), puntos: Number(puntos) || 200, desde: d, hasta: h, caja,
   });
-  return reply.send({ ok: true, puestas, pedidas: n });
+  return reply.send({ ok: true, puestas, pedidas: n, donde });
 });
 
 /** Quitar del mapa las que queden libres (para cerrar un evento a mano). */
