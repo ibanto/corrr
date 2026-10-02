@@ -40,7 +40,10 @@ const TIPOS = [
   'unclassified', 'tertiary', 'secondary', 'primary', 'cycleway', 'steps',
 ].join('|');
 
-const ESPERA_MS = 2000; // cortesía con un servidor público y gratuito
+// Cortesía con un servidor público y gratuito — y conveniencia propia: con
+// 2 s empezaba a contestar 429 ("vas muy rápido"), y entonces toca esperar
+// mucho más. Pidiendo más despacio se termina antes.
+const ESPERA_MS = 7000;
 
 const dormir = (ms) => new Promise(r => setTimeout(r, ms));
 
