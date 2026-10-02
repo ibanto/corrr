@@ -289,8 +289,26 @@ const MAP_STYLE = [
  *  - Saturación 70%, luminosidad 55% → siempre se ve bien sobre el mapa oscuro
  *  - Saltamos el rango 0-50° (rojo-naranja) para no chocar con TU naranja (#FF6600 ≈ 24°)
  *  - Resultado: dos rivales distintos casi nunca tienen el mismo color. */
+/** HSL a hexadecimal.
+ *
+ *  Hace falta porque el color se devuelve en HEXADECIMAL y no como
+ *  `hsl(...)`: al dibujar el territorio se le pega la transparencia detrás
+ *  (`#4A7BE880`), y eso solo funciona con hexadecimal. Con `hsl(220, 70%,
+ *  55%)80` sale una cadena que no es un color, el mapa la da por opaca y el
+ *  territorio del rival tapaba las calles. El tuyo no, porque siempre fue
+ *  `#FF5500`. */
+function hslAHex(h: number, s: number, l: number): string {
+  const a = s * Math.min(l, 1 - l);
+  const canal = (n: number) => {
+    const k = (n + h / 30) % 12;
+    const v = l - a * Math.max(-1, Math.min(k - 3, Math.min(9 - k, 1)));
+    return Math.round(255 * v).toString(16).padStart(2, '0');
+  };
+  return `#${canal(0)}${canal(8)}${canal(4)}`;
+}
+
 function getRivalColor(seed: string): string {
-  if (!seed) return 'hsl(220, 70%, 55%)'; // azul fallback
+  if (!seed) return hslAHex(220, 0.7, 0.55); // azul fallback
   let hash = 0;
   for (let i = 0; i < seed.length; i++) {
     hash = ((hash << 5) - hash) + seed.charCodeAt(i);
@@ -298,7 +316,7 @@ function getRivalColor(seed: string): string {
   }
   // Hue en [50, 360) — salta el rojo-naranja del usuario propio.
   const hue = 50 + (Math.abs(hash) % 310);
-  return `hsl(${hue}, 70%, 55%)`;
+  return hslAHex(hue, 0.7, 0.55);
 }
 
 interface Coord { latitude: number; longitude: number; }
