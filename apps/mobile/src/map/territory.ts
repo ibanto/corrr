@@ -15,7 +15,13 @@ import { CELL_LAT_DEG, CELL_LNG_DEG } from '../tracking/runTracker';
 export type CellBox = { x0: number; x1: number; y0: number; y1: number };
 
 /** Dueño de territorio en el mapa. */
-export interface MapOwner { id: string; name: string | null; warCry: string | null; mine: boolean; }
+export interface MapOwner {
+  id: string; name: string | null; warCry: string | null; mine: boolean;
+  /** Su color en el mapa, decidido por el SERVIDOR. Antes lo sacaba la app de
+   *  un hash del identificador y se amontonaban: once de veintiún corredores
+   *  salían verdes y dos tenían el mismo tono exacto. */
+  color?: string;
+}
 
 /** Lo que devuelve el servidor para un trozo de mapa. */
 export interface MapTerritory {

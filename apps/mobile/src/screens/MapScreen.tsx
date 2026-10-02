@@ -1283,7 +1283,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       if (!lista) { lista = []; porDueno.set(d, lista); }
       pushClipped(lista, viewBox, plano[i + 1], plano[i + 2], plano[i + 3]);
     }
-    const out: { ownerId: string; ownerName: string | undefined; ownerWarCry: string | null | undefined; ownerAvatar: string | null | undefined; polygons: UnionedPolygon[] }[] = [];
+    const out: { ownerId: string; ownerName: string | undefined; ownerWarCry: string | null | undefined; ownerAvatar: string | null | undefined; ownerColor: string | undefined; polygons: UnionedPolygon[] }[] = [];
     porDueno.forEach((tiras, d) => {
       if (tiras.length === 0) return;
       const o = duenos[d];
@@ -1292,6 +1292,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         ownerName: o.name ?? undefined,
         ownerWarCry: o.warCry,
         ownerAvatar: ownerAvatarsRef.current[o.id] ?? null,
+        ownerColor: o.color,
         polygons: unionCached(o.id, tiras),
       });
     });
@@ -2643,7 +2644,10 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
           {polygonsVisible && rivalCellsUnions.map((rival, rivalIdx) =>
             rival.polygons.map((p, polyIdx) => {
               // UUID del owner → garantiza color único por usuario (no por nombre).
-              const ownerColor = getRivalColor(rival.ownerId);
+              // El color lo manda el servidor, que es quien puede repartirlos
+              // sin que se parezcan entre sí. El de aquí es el respaldo para
+              // cuando el servidor todavía no lo manda.
+              const ownerColor = rival.ownerColor ?? getRivalColor(rival.ownerId);
               return (
                 <Polygon
                   // La clave YA NO lleva el número de puntos del contorno.

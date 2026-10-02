@@ -8,12 +8,18 @@
  * Se agrupa aquí y no en SQL: con funciones de ventana la misma zona tardaba
  * 460 ms en la base de datos; en JS son unos pocos ms.
  */
-export type Dueno = { id: string; name: string | null; warCry: string | null };
+export type Dueno = {
+  id: string; name: string | null; warCry: string | null;
+  /** Su color en el mapa. Lo decide el servidor para que no haya dos
+   *  corredores con tonos parecidos (ver `colorDeCorredor`). */
+  color: string;
+};
 
 export type FilaCelda = {
   cell_x: number;
   cell_y: number;
   owner_id: string;
+  owner_color?: string;
   owner_name: string | null;
   owner_war_cry: string | null;
 };
@@ -27,7 +33,10 @@ export function agruparEnTiras(rows: FilaCelda[]): { tiras: Int32Array; n: numbe
     if (d === undefined) {
       d = duenos.length;
       indice.set(r.owner_id, d);
-      duenos.push({ id: r.owner_id, name: r.owner_name, warCry: r.owner_war_cry });
+      duenos.push({
+        id: r.owner_id, name: r.owner_name, warCry: r.owner_war_cry,
+        color: r.owner_color ?? '#4A7BE8',
+      });
     }
     const clave = `${d}:${r.cell_y}`;
     const xs = filas.get(clave);

@@ -339,6 +339,14 @@ async function initDB() {
 
   // Push tokens + avatar
   await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS push_token TEXT`);
+  // Número de color de cada corredor. Se reparte por ORDEN DE ALTA, no al
+  // azar: con el azar, de 21 corredores había once apiñados entre 87° y 124°
+  // —todos verdes— y dos con el MISMO tono exacto (Ansgar y David).
+  await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS color_idx INT`).catch(() => {});
+  await db.query(`
+    UPDATE users SET color_idx = s.n
+      FROM (SELECT id, (ROW_NUMBER() OVER (ORDER BY created_at, id)) - 1 AS n FROM users) s
+     WHERE users.id = s.id AND users.color_idx IS NULL`).catch(() => {});
   await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT`);
   // La foto entera (hasta 2,3 MB medidos) solo hace falta en el perfil. El
   // mapa manda la miniatura, que es lo que se ve: un círculo de 40 px.
@@ -3770,7 +3778,7 @@ type ViewportEntry = {
   /** 4 enteros por celda: x, y, índice del dueño, claimed_at en segundos. */
   datos: Int32Array;
   n: number;
-  duenos: { id: string; name: string | null; warCry: string | null }[];
+  duenos: { id: string; name: string | null; warCry: string | null; color: string }[];
 };
 const viewportCache = new Map<string, ViewportEntry>();
 
@@ -3798,6 +3806,35 @@ const stripsCache = new Map<string, StripsEntry>();
 const STRIPS_MAX_CELLS = 400_000;
 
 /** Foto (miniatura) de cada dueño, una vez por dueño y no por celda. */
+/** El color de un corredor en el mapa, a partir de su número de alta.
+ *
+ *  Se usa el ÁNGULO ÁUREO (137,5°): es la forma conocida de repartir N tonos
+ *  por el círculo de modo que cada nuevo color caiga en el hueco más grande
+ *  que queda. Con un hash del identificador, que es lo que había, el reparto
+ *  es aleatorio y por el problema del cumpleaños se amontonan: once de
+ *  veintiún corredores salían verdes.
+ *
+ *  Además la luminosidad alterna entre tres niveles, así que dos tonos
+ *  parecidos se distinguen igual por claro/oscuro.
+ *
+ *  Se salta la franja 0-50° (el rojo-naranja), que es el color del territorio
+ *  propio. */
+function colorDeCorredor(idx: number): string {
+  // El ángulo áureo se reparte sobre el círculo ENTERO y luego se comprime a
+  // la franja libre. Haciendo el módulo directamente sobre 310 se pierde la
+  // propiedad y vuelven a juntarse: medido con 21 corredores, 2,4° de
+  // separación mínima en vez de 10,7°.
+  const tono = 50 + ((idx * 137.508) % 360) * (310 / 360);
+  const luz = [0.46, 0.58, 0.70][idx % 3];
+  const a = 0.72 * Math.min(luz, 1 - luz);
+  const canal = (n: number) => {
+    const k = (n + tono / 30) % 12;
+    const v = luz - a * Math.max(-1, Math.min(k - 3, Math.min(9 - k, 1)));
+    return Math.round(255 * v).toString(16).padStart(2, '0');
+  };
+  return `#${canal(0)}${canal(8)}${canal(4)}`;
+}
+
 async function ownerAvatars(ownerIds: string[], log: any): Promise<Record<string, { avatar: string | null }>> {
   const owners: Record<string, { avatar: string | null }> = {};
   if (ownerIds.length === 0) return owners;
@@ -3826,7 +3863,8 @@ async function ownerAvatars(ownerIds: string[], log: any): Promise<Record<string
 
 async function loadStrips(x0: number, x1: number, y0: number, y1: number, log: any): Promise<StripsEntry> {
   const q = await db.query(
-    `SELECT c.cell_x, c.cell_y, c.owner_id, u.display_name AS owner_name, u.war_cry AS owner_war_cry
+    `SELECT c.cell_x, c.cell_y, c.owner_id, u.display_name AS owner_name, u.war_cry AS owner_war_cry,
+            u.color_idx AS owner_color_idx
        FROM cells c
        JOIN users u ON u.id = c.owner_id
       WHERE c.cell_x BETWEEN $1 AND $2 AND c.cell_y BETWEEN $3 AND $4
@@ -3836,7 +3874,10 @@ async function loadStrips(x0: number, x1: number, y0: number, y1: number, log: a
   if (q.rows.length >= STRIPS_MAX_CELLS) {
     log.warn({ x0, x1, y0, y1 }, '[viewport] casilla con más celdas de las esperables');
   }
-  return { expires: Date.now() + VIEWPORT_TTL_MS, ...agruparEnTiras(q.rows) };
+  // El color se calcula aquí y viaja con el dueño: así la app no tiene que
+  // adivinarlo, que es justo lo que provocaba los tonos repetidos.
+  const filas = q.rows.map((r: any) => ({ ...r, owner_color: colorDeCorredor(r.owner_color_idx ?? 0) }));
+  return { expires: Date.now() + VIEWPORT_TTL_MS, ...agruparEnTiras(filas) };
 }
 
 app.get('/cells/viewport', { preHandler: requireAuth }, async (req: any, reply) => {
@@ -3874,7 +3915,9 @@ app.get('/cells/viewport', { preHandler: requireAuth }, async (req: any, reply) 
     const avatares = await ownerAvatars(st.duenos.map(d => d.id), req.log);
     return reply.send({
       formato: 'tiras',
-      duenos: st.duenos.map(d => ({ id: d.id, name: d.name, warCry: d.warCry, mine: d.id === req.userId })),
+      duenos: st.duenos.map(d => ({
+        id: d.id, name: d.name, warCry: d.warCry, color: d.color, mine: d.id === req.userId,
+      })),
       // Plano: dueño, y, x0, x1, dueño, y, x0, x1…
       tiras: Array.from(st.tiras),
       owners: avatares,
@@ -3892,7 +3935,8 @@ app.get('/cells/viewport', { preHandler: requireAuth }, async (req: any, reply) 
     const q = await db.query(
       `SELECT c.cell_x, c.cell_y, c.owner_id,
               EXTRACT(EPOCH FROM c.claimed_at)::int AS claimed_s,
-              u.display_name AS owner_name, u.war_cry AS owner_war_cry
+              u.display_name AS owner_name, u.war_cry AS owner_war_cry,
+              u.color_idx AS owner_color_idx
        FROM cells c
        JOIN users u ON u.id = c.owner_id
        WHERE c.cell_x BETWEEN $1 AND $2 AND c.cell_y BETWEEN $3 AND $4
@@ -3911,7 +3955,10 @@ app.get('/cells/viewport', { preHandler: requireAuth }, async (req: any, reply) 
       if (d === undefined) {
         d = duenos.length;
         indice.set(r.owner_id, d);
-        duenos.push({ id: r.owner_id, name: r.owner_name, warCry: r.owner_war_cry });
+        duenos.push({
+          id: r.owner_id, name: r.owner_name, warCry: r.owner_war_cry,
+          color: colorDeCorredor(r.owner_color_idx ?? 0),
+        });
       }
       datos[i * 4] = r.cell_x;
       datos[i * 4 + 1] = r.cell_y;
