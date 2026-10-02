@@ -40,6 +40,7 @@ import ZonePopup, { PopupType } from '../components/ZonePopup';
 import ShareRunCard, { ShareRunData, ShareSteal } from '../components/ShareRunCard';
 import { randomSharePhrase } from '../data/sharePhrases';
 import TauntSelector, { getTauntFullImage } from '../components/TauntSelector';
+import FichaCorredor from '../components/FichaCorredor';
 import LoadingScreen from '../components/LoadingScreen';
 import { randomPhrase } from '../data/motivationalPhrases';
 
@@ -740,7 +741,6 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
   // Marcador de territorio del rival cuya zona acabas de tocar. Se pide al
   // abrir la tarjeta, no junto a las celdas: es una consulta por usuario y no
   // tiene sentido calcularla para todos los que salen en pantalla.
-  const [rivalTerritory, setRivalTerritory] = useState<Awaited<ReturnType<typeof api.getTerritory>> | null>(null);
   // Fotos de perfil por dueño. Llegan aparte de las celdas porque son la
   // imagen en base64, no una URL: repetirlas por celda disparaba el tamaño de
   // la respuesta a decenas de MB.
@@ -2515,91 +2515,15 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       )}
 
       {/* Popup zona rival — info + agregar amigo */}
-      {selectedRivalZone && (
-        <Modal transparent visible animationType="fade" statusBarTranslucent>
-          <View style={styles.summaryOverlay}>
-            <View style={styles.zoneCard}>
-              <TouchableOpacity style={styles.zoneCardClose} onPress={() => setSelectedRivalZone(null)}>
-                <Ionicons name="close" size={22} color={colors.textSecondary} />
-              </TouchableOpacity>
-
-              {/* Foto del dueño de la zona. Si no tiene puesta —hoy la mayoría—
-                  se mantiene la inicial de siempre, que nunca falla. */}
-              <View style={[styles.rivalAvatarBig, { borderColor: getRivalColor(selectedRivalZone.owner_id ?? selectedRivalZone.owner_name ?? '') }]}>
-                {selectedRivalZone.owner_avatar ? (
-                  <Image
-                    source={{ uri: selectedRivalZone.owner_avatar }}
-                    style={styles.rivalAvatarPhoto}
-                  />
-                ) : (
-                  <Text style={styles.rivalAvatarText}>
-                    {(selectedRivalZone.owner_name ?? '?').charAt(0).toUpperCase()}
-                  </Text>
-                )}
-              </View>
-              <Text style={styles.zoneCardTitle}>{selectedRivalZone.owner_name ?? 'Rival'}</Text>
-              {/* Grito de guerra del rival (v1.9). Se muestra justo bajo el nombre
-                  cuando el propietario lo ha configurado en su perfil. */}
-              {!!selectedRivalZone.owner_war_cry && (
-                <Text style={styles.zoneCardWarCry}>"{selectedRivalZone.owner_war_cry}"</Text>
-              )}
-              {/* Su territorio: superficie, parte de su ciudad y puesto
-                  nacional. Los porcentajes van sobre lo ya conquistado, no
-                  sobre la superficie real — contra el terreno de verdad todo
-                  el mundo sale con 0,0001% de España. */}
-              {rivalTerritory && rivalTerritory.cells > 0 && (
-                <View style={styles.rivalTerritory}>
-                  <Text style={styles.rivalTerritoryArea}>
-                    {rivalTerritory.areaM2 >= 10000
-                      ? `${(rivalTerritory.areaM2 / 10000).toFixed(1)} ha`
-                      : `${rivalTerritory.areaM2.toLocaleString('es-ES')} m²`}
-                  </Text>
-                  <Text style={styles.rivalTerritoryLine}>
-                    {rivalTerritory.citySharePct !== null && !!rivalTerritory.city
-                      ? `${rivalTerritory.citySharePct}% de ${rivalTerritory.city}`
-                      : ''}
-                    {rivalTerritory.nationalRank !== null
-                      ? `${rivalTerritory.citySharePct !== null && rivalTerritory.city ? '  ·  ' : ''}nº ${rivalTerritory.nationalRank} de España`
-                      : ''}
-                  </Text>
-                </View>
-              )}
-              {/* Cells (grid v2) don't have a per-cell points value — hide the
-                  line so we don't show a useless "0 pts" on a cell tap. */}
-              {selectedRivalZone.points > 0 && (
-                <Text style={styles.zoneCardPoints}>{selectedRivalZone.points} pts</Text>
-              )}
-              {selectedRivalZone.conquered_at && (
-                <Text style={styles.zoneCardDate}>
-                  Conquistada {new Date(selectedRivalZone.conquered_at).toLocaleDateString('es-ES', { day: 'numeric', month: 'short' })}
-                </Text>
-              )}
-
-              <TouchableOpacity
-                style={styles.addFriendBtn}
-                onPress={async () => {
-                  const ownerId = selectedRivalZone.owner_id;
-                  const ownerName = selectedRivalZone.owner_name ?? 'rival';
-                  setSelectedRivalZone(null);
-                  if (!ownerId) {
-                    Alert.alert('👥 Solicitud enviada', `Has enviado solicitud de amistad a ${ownerName}`);
-                    return;
-                  }
-                  try {
-                    await api.sendFriendRequest(ownerId);
-                    Alert.alert('👥 Solicitud enviada', `Has enviado solicitud de amistad a ${ownerName}`);
-                  } catch {
-                    Alert.alert('👥 Solicitud enviada', `Has enviado solicitud de amistad a ${ownerName}`);
-                  }
-                }}
-              >
-                <Ionicons name="person-add" size={18} color="#fff" />
-                <Text style={styles.addFriendBtnText}>AGREGAR AMIGO</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </Modal>
-      )}
+      {/* Al tocar el territorio de alguien se abre SU FICHA: la misma que
+          sale en el ranking. Antes aquí había otra tarjeta distinta y más
+          pobre, así que la misma persona se veía de dos formas según por
+          dónde llegaras. */}
+      <FichaCorredor
+        userId={selectedRivalZone?.owner_id ?? null}
+        onClose={() => setSelectedRivalZone(null)}
+        conAmigo
+      />
 
       <View style={styles.header}>
         {/* numberOfLines + el flex del contenedor son lo que impide que un
@@ -2737,10 +2661,9 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
                   strokeWidth={1.5}
                   tappable
                   onPress={() => {
-                    setRivalTerritory(null);
-                    if (rival.ownerId) {
-                      api.getTerritory(rival.ownerId).then(setRivalTerritory).catch(() => {});
-                    }
+                    // El territorio ya no se pide aquí: lo pide la propia
+                    // ficha. Pedirlo en los dos sitios eran dos viajes al
+                    // servidor por cada toque en el mapa.
                     setSelectedRivalZone({
                       id: `rival-${rival.ownerId}-${polyIdx}`,
                       polygon: p.outer,
@@ -3689,9 +3612,6 @@ const styles = StyleSheet.create({
     fontSize: 16, fontWeight: '900', color: colors.textPrimary,
     letterSpacing: 2, marginTop: spacing.sm,
   },
-  rivalTerritory: { alignItems: 'center', marginTop: 6, marginBottom: 2 },
-  rivalTerritoryArea: { fontSize: 20, fontWeight: '900', color: colors.textPrimary },
-  rivalTerritoryLine: { fontSize: 12, color: colors.textSecondary, marginTop: 2, textAlign: 'center' },
   zoneCardWarCry: {
     fontSize: 13, fontStyle: 'italic', color: colors.textSecondary,
     marginTop: 4, textAlign: 'center', paddingHorizontal: spacing.lg,
