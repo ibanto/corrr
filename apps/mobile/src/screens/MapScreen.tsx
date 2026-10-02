@@ -78,6 +78,22 @@ function tauntImageById(mode: string, id: number) {
 // This avoids Metro resolution issues with expo-keep-awake package
 /** La calabaza de Halloween: en el mapa, al pisarla y en la pantalla de
  *  carrera. Un dibujo y no el emoji, que cambia de cara en cada teléfono. */
+import { marcarCarreraEnMarcha } from '../../modules/deteccion-carrera';
+
+/* Transparencia del territorio en el mapa.
+ *
+ * El relleno siempre estuvo al 50%, pero las zonas se veían como manchas
+ * macizas igual: el culpable era el BORDE, opaco del todo y de 2,5 px. Como
+ * el contorno de un territorio es una escalerilla de celdas de 10 m, hay
+ * metros y metros de borde por cada zona — mucho más de lo que parece — y
+ * eso es lo que tapaba las calles.
+ *
+ * Son cadenas hexadecimales porque react-native-maps quiere el color y la
+ * transparencia juntos: '80' = 50%, 'B3' = 70%, '66' = 40%.
+ */
+const RELLENO_TERRITORIO = '80';   // 50%, por donde se ve el mapa
+const BORDE_TERRITORIO = 'B3';     // 70%, marca el límite sin cerrarlo
+
 const CALABAZA = require('../../assets/calabaza.png');
 
 const ExpoKeepAwake = NativeModules.ExpoKeepAwake;
@@ -1746,6 +1762,9 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     // quedaba sin nadie que lo procesara. Y la carrera cuenta como empezada ya,
     // para que STOP responda aunque el GPS tarde en dar la primera posición.
     isRunningRef.current = true;
+    // Mientras se corre, el detector de Android se calla: si no, saltaría el
+    // aviso "¿has salido a correr?" justo después de pulsar EMPEZAR.
+    marcarCarreraEnMarcha(true);
     handleLocationUpdateRef.current = handleLocationUpdate;
     handleReadingRef.current = handleReading;
     bgReadingsListener = readings => {
@@ -1842,6 +1861,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     if (!isRunningRef.current) return;
     isRunningRef.current = false;
     setIsRunning(false);
+    marcarCarreraEnMarcha(false);
     setIsPaused(false);
     setIsAutoPaused(false);
     // Freeze the final time before clearing the timer refs.
@@ -2689,9 +2709,9 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
                   key={`rival-${polygonGeneration}-${rival.ownerId}-${polyIdx}`}
                   coordinates={p.outer}
                   holes={p.holes.length > 0 ? p.holes : undefined}
-                  fillColor={`${ownerColor}80`}
-                  strokeColor={ownerColor}
-                  strokeWidth={2}
+                  fillColor={`${ownerColor}${RELLENO_TERRITORIO}`}
+                  strokeColor={`${ownerColor}${BORDE_TERRITORIO}`}
+                  strokeWidth={1.5}
                   tappable
                   onPress={() => {
                     setRivalTerritory(null);
@@ -2724,9 +2744,9 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
               key={`mine-${polygonGeneration}-${i}`}
               coordinates={p.outer}
               holes={p.holes.length > 0 ? p.holes : undefined}
-              fillColor={`${colors.orange}80`}
-              strokeColor={colors.orange}
-              strokeWidth={2.5}
+              fillColor={`${colors.orange}${RELLENO_TERRITORIO}`}
+              strokeColor={`${colors.orange}${BORDE_TERRITORIO}`}
+              strokeWidth={1.5}
               tappable
               onPress={() => Alert.alert('🟧 Tu territorio', 'Esta celda es tuya.')}
             />
