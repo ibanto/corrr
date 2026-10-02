@@ -15,7 +15,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, radius } from '../theme';
 import AllRunsScreen from './AllRunsScreen';
-import { api, RunRecord, UserStats, Achievement } from '../services/api';
+import { api, RunRecord, UserStats, Achievement, Robo } from '../services/api';
 
 const { width } = Dimensions.get('window');
 type Period = 'Semana' | 'Mes' | 'Año' | 'Todo' | 'Logros';
@@ -83,6 +83,9 @@ export default function StatsScreen({ user }: Props) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [showCalendar, setShowCalendar] = useState(false);
+  // Quién me ha robado. El cartel de "te han robado" sale una sola vez y se
+  // marca leído al cerrarlo: si te pilla corriendo, nunca sabes quién fue.
+  const [robos, setRobos] = useState<Robo[]>([]);
   const [showAllRuns, setShowAllRuns] = useState(false);
   const [calMonth, setCalMonth] = useState(new Date().getMonth());
   const [calYear, setCalYear] = useState(new Date().getFullYear());
@@ -98,6 +101,7 @@ export default function StatsScreen({ user }: Props) {
       setStats(data.stats);
       setRuns(data.runs);
       setAchievements(achs);
+      api.getRobos().then(setRobos).catch(() => {});
     } catch {
       // sin token o sin conexión — mantenemos valores vacíos
     } finally {
@@ -405,6 +409,24 @@ export default function StatsScreen({ user }: Props) {
             </View>
           </View>
 
+          {robos.length > 0 && (
+            <View style={styles.section}>
+              <View style={styles.sectionHeader}>
+                <Text style={styles.sectionTitle}>Te han robado</Text>
+              </View>
+              {robos.slice(0, 10).map(r => (
+                <View key={r.id} style={styles.roboFila}>
+                  <Ionicons name="flash" size={16} color={colors.orange} />
+                  <Text style={styles.roboNombre} numberOfLines={1}>{r.ladron}</Text>
+                  <Text style={styles.roboCuando}>{formatDate(r.created_at)}</Text>
+                </View>
+              ))}
+              <Text style={styles.roboNota}>
+                Devuélvesela pisando su territorio.
+              </Text>
+            </View>
+          )}
+
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
               <Text style={styles.sectionTitle}>
@@ -627,6 +649,17 @@ const styles = StyleSheet.create({
   section: { paddingHorizontal: spacing.md, marginBottom: spacing.md },
   sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.sm },
   sectionTitle: { fontSize: 18, fontWeight: '800', color: colors.textPrimary },
+  roboFila: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
+    paddingVertical: 9, paddingHorizontal: spacing.md,
+    borderBottomWidth: 1, borderBottomColor: colors.border,
+  },
+  roboNombre: { flex: 1, color: colors.textPrimary, fontSize: 15, fontWeight: '700' },
+  roboCuando: { color: colors.textSecondary, fontSize: 12 },
+  roboNota: {
+    color: colors.textMuted, fontSize: 12, fontStyle: 'italic',
+    paddingHorizontal: spacing.md, paddingTop: spacing.sm,
+  },
   emptyBox: { paddingVertical: spacing.lg, alignItems: 'center', gap: 4 },
   emptyText: { fontSize: 13, color: colors.textSecondary, textAlign: 'center' },
   runRow: {

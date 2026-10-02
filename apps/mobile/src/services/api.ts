@@ -119,6 +119,16 @@ interface Aviso {
   nota?: string | null;
 }
 
+/** Un robo que me han hecho: quién, cuándo y si ya le he contestado. */
+export type Robo = {
+  id: string;
+  run_id: string | null;
+  created_at: string;
+  ladron_id: string;
+  ladron: string;
+  contestado: boolean;
+};
+
 /** Una línea del ranking de calabazas. */
 export type RankingObjeto = {
   userId: string;
@@ -536,6 +546,17 @@ class ApiService {
       const qs = `north=${north}&south=${south}&east=${east}&west=${west}`;
       const res = await this.request<{ objetos: ObjetoMapa[] }>(`/objetos/viewport?${qs}`);
       return res?.objetos ?? [];
+    } catch {
+      return [];
+    }
+  }
+
+  /** Quién me ha robado, con fecha. El cartel de "te han robado" sale una
+   *  sola vez; esto es el historial, para poder mirarlo cuando quieras. */
+  async getRobos(): Promise<Robo[]> {
+    try {
+      const res = await this.request<{ robos?: Robo[] }>('/robos');
+      return res?.robos ?? [];
     } catch {
       return [];
     }

@@ -3965,6 +3965,36 @@ function invalidateViewportCache(cells: { x: number; y: number }[]) {
 /** Inbox: all unread taunt entries for the current user, oldest first.
  *  Includes the sender's display_name and the runId so the client can group
  *  notifs by run if needed. */
+/** Quién me ha robado, con fecha.
+ *
+ *  El aviso de "te han robado" es un cartel de UNA sola vez: al cerrarlo se
+ *  marca leído y ya no vuelve. Si te pilla corriendo, o no tienes las
+ *  notificaciones puestas, nunca llegas a saber quién fue — y saber a quién
+ *  devolvérsela es media gracia del juego.
+ *
+ *  No hace falta guardar nada nuevo: la fila de `robo_notif` ya lleva el
+ *  ladrón, la víctima, la carrera y la hora. Esto solo la lee.
+ */
+app.get('/robos', { preHandler: requireAuth }, async (req: any, reply) => {
+  const { rows } = await db.query(
+    `SELECT t.id, t.run_id, t.created_at, t.from_user_id AS ladron_id,
+            u.display_name AS ladron,
+            EXISTS (
+              SELECT 1 FROM taunts r
+               WHERE r.from_user_id = $1 AND r.to_user_id = t.from_user_id
+                 AND r.mode = 'taunt'
+                 AND (r.run_id = t.run_id OR (t.run_id IS NULL AND r.run_id IS NULL))
+            ) AS contestado
+       FROM taunts t
+       JOIN users u ON u.id = t.from_user_id
+      WHERE t.to_user_id = $1 AND t.mode = 'robo_notif'
+      ORDER BY t.created_at DESC
+      LIMIT 30`,
+    [req.userId],
+  );
+  return reply.send({ robos: rows });
+});
+
 app.get('/taunts/unread', { preHandler: requireAuth }, async (req: any, reply) => {
   const { rows } = await db.query(
     `SELECT t.id, t.mode, t.taunt_id, t.run_id, t.created_at,
