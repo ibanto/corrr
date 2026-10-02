@@ -174,6 +174,19 @@ Paso a paso completo (Xcode, App Store Connect, Play Console, Railway): `docs/pu
 
 **Bloqueo por versión mínima** (`MIN_APP_VERSION` en Railway, hoy en `1.0.0`): el aviso normal de "hay versión nueva" es **descartable** y sale una vez por sesión, así que no garantiza que nadie actualice. El bloqueo sí, y se pone sin build ni tiendas. Se usará el 28 de octubre (§9-bis).
 
+**Comprobación de la 1.11.11 antes de subirla** (2-oct): el AAB se generó y se
+abrió para verificar que lleva dentro la versión 1.11.11, la firma, el permiso
+`ACTIVITY_RECOGNITION`, el receptor del detector y sus clases en el dex. En iOS
+se compiló con Xcode 27 y se arrancó en un simulador de **iOS 27**: la app abre
+y pinta bien, sin el fallo de ciclo de vida que tumbó la 1.11.7.
+
+**OJO al probar en el simulador**: un build de *Debug* lleva `expo-dev-client` y
+necesita Metro corriendo; sin él arranca, se queda en el splash y se cierra
+—que es EXACTAMENTE el mismo síntoma que el fallo de iOS 27— y uno se puede
+pasar media hora buscando un fantasma. Para comprobar que la app arranca de
+verdad, compilar en **Release** (lleva el código dentro y no necesita nada):
+`xcodebuild -workspace ios/CORRR.xcworkspace -scheme CORRR -configuration Release -destination 'id=<UDID>' -derivedDataPath /tmp/x CODE_SIGNING_ALLOWED=NO build`
+
 **Avisos en la app** (desde 23-sep): el pop-up que sale al abrir se escribe en `/admin` → "Aviso en la app" (tablas `avisos` y `aviso_vistas`, endpoints `/app/aviso` y `/admin/avisos`). No necesita build: el contenido, a quién le toca y si está encendido viven en el servidor. La parte de la app llega con la 1.11.10.
 
 **Convención de commits**: `vX.Y.Z (vcN): summary` para releases, `fix(backend|mobile): summary` para fixes puntuales. Cada commit con `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>`.
