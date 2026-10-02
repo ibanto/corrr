@@ -456,7 +456,7 @@ function AppContenido() {
         rivalName={stolenPopup.rivalName}
         onClose={() => setStolenPopup({ visible: false })}
       />
-      <View style={[styles.safeArea, { paddingTop: insets.top }]}>
+      <View style={[styles.safeArea, { paddingTop: insets.top + (Platform.OS === 'android' ? 12 : 0) }]}>
         <View style={styles.screen}>
           {/* MapScreen NO se oculta con display:'none'. En iOS un <Modal> que
               vive dentro de un subárbol con display:'none' no llega a
@@ -477,7 +477,13 @@ function AppContenido() {
         </View>
       </View>
       <View style={[styles.tabBarSafe, runActive && styles.oculto]}>
-        <View style={styles.tabBar}>
+        <View style={[styles.tabBar, {
+          // Nunca MENOS de lo que había: el 48 de Android estaba puesto a
+          // mano para las barras altas de MIUI, y fiarse solo del hueco del
+          // sistema sería arriesgar un botón pegado al borde en un móvil que
+          // no tengo delante.
+          paddingBottom: Math.max(insets.bottom + 10, Platform.OS === 'ios' ? 10 : 48),
+        }]}>
           {TABS.map(tab => {
             const isActive = activeTab === tab.key;
             const icons = TAB_ICONS[tab.key];
