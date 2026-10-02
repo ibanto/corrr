@@ -337,6 +337,26 @@ la carrera (`src/services/objetos.ts`), y por cada una comida nace otra cerca
 heredando la fecha de fin. Endpoints: `/objetos/viewport`, `/objetos/ranking`
 y `/admin/objetos` (sembrar, estado, retirar), con su apartado en el panel.
 
+**Cómo se cogen** (decidido el 2-oct, opción B): **pisándolas**, y también las
+que queden dentro de un **círculo cerrado en la MISMA carrera** —el relleno del
+circuito entra como celdas de esa carrera y `recoger` mira todas—. Los **cercos
+entre días NO las recogen**: el territorio pasa a ser tuyo, las calabazas de
+dentro siguen ahí. Es a propósito: un cerco puede llegar a 10 km² y barrería el
+evento entero el primer día sin pisar ninguna.
+
+Sin tope por carrera: si pisas diez, te llevas las diez (2.000 puntos y los diez
+mensajes). El desbloqueo de mensajes sí tiene techo de 10; el ranking no — gana
+quien más coja. Las que renacen salen del mismo mapa de calles, así que el
+evento va llevando a la gente por sitios nuevos.
+
+**Mapa de calles** (`calles`, `scripts/bajar-calles.mjs`): celdas sacadas de
+OpenStreetMap para poder sembrar por CUALQUIER calle, no solo por donde ya ha
+corrido alguien. Cubre las zonas con corredores (con 3 km de margen) más 27
+capitales y ciudades grandes. **No se puede sembrar al azar por España**: una
+calabaza son 10×10 m y hay que pisar ese cuadrado, así que casi todas caerían en
+el campo o en el mar. Si la tabla está vacía, la siembra se cae con elegancia a
+las celdas ya pisadas.
+
 **Halloween 2026**, calendario:
 
 | Cuándo | Qué |
