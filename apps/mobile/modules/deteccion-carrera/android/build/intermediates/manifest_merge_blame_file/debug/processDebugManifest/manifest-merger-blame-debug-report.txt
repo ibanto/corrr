@@ -1,0 +1,33 @@
+1<?xml version="1.0" encoding="utf-8"?>
+2<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+3    package="app.corrr.deteccioncarrera" >
+4
+5    <uses-sdk android:minSdkVersion="24" />
+6
+7    <!--
+8       El permiso y el receptor viven AQUÍ, en el módulo, y no en el manifiesto
+9       de la app: así `expo prebuild` no se los lleva por delante al regenerar
+10       la carpeta android. El manifiesto del módulo se fusiona con el de la app
+11       al compilar.
+12    -->
+13    <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
+13-->/Users/iban/corrr/apps/mobile/modules/deteccion-carrera/android/src/main/AndroidManifest.xml:7:3-77
+13-->/Users/iban/corrr/apps/mobile/modules/deteccion-carrera/android/src/main/AndroidManifest.xml:7:20-74
+14
+15    <application>
+15-->/Users/iban/corrr/apps/mobile/modules/deteccion-carrera/android/src/main/AndroidManifest.xml:9:3-16:17
+16
+17        <!--
+18         Recibe los avisos del sistema "ha empezado a correr" aunque CORRR esté
+19         cerrada. exported=false: solo Google Play Services le habla, a través
+20         del PendingIntent que le damos nosotros.
+21        -->
+22        <receiver
+22-->/Users/iban/corrr/apps/mobile/modules/deteccion-carrera/android/src/main/AndroidManifest.xml:13:5-15:34
+23            android:name="app.corrr.deteccioncarrera.ReceptorActividad"
+23-->/Users/iban/corrr/apps/mobile/modules/deteccion-carrera/android/src/main/AndroidManifest.xml:14:7-66
+24            android:exported="false" />
+24-->/Users/iban/corrr/apps/mobile/modules/deteccion-carrera/android/src/main/AndroidManifest.xml:15:7-31
+25    </application>
+26
+27</manifest>

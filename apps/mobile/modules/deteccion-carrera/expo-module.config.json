@@ -1,0 +1,6 @@
+{
+  "platforms": ["android"],
+  "android": {
+    "modules": ["app.corrr.deteccioncarrera.DeteccionCarreraModule"]
+  }
+}

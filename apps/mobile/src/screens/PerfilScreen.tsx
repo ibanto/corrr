@@ -14,6 +14,7 @@ import {
   TextInput,
   KeyboardAvoidingView,
   Platform,
+  Switch,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
@@ -23,6 +24,7 @@ import { api, MyStats, RunRecord, Achievement, ProfileData } from '../services/a
 import ResumenAdminPanel from '../components/ResumenAdmin';
 import EditProfileScreen from './EditProfileScreen';
 import { checkForUpdates, CURRENT_VERSION } from '../utils/checkForUpdates';
+import { hayDeteccion, estaEncendido, encender, apagar } from '../../modules/deteccion-carrera';
 import { STRAVA_ENABLED } from '../config/features';
 import { appleWatchSupported, isAppleWatchConnected, connectAppleWatch, disconnectAppleWatch } from '../services/healthkit';
 
@@ -66,6 +68,10 @@ const numero = (n: number) => Math.round(n).toLocaleString('es-ES');
 
 export default function PerfilScreen({ user, onLogout }: Props) {
   const displayName = user?.username ?? 'Runner';
+  // El aviso de "¿has salido a correr?" (solo Android). Se lee del módulo,
+  // que es quien lo recuerda entre arranques.
+  const [avisoCarrera, setAvisoCarrera] = useState(false);
+  useEffect(() => { if (hayDeteccion) setAvisoCarrera(estaEncendido()); }, []);
   const [stravaLoading, setStravaLoading] = useState(false);
   // "Tus otras carreras": lo que grabas fuera de CORRR y entra por Salud (solo
   // iPhone). Ver services/healthkit.ts.
@@ -615,6 +621,39 @@ export default function PerfilScreen({ user, onLogout }: Props) {
       )}
 
       <View style={styles.section}>
+        {/* Solo en Android, y solo si la build lleva el módulo. En iPhone no
+            hace falta: las carreras de Strava y del reloj entran por Salud. */}
+        {hayDeteccion && (
+          <View style={styles.settingsRow}>
+            <Ionicons name="walk-outline" size={20} color={colors.textSecondary} style={{ width: 28 }} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.settingsRowLabel}>Avisarme si salgo a correr</Text>
+              <Text style={styles.avisoCarreraNota}>
+                El teléfono detecta que corres y te avisa para que abras CORRR. No usa la ubicación.
+              </Text>
+            </View>
+            <Switch
+              value={avisoCarrera}
+              onValueChange={async (quiere) => {
+                if (quiere) {
+                  const ok = await encender();
+                  setAvisoCarrera(ok);
+                  if (!ok) {
+                    Alert.alert(
+                      'Sin permiso',
+                      'Para avisarte hace falta el permiso de actividad física. Puedes dárselo desde los ajustes del teléfono.',
+                    );
+                  }
+                } else {
+                  await apagar();
+                  setAvisoCarrera(false);
+                }
+              }}
+              trackColor={{ false: colors.border, true: colors.orange }}
+              thumbColor="#fff"
+            />
+          </View>
+        )}
         {[
           { icon: 'flame-outline' as const, label: 'Cómo funcionan los puntos', onPress: () => setPointsModalVisible(true) },
           { icon: 'trophy-outline' as const, label: 'Puntos por logros', onPress: () => setAchievementModalVisible(true) },
@@ -1210,6 +1249,9 @@ const styles = StyleSheet.create({
   settingsRow: {
     flexDirection: 'row', alignItems: 'center', paddingVertical: 14,
     borderBottomWidth: 1, borderBottomColor: colors.border, gap: spacing.sm,
+  },
+  avisoCarreraNota: {
+    color: colors.textSecondary, fontSize: 11, lineHeight: 15, marginTop: 2, paddingRight: spacing.sm,
   },
   settingsRowLabel: { flex: 1, fontSize: 15, fontWeight: '500', color: colors.textPrimary },
   modalOverlay: {

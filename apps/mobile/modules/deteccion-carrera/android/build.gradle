@@ -1,0 +1,22 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'app.corrr'
+version = '1.0.0'
+
+android {
+  namespace "app.corrr.deteccioncarrera"
+  defaultConfig {
+    versionCode 1
+    versionName '1.0.0'
+  }
+}
+
+dependencies {
+  // El reconocimiento de actividad lo pone Google Play Services. expo-location
+  // ya arrastra esta librería, pero se declara aquí para que el módulo no
+  // dependa de que otro la traiga.
+  implementation 'com.google.android.gms:play-services-location:21.3.0'
+}
