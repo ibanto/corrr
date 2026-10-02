@@ -27,9 +27,20 @@ tiendas el **24-25 de octubre** como muy tarde. Calendario completo en §9-bis.
 
 ### Escrito y esperando a la 1.11.11
 
-- Los **10 + 10 mensajes de Halloween** y el selector rehecho: cuadrícula vertical,
-  dos pestañas (Clásicos / Halloween), sin candados, calabaza dibujada.
-- Las **calabazas en el mapa** (la app todavía no las pinta).
+**OJO**: el paquete de la 1.11.10 se generó el **23-sep a las 16:51**. TODO lo
+commiteado en `apps/mobile` después de esa hora está esperando build, aunque el
+código lleve semanas en `main`. Para la lista exacta:
+`git log --oneline 85288f9..HEAD -- apps/mobile`.
+
+- Calabazas en el mapa y en el resumen de carrera.
+- Ficha del corredor al tocarlo en el ranking.
+- Resumen de administración dentro de la app (solo para Ibanto).
+- Los 10 + 10 mensajes de Halloween y el selector rehecho (cuadrícula vertical,
+  dos pestañas, sin candados, calabaza dibujada).
+- Detector automático de carrera en Android.
+- Pantalla de Retos con el cartel de Halloween, encendible desde el panel.
+- Arreglos: puntos partidos en dos líneas, vueltas grandes que no se rellenaban,
+  territorio de los rivales opaco, calles tapadas por el territorio.
 
 ### Falta por hacer ANTES de esa build
 
