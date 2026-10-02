@@ -930,6 +930,12 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
   }, []);
 
   const loadUserXP = async () => {
+    // Estas dos PRIMERO y sin esperar: son dos datos sueltos, y si van detrás
+    // de las estadísticas se quedan colgando de la petición más pesada de la
+    // app. Medido en el iPhone: la app tardaba 18 segundos en enterarse de que
+    // Halloween estaba encendido, y hasta entonces no pintaba una calabaza.
+    api.getAjustes().then(a => setHalloweenActivo(a.halloween)).catch(() => {});
+    api.getCalabazasMias().then(setCalabazas).catch(() => {});
     try {
       const data = await api.getMyStats();
       if (data?.stats?.total_points) {
@@ -942,8 +948,6 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       // y el usuario empieza con solo el primer mensaje desbloqueado.
       setTotalSteals(data?.stats?.total_steals ?? 0);
     } catch {}
-    api.getCalabazasMias().then(setCalabazas).catch(() => {});
-    api.getAjustes().then(a => setHalloweenActivo(a.halloween)).catch(() => {});
   };
 
   // Al arrancar Y cada vez que se vuelve a la app. El interruptor de Halloween
