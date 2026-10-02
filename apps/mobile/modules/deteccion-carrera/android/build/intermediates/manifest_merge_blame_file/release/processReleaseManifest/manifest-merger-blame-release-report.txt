@@ -1,0 +1,56 @@
+1<?xml version="1.0" encoding="utf-8"?>
+2<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+3    package="app.corrr.deteccioncarrera" >
+4
+5    <uses-sdk android:minSdkVersion="24" />
+6
+7    <!--
+8       El permiso y el receptor viven AQUÍ, en el módulo, y no en el manifiesto
+9       de la app: así `expo prebuild` no se los lleva por delante al regenerar
+10       la carpeta android. El manifiesto del módulo se fusiona con el de la app
+11       al compilar.
+12    -->
+13    <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
+13-->/Users/iban/corrr/apps/mobile/modules/deteccion-carrera/android/src/main/AndroidManifest.xml:7:3-77
+13-->/Users/iban/corrr/apps/mobile/modules/deteccion-carrera/android/src/main/AndroidManifest.xml:7:20-74
+14
+15    <!--
+16       OBLIGATORIO declararlos opcionales. Google Play da por hecho que si
+17       pides el permiso de actividad física necesitas sensor de pasos, y deja
+18       la app FUERA del alcance de los móviles que no lo llevan: medido en Play
+19       Console, 18.713 modelos menos de golpe.
+20
+21       CORRR no necesita ese sensor para nada esencial: sin él simplemente no
+22       habrá aviso de "¿has salido a correr?", y el resto del juego va igual.
+23       Así que el que no lo tenga, que se instale la app igual.
+24    -->
+25    <uses-feature
+25-->/Users/iban/corrr/apps/mobile/modules/deteccion-carrera/android/src/main/AndroidManifest.xml:17:3-95
+26        android:name="android.hardware.sensor.stepcounter"
+26-->/Users/iban/corrr/apps/mobile/modules/deteccion-carrera/android/src/main/AndroidManifest.xml:17:17-67
+27        android:required="false" />
+27-->/Users/iban/corrr/apps/mobile/modules/deteccion-carrera/android/src/main/AndroidManifest.xml:17:68-92
+28    <uses-feature
+28-->/Users/iban/corrr/apps/mobile/modules/deteccion-carrera/android/src/main/AndroidManifest.xml:18:3-96
+29        android:name="android.hardware.sensor.stepdetector"
+29-->/Users/iban/corrr/apps/mobile/modules/deteccion-carrera/android/src/main/AndroidManifest.xml:18:17-68
+30        android:required="false" />
+30-->/Users/iban/corrr/apps/mobile/modules/deteccion-carrera/android/src/main/AndroidManifest.xml:18:69-93
+31
+32    <application>
+32-->/Users/iban/corrr/apps/mobile/modules/deteccion-carrera/android/src/main/AndroidManifest.xml:20:3-27:17
+33
+34        <!--
+35         Recibe los avisos del sistema "ha empezado a correr" aunque CORRR esté
+36         cerrada. exported=false: solo Google Play Services le habla, a través
+37         del PendingIntent que le damos nosotros.
+38        -->
+39        <receiver
+39-->/Users/iban/corrr/apps/mobile/modules/deteccion-carrera/android/src/main/AndroidManifest.xml:24:5-26:34
+40            android:name="app.corrr.deteccioncarrera.ReceptorActividad"
+40-->/Users/iban/corrr/apps/mobile/modules/deteccion-carrera/android/src/main/AndroidManifest.xml:25:7-66
+41            android:exported="false" />
+41-->/Users/iban/corrr/apps/mobile/modules/deteccion-carrera/android/src/main/AndroidManifest.xml:26:7-31
+42    </application>
+43
+44</manifest>

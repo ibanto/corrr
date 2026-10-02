@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="app.corrr.deteccioncarrera" >
+
+    <uses-sdk android:minSdkVersion="24" />
+
+    <!--
+       El permiso y el receptor viven AQUÍ, en el módulo, y no en el manifiesto
+       de la app: así `expo prebuild` no se los lleva por delante al regenerar
+       la carpeta android. El manifiesto del módulo se fusiona con el de la app
+       al compilar.
+    -->
+    <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
+
+    <!--
+       OBLIGATORIO declararlos opcionales. Google Play da por hecho que si
+       pides el permiso de actividad física necesitas sensor de pasos, y deja
+       la app FUERA del alcance de los móviles que no lo llevan: medido en Play
+       Console, 18.713 modelos menos de golpe.
+
+       CORRR no necesita ese sensor para nada esencial: sin él simplemente no
+       habrá aviso de "¿has salido a correr?", y el resto del juego va igual.
+       Así que el que no lo tenga, que se instale la app igual.
+    -->
+    <uses-feature
+        android:name="android.hardware.sensor.stepcounter"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.sensor.stepdetector"
+        android:required="false" />
+
+    <application>
+
+        <!--
+         Recibe los avisos del sistema "ha empezado a correr" aunque CORRR esté
+         cerrada. exported=false: solo Google Play Services le habla, a través
+         del PendingIntent que le damos nosotros.
+        -->
+        <receiver
+            android:name="app.corrr.deteccioncarrera.ReceptorActividad"
+            android:exported="false" />
+    </application>
+
+</manifest>
