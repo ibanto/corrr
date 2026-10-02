@@ -119,6 +119,15 @@ interface Aviso {
   nota?: string | null;
 }
 
+/** Una línea del ranking de calabazas. */
+export type RankingObjeto = {
+  userId: string;
+  name: string;
+  cuantos: number;
+  puntos: number;
+  mine: boolean;
+};
+
 /** Objeto del mapa (las calabazas de Halloween y lo que venga después). Se
  *  coge pasando por encima al correr; quien decide es el servidor. */
 interface ObjetoMapa {
@@ -529,6 +538,29 @@ class ApiService {
       return res?.objetos ?? [];
     } catch {
       return [];
+    }
+  }
+
+  /** Los interruptores del juego que se encienden desde el panel. Si falla,
+   *  todo apagado: más vale no enseñar un evento que no existe. */
+  async getAjustes(): Promise<{ halloween: boolean }> {
+    try {
+      const res = await this.request<{ halloween?: boolean }>('/app/ajustes');
+      return { halloween: res?.halloween === true };
+    } catch {
+      return { halloween: false };
+    }
+  }
+
+  /** Quién lleva más calabazas, y cuántas llevo yo. */
+  async getRankingCalabazas(): Promise<{ mias: number; ranking: RankingObjeto[] }> {
+    try {
+      const res = await this.request<{ mias?: number; ranking?: RankingObjeto[] }>(
+        '/objetos/ranking?tipo=calabaza',
+      );
+      return { mias: res?.mias ?? 0, ranking: res?.ranking ?? [] };
+    } catch {
+      return { mias: 0, ranking: [] };
     }
   }
 

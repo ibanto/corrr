@@ -128,13 +128,16 @@ interface Props {
   // Calabazas recogidas. Cada una desbloquea UN mensaje de Halloween. Con
   // cero, la pestaña entera sale como "próximamente".
   calabazas?: number;
+  // ¿Está Halloween encendido desde el panel? Mientras no lo esté, la pestaña
+  // dice "próximamente" aunque alguien tenga calabazas de una prueba.
+  halloweenActivo?: boolean;
   onSend: (messageId: number, mode: TauntMode) => void;
   onClose: () => void;
 }
 
 export default function TauntSelector({
   visible, mode = 'taunt', rivalName, zoneName,
-  unlockedCount = 1, totalSteals = 0, calabazas = 0,
+  unlockedCount = 1, totalSteals = 0, calabazas = 0, halloweenActivo = false,
   onSend, onClose,
 }: Props) {
   const [preview, setPreview] = useState<TauntMessage | null>(null);
@@ -146,7 +149,7 @@ export default function TauntSelector({
   // Robos que faltan para el próximo desbloqueo (siguiente bloque de 10).
   const stealsToNext = unlocked >= 10 ? 0 : 10 - (totalSteals % 10);
   // Una calabaza, un mensaje. Sin calabazas no hay nada que enseñar todavía.
-  const halloweenAbiertos = Math.max(0, Math.min(10, calabazas));
+  const halloweenAbiertos = halloweenActivo ? Math.max(0, Math.min(10, calabazas)) : 0;
 
   const mensajes = useMemo(() => lista(coleccion, mode), [coleccion, mode]);
 

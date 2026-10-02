@@ -635,6 +635,9 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
   // con el resto de las cifras y se refresca tras cada carrera, que es cuando
   // el servidor decide si has pisado alguna.
   const [calabazas, setCalabazas] = useState(0);
+  // Halloween lo enciende el panel, no la fecha del teléfono: la versión con
+  // las calabazas se publica semanas antes y Apple aprueba cuando quiere.
+  const [halloweenActivo, setHalloweenActivo] = useState(false);
   // True mientras saveRun + loadCells están en vuelo después de pulsar STOP.
   // Mostramos LoadingScreen para que el usuario sienta que algo está pasando
   // entre pulsar STOP y aparecer el resumen.
@@ -940,6 +943,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       setTotalSteals(data?.stats?.total_steals ?? 0);
     } catch {}
     api.getCalabazasMias().then(setCalabazas).catch(() => {});
+    api.getAjustes().then(a => setHalloweenActivo(a.halloween)).catch(() => {});
   };
 
   useEffect(() => { loadUserXP(); }, []);
@@ -2280,6 +2284,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         unlockedCount={Math.max(1, Math.min(10, 1 + Math.floor(totalSteals / 10)))}
         totalSteals={totalSteals}
         calabazas={calabazas}
+        halloweenActivo={halloweenActivo}
         onSend={async (messageId) => {
           // Either the user is responding to a robo/received taunt (tauntTarget
           // is set), or responding to their OWN post-run "stolen_by_you" popup
@@ -2793,7 +2798,9 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
           )}
 
           {/* Objetos del mapa: se cogen pasando por encima al correr. */}
-          {objetos.map(o => (
+          {/* Las calabazas solo si Halloween está encendido desde el panel: la
+              versión se publica semanas antes del evento. */}
+          {halloweenActivo && objetos.map(o => (
             <Marker
               key={`objeto-${o.id}`}
               coordinate={{

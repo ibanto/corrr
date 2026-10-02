@@ -448,6 +448,13 @@ async function initDB() {
   await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS es_admin BOOLEAN NOT NULL DEFAULT FALSE`).catch(() => {});
   // Objetos del mapa (las calabazas de Halloween y lo que venga después).
   await db.query(`
+    CREATE TABLE IF NOT EXISTS ajustes_juego (
+      clave TEXT PRIMARY KEY,
+      valor TEXT NOT NULL,
+      cambiado_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `).catch(() => {});
+  await db.query(`
     CREATE TABLE IF NOT EXISTS objetos (
       id SERIAL PRIMARY KEY,
       tipo TEXT NOT NULL DEFAULT 'calabaza',
@@ -1941,10 +1948,19 @@ Sale UNA vez por persona; para repetirlo, se crea otro. Solo lo ven las apps 1.1
 
 <section id="p-juego" role="tabpanel" hidden>
 <div class="caja">
+<h2>Halloween</h2>
+<p class="nota">La app ya lleva dentro las calabazas y los diez mensajes nuevos, pero <b>apagados</b>.
+Este interruptor los enciende para todo el mundo, sin sacar versión. Mientras esté apagado, en Retos
+sale el cartel de "prepárate" y la pestaña de mensajes de Halloween dice "próximamente".</p>
+<label class="casilla"><input type="checkbox" id="hw_on">
+  <b>Halloween encendido</b> <span id="hw_estado">—</span></label>
+<div id="hw_msg" class="resultado" style="display:none"></div>
+</div>
+<div class="caja">
 <h2>Juego del mapa</h2>
 <p class="nota">Las calabazas se siembran sobre calles por las que YA ha corrido alguien, así que
 ninguna cae dentro de un edificio. Se cogen pasando por encima al correr, y cuando alguien se come
-una, nace otra cerca. <b>Solo las ven las apps 1.11.11 o más nuevas.</b></p>
+una, nace otra cerca. <b>Solo las ven las apps 1.11.11 o más nuevas, y con Halloween encendido.</b></p>
 <div id="objetos_estado"></div>
 <form class="form" id="fo">
   <input id="o_cuantas" type="number" min="1" max="500" value="100" placeholder="Cuántas">
@@ -2252,6 +2268,32 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
     m.style.borderLeftColor = ok ? '#4caf50' : '#f44336';
     m.textContent = (ok ? '✓ ' : '✗ ') + texto;
   }
+  function pintarHalloween(encendido) {
+    document.getElementById('hw_on').checked = encendido;
+    var e = document.getElementById('hw_estado');
+    e.textContent = encendido ? '· encendido para todos' : '· apagado';
+    e.style.color = encendido ? '#4caf50' : '#8C8C8C';
+  }
+  api('/admin/ajustes').then(function (r) { pintarHalloween(r.halloween); }).catch(function () {});
+  document.getElementById('hw_on').addEventListener('change', function (ev) {
+    var quiere = ev.target.checked;
+    var m = document.getElementById('hw_msg');
+    m.style.display = 'block'; m.style.color = '#bbb'; m.style.borderLeftColor = '#555';
+    m.textContent = 'Un momento…';
+    api('/admin/ajustes', {
+      method: 'POST', body: JSON.stringify({ clave: 'halloween', encendido: quiere }),
+    }).then(function (r) {
+      pintarHalloween(r.encendido);
+      m.style.color = '#4caf50'; m.style.borderLeftColor = '#4caf50';
+      m.textContent = r.encendido
+        ? '✓ Halloween encendido. Lo verán al abrir la app (o al volver a ella).'
+        : '✓ Halloween apagado. Vuelve a salir el cartel de "prepárate" en Retos.';
+    }).catch(function (e) {
+      pintarHalloween(!quiere);
+      m.style.color = '#f44336'; m.style.borderLeftColor = '#f44336';
+      m.textContent = '✗ ' + e.message;
+    });
+  });
   document.getElementById('o_sembrar').addEventListener('click', function () {
     var cuerpo = {
       tipo: 'calabaza',
@@ -5215,6 +5257,36 @@ app.get('/objetos/viewport', { preHandler: requireAuth }, async (req: any, reply
 
 /** Marcador del evento: quién lleva más. Lo usa el cartel del ganador y, si
  *  algún día queremos, una pantalla dentro de la app. */
+/** Interruptores del juego que se encienden sin sacar versión.
+ *
+ *  Existe porque la build de Halloween se sube semanas antes del 29 de
+ *  octubre: la app lleva las calabazas y los mensajes dentro, pero apagados,
+ *  y se encienden desde el panel el día que toca. Sin esto habría que acertar
+ *  con la fecha de publicación de dos tiendas, una de ellas Apple. */
+async function ajusteEncendido(clave: string): Promise<boolean> {
+  const { rows } = await db.query('SELECT valor FROM ajustes_juego WHERE clave = $1', [clave]);
+  return rows[0]?.valor === 'si';
+}
+
+app.get('/app/ajustes', { preHandler: requireAuth }, async (_req, reply) => {
+  return reply.send({ halloween: await ajusteEncendido('halloween') });
+});
+
+app.get('/admin/ajustes', { preHandler: requireAdmin }, async (_req, reply) => {
+  return reply.send({ halloween: await ajusteEncendido('halloween') });
+});
+
+app.post('/admin/ajustes', { preHandler: requireAdmin }, async (req: any, reply) => {
+  const { clave, encendido } = req.body ?? {};
+  if (clave !== 'halloween') return reply.status(400).send({ error: 'Ajuste desconocido' });
+  await db.query(
+    `INSERT INTO ajustes_juego (clave, valor) VALUES ($1, $2)
+     ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor, cambiado_at = NOW()`,
+    [clave, encendido === true ? 'si' : 'no'],
+  );
+  return reply.send({ ok: true, clave, encendido: encendido === true });
+});
+
 app.get('/objetos/ranking', { preHandler: requireAuth }, async (req: any, reply) => {
   const tipo = String(req.query?.tipo ?? 'calabaza');
   const { rows } = await db.query(
