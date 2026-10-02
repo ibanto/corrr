@@ -12,7 +12,6 @@ import {
   Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, spacing, radius } from '../theme';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
@@ -141,8 +140,6 @@ export default function TauntSelector({
   unlockedCount = 1, totalSteals = 0, calabazas = 0, halloweenActivo = false,
   onSend, onClose,
 }: Props) {
-  // Con edge-to-edge, el reloj se superpone si no se pide hueco.
-  const insets = useSafeAreaInsets();
   const [preview, setPreview] = useState<TauntMessage | null>(null);
   const [coleccion, setColeccion] = useState<Coleccion>('clasicos');
 
@@ -170,7 +167,7 @@ export default function TauntSelector({
           />
 
           {/* Botón cerrar */}
-          <TouchableOpacity style={[styles.previewClose, { top: Math.max(insets.top, 50) }]} onPress={() => setPreview(null)}>
+          <TouchableOpacity style={styles.previewClose} onPress={() => setPreview(null)}>
             <Ionicons name="arrow-back" size={24} color="#fff" />
           </TouchableOpacity>
 
@@ -198,7 +195,7 @@ export default function TauntSelector({
     <Modal visible transparent animationType="slide" statusBarTranslucent>
       <View style={styles.container}>
         {/* Header */}
-        <View style={[styles.header, { paddingTop: Math.max(insets.top, 50) }]}>
+        <View style={styles.header}>
           <TouchableOpacity onPress={onClose} style={styles.backBtn}>
             <Ionicons name="close" size={28} color={colors.textPrimary} />
           </TouchableOpacity>

@@ -13,7 +13,6 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { api, ProfileData, ProfileUpdate } from '../services/api';
 import { colors, spacing, radius } from '../theme';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const SHOE_BRANDS = [
   'Nike', 'Adidas', 'Asics', 'Brooks', 'Hoka',
@@ -51,9 +50,6 @@ interface Props {
 }
 
 export default function EditProfileScreen({ visible, initial, onClose, onSaved }: Props) {
-  // Con edge-to-edge, el sistema ya no reserva hueco para el reloj: se pide.
-  // Math.max para que en un móvil sin muesca se quede como estaba.
-  const insets = useSafeAreaInsets();
   const [firstName, setFirstName] = useState('');
   const [surname, setSurname] = useState('');
   const [warCry, setWarCry] = useState('');
@@ -112,7 +108,7 @@ export default function EditProfileScreen({ visible, initial, onClose, onSaved }
     <Modal visible={visible} animationType="slide" transparent={false}>
       <View style={styles.container}>
         {/* Header */}
-        <View style={[styles.header, { paddingTop: Math.max(insets.top, 48) }]}>
+        <View style={styles.header}>
           <TouchableOpacity onPress={onClose} style={styles.headerBtn}>
             <Ionicons name="arrow-back" size={24} color={colors.textPrimary} />
           </TouchableOpacity>

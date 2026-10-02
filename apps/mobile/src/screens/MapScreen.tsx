@@ -79,7 +79,6 @@ function tauntImageById(mode: string, id: number) {
 /** La calabaza de Halloween: en el mapa, al pisarla y en la pantalla de
  *  carrera. Un dibujo y no el emoji, que cambia de cara en cada teléfono. */
 import { marcarCarreraEnMarcha } from '../../modules/deteccion-carrera';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 /* Transparencia del territorio en el mapa.
  *
@@ -615,10 +614,6 @@ function BreakdownRow({ label, value, hint, highlight }: { label: string; value:
 }
 
 export default function MapScreen({ user, onNavigateToShop }: Props) {
-  // Huecos del sistema. Con edge-to-edge la app dibuja hasta el borde y el
-  // reloj y los botones de abajo se superponen si no se pide sitio. Math.max
-  // conserva los márgenes de antes donde ya eran suficientes.
-  const insets = useSafeAreaInsets();
   const [isRunning, setIsRunning] = useState(false);
   const [runTime, setRunTime] = useState(0);
   // `distance` es la distancia OFICIAL, ahora medida por velocidad GPS (Doppler):
@@ -2936,7 +2931,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
              - Botón pill ancho abajo (PAUSAR en marcha; STOP + REANUDAR en pausa).
              - paddingBottom amplio para que el botón no quede por debajo de
                la nav bar de Android (Xiaomi, gestos, etc.). */}
-        <View style={[styles.runningScreen, { paddingTop: Math.max(insets.top, 48), paddingBottom: Math.max(insets.bottom + 24, 72) }]}>
+        <View style={styles.runningScreen}>
           {/* Una sola fila arriba: logo, el estado (pausa) en el centro y
               MAPA a la derecha. Alto fijo para que aparecer o desaparecer el
               badge no mueva nada de lo de abajo. */}

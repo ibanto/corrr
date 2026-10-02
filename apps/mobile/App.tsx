@@ -31,7 +31,6 @@ import PerfilScreen from './src/screens/PerfilScreen';
 import { registerForPushNotifications } from './src/services/notifications';
 import { importNewWorkouts, RUNS_IMPORTED_EVENT } from './src/services/healthkit';
 import ZonePopup, { PopupType } from './src/components/ZonePopup';
-import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CHECK_TAUNTS_EVENT, RUN_TABS_EVENT } from './src/services/notifications';
 import PodioModal from './src/components/PodioModal';
 import AvisoModal from './src/components/AvisoModal';
@@ -90,10 +89,7 @@ function saturdayOfThisWeek(now: Date = new Date()): string {
 interface User { id: string; username: string; email: string; city?: string; }
 interface Session { token: string; user: User; }
 
-function AppContenido() {
-  // Los huecos del sistema (reloj arriba, botones o barra de gestos abajo).
-  // Cambian de un teléfono a otro, así que no se pueden clavar en el código.
-  const insets = useSafeAreaInsets();
+export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>('Mapa');
   const [loading, setLoading] = useState(true);
@@ -456,7 +452,7 @@ function AppContenido() {
         rivalName={stolenPopup.rivalName}
         onClose={() => setStolenPopup({ visible: false })}
       />
-      <View style={[styles.safeArea, { paddingTop: insets.top + (Platform.OS === 'android' ? 12 : 0) }]}>
+      <SafeAreaView style={styles.safeArea}>
         <View style={styles.screen}>
           {/* MapScreen NO se oculta con display:'none'. En iOS un <Modal> que
               vive dentro de un subárbol con display:'none' no llega a
@@ -475,15 +471,9 @@ function AppContenido() {
             </View>
           )}
         </View>
-      </View>
-      <View style={[styles.tabBarSafe, runActive && styles.oculto]}>
-        <View style={[styles.tabBar, {
-          // Nunca MENOS de lo que había: el 48 de Android estaba puesto a
-          // mano para las barras altas de MIUI, y fiarse solo del hueco del
-          // sistema sería arriesgar un botón pegado al borde en un móvil que
-          // no tengo delante.
-          paddingBottom: Math.max(insets.bottom + 10, Platform.OS === 'ios' ? 10 : 48),
-        }]}>
+      </SafeAreaView>
+      <SafeAreaView style={[styles.tabBarSafe, runActive && styles.oculto]}>
+        <View style={styles.tabBar}>
           {TABS.map(tab => {
             const isActive = activeTab === tab.key;
             const icons = TAB_ICONS[tab.key];
@@ -511,26 +501,8 @@ function AppContenido() {
             );
           })}
         </View>
-      </View>
+      </SafeAreaView>
     </View>
-  );
-}
-
-/**
- * Edge-to-edge: desde Android 15 la app dibuja de borde a borde y el sistema
- * ya no reserva hueco para el reloj ni para los botones de abajo. Ese hueco
- * hay que pedirlo, y lo da `useSafeAreaInsets`, que es distinto en cada
- * teléfono (muesca, isla, gestos o tres botones).
- *
- * Antes iba a ojo: 32+12 px arriba y 48 abajo, clavados en el código. Con eso
- * la cabecera se habría metido debajo del reloj en unos móviles y habría
- * sobrado hueco en otros.
- */
-export default function App() {
-  return (
-    <SafeAreaProvider>
-      <AppContenido />
-    </SafeAreaProvider>
   );
 }
 
@@ -556,7 +528,7 @@ const styles = StyleSheet.create({
   },
   bloqueoBotonTexto: { color: '#fff', fontSize: 16, fontWeight: '900', letterSpacing: 1 },
   root: { flex: 1, backgroundColor: colors.bg },
-  safeArea: { flex: 1, backgroundColor: colors.bg },
+  safeArea: { flex: 1, backgroundColor: colors.bg, paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight ?? 32) + 12 : 0 },
   screen: { flex: 1 },
   // Opaca: tapa por completo el mapa, que ahora sigue montado y "visible"
   // detrás para que sus modales puedan presentarse.
@@ -566,7 +538,7 @@ const styles = StyleSheet.create({
   tabBar: {
     flexDirection: 'row', backgroundColor: colors.bgCard,
     borderTopWidth: 1, borderTopColor: colors.border,
-    paddingTop: 8,
+    paddingTop: 8, paddingBottom: Platform.OS === 'ios' ? 0 : 48,
   },
   tabItem: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 2 },
   tabItemInner: { position: 'relative' },

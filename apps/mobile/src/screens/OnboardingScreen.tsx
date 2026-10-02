@@ -22,7 +22,6 @@ import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, radius } from '../theme';
 import { api } from '../services/api';
 import { STRAVA_ENABLED } from '../config/features';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const { width, height } = Dimensions.get('window');
 
@@ -75,9 +74,6 @@ interface Props {
 type Mode = 'intro' | 'splash' | 'login' | 'register' | 'forgot' | 'verify' | 'strava-signup' | 'strava-link';
 
 export default function OnboardingScreen({ onAuthenticated, pendingStravaSignup, onStravaSignupConsumed }: Props) {
-  // El hueco del reloj, que cambia según el móvil. Math.max conserva los 60
-  // de antes donde ya sobraban.
-  const insets = useSafeAreaInsets();
   const [mode, setMode] = useState<Mode>('intro');
 
   // Cuando llega un signup pendiente desde el deep link de Strava, saltamos
@@ -473,7 +469,7 @@ export default function OnboardingScreen({ onAuthenticated, pendingStravaSignup,
   return (
     <KeyboardAvoidingView style={styles.authContainer} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
       <ScrollView
-        contentContainerStyle={[styles.authScroll, { paddingTop: Math.max(insets.top, 60) }]}
+        contentContainerStyle={styles.authScroll}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
