@@ -1018,12 +1018,21 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       // guardar). Con el mínimo, el refresh cubre un run típico.
       const halfLat = Math.max(currentDelta.current.latDelta / 2, 0.01);
       const halfLng = Math.max(currentDelta.current.lngDelta / 2, 0.01);
-      const t = await api.getMapTerritory(
-        useLat + halfLat,
-        useLat - halfLat,
-        useLng + halfLng,
-        useLng - halfLng,
-      );
+      // Las dos peticiones A LA VEZ. Iban una detrás de otra, y como el
+      // territorio de una ciudad llena son más de cien mil celdas, las
+      // calabazas no empezaban a pedirse hasta que acababa lo gordo: tardaban
+      // un siglo en aparecer aunque sean cuatro datos.
+      const [t, objs] = await Promise.all([
+        api.getMapTerritory(
+          useLat + halfLat,
+          useLat - halfLat,
+          useLng + halfLng,
+          useLng - halfLng,
+        ),
+        api.getObjetos(useLat + halfLat, useLat - halfLat, useLng + halfLng, useLng - halfLng),
+      ]);
+      objetosRef.current = objs;
+      setObjetos(objs);
       const owners = t.owners;
       // Acumulamos las fotos en vez de reemplazarlas: al moverte por el mapa
       // cada carga trae solo los dueños de ese encuadre, y no queremos perder
@@ -1032,11 +1041,6 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         for (const [id, o] of Object.entries(owners)) ownerAvatarsRef.current[id] = o.avatar;
       }
       setTerritorio(t);
-      const objs = await api.getObjetos(
-        useLat + halfLat, useLat - halfLat, useLng + halfLng, useLng - halfLng,
-      );
-      objetosRef.current = objs;
-      setObjetos(objs);
     } catch {}
   };
 
