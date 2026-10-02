@@ -12,6 +12,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { api, RunRecord } from '../services/api';
 import { colors, spacing, radius } from '../theme';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const PAGE_SIZE = 30;
 
@@ -24,6 +25,9 @@ interface Props {
  *  Se abre desde Stats → "VER MÁS". Carga 30 carreras la primera vez y va
  *  pidiendo más a medida que el usuario llega al final del scroll. */
 export default function AllRunsScreen({ visible, onClose }: Props) {
+  // Con edge-to-edge, el sistema ya no reserva hueco para el reloj: se pide.
+  // Math.max para que en un móvil sin muesca se quede como estaba.
+  const insets = useSafeAreaInsets();
   const [runs, setRuns] = useState<RunRecord[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -68,7 +72,7 @@ export default function AllRunsScreen({ visible, onClose }: Props) {
   return (
     <Modal visible={visible} animationType="slide" transparent={false}>
       <View style={styles.container}>
-        <View style={styles.header}>
+        <View style={[styles.header, { paddingTop: Math.max(insets.top, 48) }]}>
           <TouchableOpacity onPress={onClose} style={styles.headerBtn}>
             <Ionicons name="arrow-back" size={24} color={colors.textPrimary} />
           </TouchableOpacity>
