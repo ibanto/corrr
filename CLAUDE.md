@@ -42,12 +42,20 @@ código lleve semanas en `main`. Para la lista exacta:
 - Arreglos: puntos partidos en dos líneas, vueltas grandes que no se rellenaban,
   territorio de los rivales opaco, calles tapadas por el territorio.
 
-### Falta por hacer ANTES de esa build
+### Para DESPUÉS de Halloween
 
-1. **Detector automático de carrera en Android** (permiso de actividad física, sin
-   ubicación "siempre"): notificación "¿estás corriendo?".
-2. **Los tres avisos de Google Play**: edge-to-edge, pantallas grandes y DEX/R8
-   (plazo de Google: febrero de 2027).
+1. **Edge-to-edge**: se intentó el 2-oct y se revirtió a propósito. Los márgenes
+   del sistema estaban bien encaminados, pero solo se pudo comprobar la pantalla
+   de entrada en un emulador (el menú y la cabecera piden sesión) y en iPhone
+   nada, que es donde más cambia. No corre prisa: el margen de arriba YA se lee
+   del sistema y el de abajo son 48 px fijos que solo quedan justos en móviles
+   con barra de navegación alta. El trabajo está en el historial (`08125fb`,
+   `c5bfdee`, revertidos en `8815d45`): se puede recuperar con `git revert` de
+   la reversión. **Lección: al mover márgenes a `Math.max`, comprobar que el
+   reemplazo en el JSX se aplicó de verdad — una vez falló en silencio y el
+   menú se quedó sin margen inferior.**
+2. **Pantallas grandes** y **DEX/R8**: los otros dos avisos de Google (plazo
+   de Google: febrero de 2027).
 
 ### Estado del juego
 
@@ -162,7 +170,7 @@ curl https://corrr-api-production.up.railway.app/app/version
 
 Paso a paso completo (Xcode, App Store Connect, Play Console, Railway): `docs/publicar-version.md`.
 
-**Versión actual** (30-sep-2026): Android `1.11.10` vc67 y iPhone `1.11.10` build 17 publicadas y **anunciadas las dos** (`/app/version`). **La próxima build es la 1.11.11: build 18 / vc68**, y tiene fecha (§0).
+**Versión actual** (2-oct-2026): Android `1.11.10` vc67 y iPhone `1.11.10` build 17 publicadas y **anunciadas las dos** (`/app/version`). **La 1.11.11 (vc68 / build 18) está CONSTRUIDA**: AAB en `apps/mobile/builds/corrr-v1.11.11-vc68.aab`; falta archivar el iPhone en Xcode, la prueba de calle y subir a las tiendas. **No anunciar hasta que cada tienda la haya publicado.**
 
 **Bloqueo por versión mínima** (`MIN_APP_VERSION` en Railway, hoy en `1.0.0`): el aviso normal de "hay versión nueva" es **descartable** y sale una vez por sesión, así que no garantiza que nadie actualice. El bloqueo sí, y se pone sin build ni tiendas. Se usará el 28 de octubre (§9-bis).
 
