@@ -6,81 +6,77 @@ Instrucciones para Claude trabajando en este repo. Léelo entero antes de tocar 
 
 ## 0. Dónde estamos (leer esto primero)
 
-*Al día a 30-sep-2026. Si algo de aquí abajo contradice a este apartado, manda este.*
+*Al día a 2-oct-2026, noche. Si algo de aquí abajo contradice a este apartado, manda este.*
 
-**En las tiendas**: **1.11.10** (Android vc67, iPhone build 17), publicada y anunciada
-en las dos. 46 corredores registrados.
+**En las tiendas**: 1.11.10 (Android vc67, iPhone build 17). 46 corredores.
 
-**Lo siguiente es la 1.11.11, y tiene fecha**: debe estar publicada **antes del 29 de
-octubre** para que se vean las calabazas de Halloween, así que hay que subirla a las
-tiendas el **24-25 de octubre** como muy tarde. Calendario completo en §9-bis.
+**LA FECHA QUE MANDA: lunes 19 de octubre**, subir la 1.11.11 a las dos tiendas.
+El evento de Halloween va del **viernes 23 de octubre al domingo 1 de noviembre**
+(§9-bis). Apple tarda hasta tres días en revisar, de ahí el margen.
+
+### Lo siguiente que hay que hacer
+
+1. **Archivar la build 20 de iPhone** (el AAB `vc72` ya está hecho). Son ~10 min:
+   `cd apps/mobile/ios && xcodebuild -workspace CORRR.xcworkspace -scheme CORRR -configuration Release -destination 'generic/platform=iOS' -archivePath ~/Library/Developer/Xcode/Archives/$(date +%F)/CORRR-1.11.11-build20.xcarchive archive`
+   **El archivado lo lanzo YO desde la terminal; él lo recoge en Organizer y lo sube.**
+2. **Terminar de bajar las calles**: `cd apps/backend && npm run calles` (va por
+   308 de 442 trozos y 1,23 millones de celdas; se retoma solo). Luego
+   `npm run calles:subir`.
+3. **Que pruebe la vc72 / build 20**: si las calabazas salen al instante (antes
+   tardaban 18 s), si el detector de Android avisa al salir a correr, y la
+   prueba de calle del GPS (`docs/prueba-gps.md`), que toca porque se tocó el mapa.
 
 ### Ya funcionando en producción (servidor, sin build)
 
-| Qué | Dónde está explicado |
-|---|---|
-| **Cercos entre días**: si el perímetro es todo tuyo, el interior pasa a serlo | §9-quater |
-| **Avisos** (pop-up al abrir la app) escritos desde `/admin`, con notificación al móvil opcional | §9-ter |
-| **Panel `/admin` por pestañas** | §9-ter |
-| **Calabazas**: sembrar, recoger y ranking, todo del lado del servidor | §9-bis |
-| **Mapa por tiras**, sin tope de celdas | §9 (bugs) |
+Cercos entre días (§9-quater) · Avisos con notificación al móvil (§9-ter) ·
+Panel por pestañas (§9-ter) · Calabazas y su interruptor de tres estados
+(§9-bis) · Mapa por tiras · Colores de corredor repartidos por el servidor ·
+Historial de robos (`/robos`).
 
-### Escrito y esperando a la 1.11.11
+### Qué lleva la 1.11.11 sobre la 1.11.10
 
-**OJO**: el paquete de la 1.11.10 se generó el **23-sep a las 16:51**. TODO lo
-commiteado en `apps/mobile` después de esa hora está esperando build, aunque el
-código lleve semanas en `main`. Para la lista exacta:
-`git log --oneline 85288f9..HEAD -- apps/mobile`.
-
-- Calabazas en el mapa y en el resumen de carrera.
-- Ficha del corredor al tocarlo en el ranking.
-- Resumen de administración dentro de la app (solo para Ibanto).
-- Los 10 + 10 mensajes de Halloween y el selector rehecho (cuadrícula vertical,
-  dos pestañas, sin candados, calabaza dibujada).
-- Detector automático de carrera en Android.
-- Pantalla de Retos con el cartel de Halloween, encendible desde el panel.
-- Arreglos: puntos partidos en dos líneas, vueltas grandes que no se rellenaban,
-  territorio de los rivales opaco, calles tapadas por el territorio.
+Calabazas en el mapa · 10+10 mensajes de Halloween y selector rehecho · pantalla
+de Retos con el cartel del evento · detector automático de carrera en Android ·
+ficha del corredor (ranking y mapa, la misma) · resumen de administración ·
+el cartel de robo dice quién fue · historial "te han robado" en Stats · colores
+que no se repiten · territorio que deja ver las calles · y los arreglos de
+puntos partidos, vueltas grandes sin rellenar y calabazas que tardaban 18 s.
 
 ### Para DESPUÉS de Halloween
 
-1. **Edge-to-edge**: se intentó el 2-oct y se revirtió a propósito. Los márgenes
-   del sistema estaban bien encaminados, pero solo se pudo comprobar la pantalla
-   de entrada en un emulador (el menú y la cabecera piden sesión) y en iPhone
-   nada, que es donde más cambia. No corre prisa: el margen de arriba YA se lee
-   del sistema y el de abajo son 48 px fijos que solo quedan justos en móviles
-   con barra de navegación alta. El trabajo está en el historial (`08125fb`,
-   `c5bfdee`, revertidos en `8815d45`): se puede recuperar con `git revert` de
-   la reversión. **Lección: al mover márgenes a `Math.max`, comprobar que el
-   reemplazo en el JSX se aplicó de verdad — una vez falló en silencio y el
-   menú se quedó sin margen inferior.**
+1. **Edge-to-edge**: hecho y revertido a propósito el 2-oct (`08125fb`,
+   `c5bfdee`, revertidos en `8815d45`). Se recupera con un `git revert` de la
+   reversión. No corre prisa: el margen de arriba ya se lee del sistema y el de
+   abajo son 48 px fijos que solo quedan justos en móviles con barra alta.
 2. **Pantallas grandes** y **DEX/R8**: los otros dos avisos de Google (plazo
-   de Google: febrero de 2027).
+   de febrero de 2027).
 
 ### Estado del juego
 
-Cercos ya repartidos: DaniRC, fausrunner, Oriol15, Zuckerbax, afarbis, GER, raul,
-Luiso y Ansgar. **Queda uno sin cobrar a propósito: KarolK** — 34.644 celdas, de las
-que 4.553 son de otros (39.197 puntos). Mueve el ranking de verdad, así que lo decide
-el usuario. Para ver si hay cercos pendientes: `cd apps/backend && npm run cercos`
-(solo lee la BD).
+Cercos repartidos a todos menos a **KarolK** — 34.644 celdas, 4.553 de otros,
+39.197 puntos. Sin cobrar **a propósito**: lo decide él. `npm run cercos` para
+ver los pendientes (solo lee).
+
+Quedan **139 calabazas de prueba** sembradas, que **caducan el 5 de octubre**.
+El interruptor está en `prueba:Ibanto`. Al terminar de probar: apagarlo y
+"Quitar las que queden sin coger".
 
 ### Cómo trabajar con Iban
 
-- **No es programador.** Todo en castellano y en corto: qué pasa, por qué, y qué tiene
-  que pulsar él. Nada de jerga sin traducir.
-- **Los botones los pulsa él.** No tengo su clave de administrador; los correos y los
-  mensajes a la gente los manda él desde el panel. Yo preparo el texto y le digo dónde.
-- **La BD de producción es de SOLO LECTURA**, y pidiendo permiso. No se borra nada sin
-  preguntar.
-- **No se saca ninguna build a las tiendas** sin que él lo diga.
-- **Si manda un boceto, se clava**: proporciones, tipografía y adornos igual, y se
-  compara el resultado con el boceto antes de darlo por bueno.
+- **No es programador.** Todo en castellano y en corto: qué pasa, por qué, y qué
+  tiene que pulsar él. Nada de jerga sin traducir.
+- **Los botones del panel los pulsa él**; los correos y mensajes a la gente, también.
+  Pero **las builds y los archivados los lanzo yo** desde la terminal.
+- **La BD de producción es de SOLO LECTURA**, y pidiendo permiso. No se borra nada.
+- **No se sube nada a las tiendas** sin que él lo diga.
+- **Si manda un boceto, se clava** y se compara el resultado con el boceto.
 - El repositorio es **público**: ni un secreto en el código.
-- Cuando algo no cuadre, **comprobarlo antes de afirmarlo**. En este proyecto ya han
-  aparecido tres fallos que se veían "bien" desde fuera y estaban rotos por dentro
-  (el panel sin JavaScript, los avisos sin contar vistas, los cercos saltándose en
-  silencio). Ninguno daba error: los tres se encontraron mirando.
+- **Comprobar antes de afirmar.** En este proyecto ya han salido SIETE fallos que
+  se veían bien y estaban rotos por dentro, ninguno daba error: el panel sin
+  JavaScript, los avisos sin contar vistas, los cercos saltándose en silencio, el
+  territorio de los rivales opaco, el cartel de robo sin nombre, los colores
+  repetidos y las calabazas invisibles 18 segundos. **Todos se encontraron
+  midiendo, no mirando la pantalla.**
 
 ---
 
