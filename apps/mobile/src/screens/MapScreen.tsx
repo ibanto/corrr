@@ -934,7 +934,9 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     // de las estadísticas se quedan colgando de la petición más pesada de la
     // app. Medido en el iPhone: la app tardaba 18 segundos en enterarse de que
     // Halloween estaba encendido, y hasta entonces no pintaba una calabaza.
-    api.getAjustes().then(a => setHalloweenActivo(a.halloween)).catch(() => {});
+    // Solo se cambia si hay respuesta: si no se ha podido preguntar, se deja
+    // como estaba en vez de apagar el evento.
+    api.getAjustes().then(a => { if (a) setHalloweenActivo(a.halloween); }).catch(() => {});
     api.getCalabazasMias().then(setCalabazas).catch(() => {});
     try {
       const data = await api.getMyStats();
@@ -1035,8 +1037,11 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         ),
         api.getObjetos(useLat + halfLat, useLat - halfLat, useLng + halfLng, useLng - halfLng),
       ]);
-      objetosRef.current = objs;
-      setObjetos(objs);
+      // Igual: si la petición falló (null), se conservan las que ya había.
+      if (objs) {
+        objetosRef.current = objs;
+        setObjetos(objs);
+      }
       const owners = t.owners;
       // Acumulamos las fotos en vez de reemplazarlas: al moverte por el mapa
       // cada carga trae solo los dueños de ese encuadre, y no queremos perder

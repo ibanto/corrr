@@ -541,13 +541,16 @@ class ApiService {
    *  "Ver más" desde Stats. Devuelve total para paginar correctamente. */
   /** Los objetos que hay a la vista. Si falla, el mapa se pinta sin ellos: son
    *  un extra, no pueden dejar a nadie sin ver su territorio. */
-  async getObjetos(north: number, south: number, east: number, west: number): Promise<ObjetoMapa[]> {
+  async getObjetos(north: number, south: number, east: number, west: number): Promise<ObjetoMapa[] | null> {
     try {
       const qs = `north=${north}&south=${south}&east=${east}&west=${west}`;
       const res = await this.request<{ objetos: ObjetoMapa[] }>(`/objetos/viewport?${qs}`);
       return res?.objetos ?? [];
     } catch {
-      return [];
+      // null, NO lista vacía: "no he podido preguntar" no es "no hay ninguna".
+      // Con la lista vacía, un fallo de red borraba del mapa calabazas que
+      // seguían estando ahí.
+      return null;
     }
   }
 
@@ -564,12 +567,16 @@ class ApiService {
 
   /** Los interruptores del juego que se encienden desde el panel. Si falla,
    *  todo apagado: más vale no enseñar un evento que no existe. */
-  async getAjustes(): Promise<{ halloween: boolean }> {
+  async getAjustes(): Promise<{ halloween: boolean } | null> {
     try {
       const res = await this.request<{ halloween?: boolean }>('/app/ajustes');
       return { halloween: res?.halloween === true };
     } catch {
-      return { halloween: false };
+      // null, NO "apagado". Devolver false era afirmar que el evento no está
+      // en marcha cuando lo único que sabemos es que no hemos podido
+      // preguntar: un corte de red de medio segundo apagaba Halloween y
+      // borraba las calabazas del mapa.
+      return null;
     }
   }
 

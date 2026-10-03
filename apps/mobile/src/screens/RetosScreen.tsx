@@ -33,15 +33,18 @@ export default function RetosScreen() {
   const [ranking, setRanking] = useState<RankingObjeto[]>([]);
 
   const cargar = useCallback(async () => {
+    // Si no se ha podido preguntar (null), se deja la pantalla como estaba en
+    // vez de dar por hecho que el evento está apagado.
     const ajustes = await api.getAjustes();
-    setHalloween(ajustes.halloween);
-    if (ajustes.halloween) {
+    const encendido = ajustes ? ajustes.halloween : halloween;
+    if (ajustes) setHalloween(ajustes.halloween);
+    if (encendido) {
       const r = await api.getRankingCalabazas();
       setMias(r.mias);
       setRanking(r.ranking);
     }
     setCargando(false);
-  }, []);
+  }, [halloween]);
 
   // Al arrancar y cada vez que se vuelve a la app. El interruptor del panel
   // se puede dar en cualquier momento y nadie reinicia la app para enterarse.
