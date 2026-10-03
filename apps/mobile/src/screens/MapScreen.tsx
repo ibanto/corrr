@@ -697,6 +697,19 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
    *  cogido" se comprueba dentro del manejador del GPS, que no ve el estado. */
   const [objetos, setObjetos] = useState<ObjetoMapa[]>([]);
   const objetosRef = useRef<ObjetoMapa[]>([]);
+  // Las chinchetas de las calabazas necesitan un rato "en directo" al nacer.
+  //
+  // react-native-maps, con tracksViewChanges={false}, dibuja la chincheta UNA
+  // vez en el instante en que se crea y no la vuelve a mirar. En Android eso
+  // pasa antes de que la imagen de la calabaza haya terminado de cargar, así
+  // que captura un cuadro VACÍO y se queda así: calabazas invisibles hasta que
+  // mueves el mapa (lo que crea chinchetas nuevas) y que vuelven a
+  // desaparecer. En iPhone no ocurre, por eso allí se veían bien.
+  //
+  // La solución es dejarlas en directo un segundo largo cada vez que cambia la
+  // lista, y apagarlo después: tenerlo siempre encendido redibuja cada
+  // chincheta en cada fotograma y hunde el mapa.
+  const [objetosEnDirecto, setObjetosEnDirecto] = useState(true);
   const [objetoCogido, setObjetoCogido] = useState<ObjetoMapa | null>(null);
   /** Zona de la que se calculan y dibujan los territorios. El servidor manda
    *  bastante más de lo que cabe en pantalla (redondea a casillas de 1,3 km
@@ -956,6 +969,13 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
   // se puede dar en cualquier momento desde el panel, y nadie cierra la app del
   // todo para enterarse: si solo se mirara al arrancar, quien la tuviera en
   // segundo plano no vería las calabazas aparecer.
+  useEffect(() => {
+    if (objetos.length === 0) return;
+    setObjetosEnDirecto(true);
+    const t = setTimeout(() => setObjetosEnDirecto(false), 1500);
+    return () => clearTimeout(t);
+  }, [objetos]);
+
   useEffect(() => {
     loadUserXP();
     const sub = AppState.addEventListener('change', (estado) => {
@@ -2758,7 +2778,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
                 longitude: (o.x + 0.5) * CELL_LNG_DEG,
               }}
               anchor={{ x: 0.5, y: 0.5 }}
-              tracksViewChanges={false}
+              tracksViewChanges={objetosEnDirecto}
             >
               <Image source={CALABAZA} style={styles.objeto} resizeMode="contain" />
             </Marker>
