@@ -10,7 +10,8 @@
     "test:territorio": "npm run build --silent && node scripts/territorio-check.mjs",
     "cercos": "npm run build --silent && node scripts/cercos-pendientes.mjs",
     "calles": "node scripts/bajar-calles.mjs",
-    "calles:subir": "node scripts/subir-calles.mjs"
+    "calles:subir": "node scripts/subir-calles.mjs",
+    "importar": "node scripts/importar-carrera.mjs"
   },
   "dependencies": {
     "@fastify/compress": "^7.0.3",

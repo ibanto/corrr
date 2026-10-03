@@ -3457,9 +3457,27 @@ app.post('/runs', {
     // En el cerco, igual: las celdas de otros valen según quién va por delante.
     const puntosCercoRobo = await puntosDeRobo(client, misPuntos, victimasCerco);
     const puntosCerco = (cercadas - cercadasRobadas) + puntosCercoRobo;
-    const authoritativePoints =
+    /** Tope de puntos por carrera.
+     *
+     *  El TERRITORIO no se toca: corre lo que quieras y todo lo que pises es
+     *  tuyo. Lo que se limita son los PUNTOS, que son los que ordenan el
+     *  ranking.
+     *
+     *  Hace falta porque un cerco grande los dispara: el 3-oct una carrera de
+     *  13 km cerró 8,8 km² y dio 127.494 puntos de golpe, cuando una buena
+     *  carrera normal ronda los 5.000. Una sola vuelta decidía la
+     *  clasificación de todos. */
+    const MAX_PUNTOS_CARRERA = 8000;
+    const puntosBrutos =
       Math.round((subtotal + puntosCerco) * streakMultiplier * (dobleBienvenida ? 2 : 1))
       + puntosObjetos;
+    const authoritativePoints = Math.min(puntosBrutos, MAX_PUNTOS_CARRERA);
+    if (puntosBrutos > MAX_PUNTOS_CARRERA) {
+      req.log.info(
+        { userId, puntosBrutos, dados: MAX_PUNTOS_CARRERA },
+        '[puntos] carrera por encima del tope',
+      );
+    }
 
     // Persist the recomputed points on the run row (we inserted with the
     // client's estimate earlier).
