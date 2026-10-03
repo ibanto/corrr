@@ -218,13 +218,29 @@ const SESSION_TOKEN_TTL = '90d';
 const MIN_AGE_YEARS = 14;
 const resend = new Resend(process.env.RESEND_API_KEY || '');
 
-app.register(cors, { origin: '*' });
+// Los plugins van con AWAIT, y esto NO es un adorno.
+//
+// `app.register()` sin await no carga el plugin: lo deja apuntado para cuando
+// arranque el servidor. Las rutas de aquí abajo se declaran en la misma pasada,
+// o sea ANTES, y el limitador de peticiones se engancha ruta por ruta cuando se
+// carga — así que se quedaban todas fuera. Resultado: durante meses el servidor
+// NO tuvo ningún límite. Ni los 500 por minuto generales, ni los 10 del login,
+// ni los 3 de "he olvidado mi contraseña". Nada. Se podían probar contraseñas
+// sin parar y mandar correos de recuperación en bucle.
+//
+// No daba ningún error ni se veía por ningún lado: el código declaraba los
+// topes, Fastify los aceptaba, y simplemente no se aplicaban. Se descubrió
+// midiéndolo contra el servidor de verdad (3-oct-2026): 540 peticiones seguidas
+// a un endpoint con tope de 500 y las 540 contestadas.
+//
+// Con await, el plugin está cargado antes de que exista la primera ruta.
+await app.register(cors, { origin: '*' });
 
 // Las respuestas iban sin comprimir. La del mapa es la peor: miles de celdas
 // con el mismo nombre de dueño repetido en cada una, que en gzip se queda en
 // una fracción. No hace falta tocar la app: iOS y Android ya piden compresión
 // en cada petición. Por debajo de 1 KB no compensa.
-app.register(compress, { global: true, threshold: 1024, encodings: ['gzip', 'deflate'] });
+await app.register(compress, { global: true, threshold: 1024, encodings: ['gzip', 'deflate'] });
 
 // Rate limiting global con override más estricto en endpoints sensibles
 // (login / forgot-password / reset-password) para mitigar brute force y spam
@@ -234,7 +250,7 @@ app.register(compress, { global: true, threshold: 1024, encodings: ['gzip', 'def
 // Defaults globales: 200 req/min por IP (suficiente para uso normal —
 // la app puede hacer ráfagas al arrancar). Endpoints sensibles fijan su
 // propio config en el `preHandler`.
-app.register(rateLimit, {
+await app.register(rateLimit, {
   global: true,
   // 500/min por IP global — un cliente al arrancar la app hace ~10 requests
   // (zonas, celdas, perfil, stats, taunts, achievements, friends, etc) +
@@ -242,7 +258,13 @@ app.register(rateLimit, {
   // protección contra scripts abusivos.
   max: 500,
   timeWindow: '1 minute',
+  // `statusCode` TIENE que ir aquí. Lo que devuelve esto se manda como un
+  // error, y Fastify mira ese campo para saber qué código HTTP poner: sin él
+  // contestaba 500 —"se ha roto el servidor"— en vez de 429 —"vas muy
+  // deprisa"—. Quien pase del tope debe enterarse de que es el tope, y las
+  // librerías que reintentan solo hacen caso al 429.
   errorResponseBuilder: (_req, ctx) => ({
+    statusCode: 429,
     error: 'Demasiadas peticiones, prueba en unos segundos',
     retryAfter: ctx.after,
   }),
