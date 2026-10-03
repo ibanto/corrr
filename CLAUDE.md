@@ -383,6 +383,7 @@ verdad, compilar en **Release** (lleva el código dentro y no necesita nada):
 
 ## 9. Bugs históricos (no re-introducir)
 
+- **El servidor NO tenía ningún límite de peticiones, y el código decía que sí** (hasta el 3-oct-2026): los topes estaban escritos —500/min general, 10 en el login, 3 en "he olvidado mi contraseña", 20 carreras/hora— y **no se aplicaba ninguno**. Se podían probar contraseñas sin parar. La causa: `app.register(...)` **sin `await`**. Fastify no carga el plugin ahí, lo apunta para el arranque; las rutas se declaran justo debajo, o sea ANTES, y el limitador se engancha ruta por ruta al cargarse → no cogió ninguna. No daba error, no se veía en los registros, y el código parecía correcto. **Lección: un límite declarado no es un límite. Hay que medirlo.** Se midió a pelo contra producción —540 peticiones a un endpoint con tope de 500, las 540 contestadas— y se reprodujo en local con las mismas versiones. Arreglado poniendo `await` a los tres plugins. **Si se añade otro plugin de Fastify, va con `await` y se comprueba que hace algo.** Debajo había un segundo fallo: `errorResponseBuilder` no devolvía `statusCode`, así que al pasarse del tope contestaba 500 en vez de 429. Comprobado en producción el 3-oct: corta en el intento 21 de 20, con 429, y el contador baja uno por petición **de cada IP por separado** (o sea, el tope no se comparte entre toda la gente: `trustProxy: true` está haciendo su trabajo).
 - **La app anunciaba las fechas viejas de Halloween** (3-oct-2026, 1.11.11 build 22 / vc76, retiradas): la pantalla de Retos decía *"DEL 29 AL 31 DE OCTUBRE"* y *"HASTA EL 31 DE OCTUBRE"*, de cuando el evento iba a ser el fin de semana de Halloween. El evento es **del 23 de octubre al 1 de noviembre**, y el cartel que se escribe desde el panel sí lo decía bien: la app iba a contradecir al cartel durante los diez días del evento. Esas fechas van ESCRITAS DENTRO de la app, así que no había forma de corregirlas sin otra versión en las tiendas. Salió recorriendo la app contra datos de mentira (§3), no leyendo el código. **Al mover una fecha del juego, buscarla también dentro de la app** — `RetosScreen.tsx` — y no solo en el panel. Lo mismo con los 200 puntos por calabaza: están escritos en esa pantalla y en el panel al sembrarlas; si se cambia en uno hay que cambiarlo en el otro.
 - **La app se cerraba sola al abrirla, en iPhone y en Android** (3-oct-2026, 1.11.11 build 21 / vc75, retiradas): un `useEffect` nuevo —el de las notas sin ver— quedó escrito DEBAJO de los `return` de `App.tsx` (versión caducada, pantalla de carga, pantalla de bienvenida). React cuenta los hooks que ejecuta en cada pintada y exige que siempre sean los mismos: mientras cargaba se ejecutaban 14 y, en cuanto restauraba la sesión guardada, 15 → `Error: Rendered more hooks than during the previous render` y la app abajo, en las dos plataformas. Lo peor es cómo se esconde: **recién instalada funcionaba** —nunca pasaba del `return` de bienvenida—, así que en el emulador parecía sana; solo se cae a quien ya tiene sesión, o sea a todo el mundo menos a quien la acaba de instalar. Ni TypeScript ni el compilador dicen nada. Arreglado subiendo el hook con los demás, y con `npm run test:hooks` (`scripts/hooks-check.mjs`, ya dentro de `npm run test:gps`), que busca hooks detrás de un `return`. **Regla: TODOS los hooks van arriba del todo, antes del primer `return` — sin excepciones.** Y antes de dar una build por buena, probar el arranque CON SESIÓN, no solo recién instalada (§3).
 - **MapView con `display:'none'`**: en versiones < 1.10.0 ocultaba el mapa durante el run pero al volver visible RN-Maps no refrescaba los polígonos. Solución: Modal absoluto encima, no `display:'none'`.
@@ -538,8 +539,20 @@ Ver `context.md` en la raíz del repo — incluye lenguaje de dominio detallado,
 
 ## 12. Auditoría del 3-oct-2026: lo que queda pendiente
 
-Lo que se arregló ese día está en el §9 y en el historial. Esto es lo que NO se
-puede arreglar desde el código:
+Lo que se arregló ese día está en el §9 y en el historial — **incluido el gordo:
+el servidor no tenía ningún límite de peticiones**. Esto es lo que queda:
+
+**Comprobado y funcionando** (medido contra producción, no leído): límite de
+peticiones, CORS, compresión, los POST con el cuerpo vacío, las cinco pestañas
+de la app con datos y sin ellos.
+
+**Sin comprobar, porque hace falta leer la base de datos** (pedir permiso a
+Iban): que el índice único de `display_name` exista de verdad y que la seguridad
+a nivel de fila esté activa en `users`, `user_stats`, `runs` y `zones`. Las dos
+se crean con un `.catch(() => {})` que se traga el fallo en silencio, así que
+podrían no estar puestas sin que nadie se entere. Son dos `SELECT` de nada.
+
+**Lo que NO se puede arreglar desde el código:**
 
 - **La contraseña del keystore de Android está en el historial público de git**
   (`corrr2026`, commit `f7af8ad`, hasta `df3a863`). El keystore en sí nunca se
@@ -562,10 +575,9 @@ puede arreglar desde el código:
   plataforma, cada una con su restricción: paquete `app.corrr` + huella SHA-1 en
   Android, `app.corrr` en iOS), y eso toca `app.json` → versión nueva.
   **Pendiente para la primera build después de Halloween.**
-- **La clave del panel (`ADMIN_KEY`)**: que sean 32 caracteres o más y que no se
-  parezca a nada. Si tiene menos de 16 el servidor ya lo avisa en el arranque.
-  Desde el 3-oct el panel admite 20 intentos por minuto y no acepta la clave por
-  la URL.
+- ~~**La clave del panel (`ADMIN_KEY`)**~~ — **comprobado el 3-oct-2026: 66
+  caracteres, de sobra.** El panel admite 20 intentos por minuto (medido en
+  producción, de verdad) y no acepta la clave por la URL.
 - **Fastify 4 ya no recibe arreglos** (la versión instalada es la 4.29.1; la
   rama 4 está fuera de soporte). `npm audit` saca 7 avisos que vienen todos de
   ahí. Mirados uno a uno, hoy no afectan: son de validación por esquema —que
