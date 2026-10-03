@@ -1190,11 +1190,31 @@ app.put('/users/me', { preHandler: requireAuth }, async (req: any, reply) => {
     shoeBrand, shoeBrandOther,
     birthYear, gender, usualDistance, weeklyFrequency,
   } = req.body;
+  // El nombre se mira con la misma vara que al registrarse. Aquí no se miraba
+  // NADA: entraba cualquier cosa —un nombre de 10 MB, un null, el nombre de
+  // otra persona— y el nombre no es un adorno. Los avisos personales ("te han
+  // robado", lo del cerco) se reparten por nombre, así que ponerse el de otro
+  // era ponerse delante de su correo. Lo impedía solo el índice único de la
+  // base de datos, que se crea con un `.catch` y podría no estar; y aunque
+  // esté, saltaba como un 500 sin explicación en vez de un "ya está cogido".
+  if (displayName !== undefined) {
+    if (typeof displayName !== 'string' || displayName.trim().length < 2 || displayName.length > 32) {
+      return reply.status(400).send({ error: 'El nombre debe tener entre 2 y 32 caracteres' });
+    }
+    const cogido = await db.query(
+      'SELECT id FROM users WHERE LOWER(display_name) = LOWER($1) AND id <> $2',
+      [displayName.trim(), req.userId]);
+    if (cogido.rows.length) return reply.status(409).send({ error: 'Ese nombre ya está en uso' });
+  }
+  if (city !== undefined && city !== null && (typeof city !== 'string' || city.length > 64)) {
+    return reply.status(400).send({ error: 'Ciudad no válida' });
+  }
+
   const updates: string[] = [];
   const values: any[] = [];
   let idx = 1;
 
-  if (displayName !== undefined) { updates.push(`display_name = $${idx++}`); values.push(displayName); }
+  if (displayName !== undefined) { updates.push(`display_name = $${idx++}`); values.push(displayName.trim()); }
   if (city !== undefined) { updates.push(`city = $${idx++}`); values.push(city); }
   if (avatarUrl !== undefined) {
     updates.push(`avatar_url = $${idx++}`); values.push(avatarUrl);
@@ -1617,9 +1637,10 @@ app.get('/admin/challenges', { preHandler: requireAdmin }, async (req: any, repl
   return reply.send(rows);
 });
 
-/** GET /admin/panel — panel de administración en HTML. Abrir en el navegador:
- *  https://<api>/admin/panel?key=ADMIN_KEY
- *  Server-rendered a propósito: mismo origen (sin CORS), nada que desplegar
+/** GET /admin/panel — panel de administración en HTML. Se abre desde /admin,
+ *  que pide la clave y la manda por cabecera (`x-admin-key`): NUNCA por la
+ *  URL, que acabaría escrita en los registros de Railway y en el historial del
+ *  navegador. Server-rendered a propósito: mismo origen (sin CORS), nada que desplegar
  *  aparte del backend, y desde el móvil va igual de bien. Todo texto que
  *  origina el usuario (nombre, email, ciudad) se escapa SIEMPRE — un
  *  display_name malicioso no puede inyectar HTML en el panel del admin. */
@@ -1685,7 +1706,13 @@ app.get('/admin', async (_req, reply) => {
 </script></body></html>`);
 });
 
-app.get('/admin/panel', { preHandler: requireAdmin }, async (req: any, reply) => {
+app.get('/admin/panel', {
+  // La clave se prueba AQUÍ, así que aquí es donde se adivinaría a fuerza de
+  // intentos. El tope global son 500 por minuto, que para probar claves es
+  // mucho; 20 sobran para quien la escribe mal un par de veces.
+  config: { rateLimit: { max: 20, timeWindow: '1 minute' } },
+  preHandler: requireAdmin,
+}, async (req: any, reply) => {
   const esc = (s: any) =>
     String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
   const fmtDate = (d: any) =>
