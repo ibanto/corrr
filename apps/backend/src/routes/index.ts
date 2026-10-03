@@ -3302,7 +3302,10 @@ app.post('/runs', {
     //   subtotal    = km_points + cell_points + loop_bonus
     //   total       = round(subtotal * streak_mult)    (×1.5 if streak ≥ 3 days)
     const kmPointsBase = Math.round((distanceKm || 0) * 10);
-    const cellPoints = newCellCount * 1 + stolenCells.length * 2;
+    const robadasPorVictima = new Map<string, number>();
+    for (const sc of stolenCells) {
+      robadasPorVictima.set(sc.prevOwnerId, (robadasPorVictima.get(sc.prevOwnerId) ?? 0) + 1);
+    }
     // Loop bonus — AUTORITATIVO server-side (v1.10.10+). El cliente moderno
     // envía `loopClosed` (bool: ¿cerró un círculo en la carrera?). Calculamos
     // aquí el bono y NO confiamos en ningún estimate del cliente:
@@ -3356,6 +3359,12 @@ app.post('/runs', {
     const streakMultiplier = newStreak >= 3 ? 1.5 : 1;
     const pbMultiplier = distanceKm > (prevStats.best_daily_km || 0) ? 1.2 : 1;
     const newBestKm = Math.max(prevStats.best_daily_km || 0, distanceKm || 0);
+
+    // Las robadas valen según a quién se las quites: el doble si va por delante
+    // de ti, la mitad si va por detrás (ver `factorRobo`). Va aquí abajo porque
+    // hace falta saber cuántos puntos tengo YO, y eso sale de prevStats.
+    const misPuntos = Number(prevStats.total_points) || 0;
+    const cellPoints = newCellCount * 1 + await puntosDeRobo(client, misPuntos, robadasPorVictima);
 
     const kmPoints = Math.round(kmPointsBase * pbMultiplier);
     const subtotal = kmPoints + cellPoints + safeLoopBonus;
@@ -3445,7 +3454,9 @@ app.post('/runs', {
     // se la quitas a alguien (y a ese se le resta 1, como en cualquier robo).
     // Van dentro del subtotal, así que la racha y el ×2 de los primeros pasos
     // les afectan igual que a las celdas pisadas.
-    const puntosCerco = (cercadas - cercadasRobadas) + cercadasRobadas * 2;
+    // En el cerco, igual: las celdas de otros valen según quién va por delante.
+    const puntosCercoRobo = await puntosDeRobo(client, misPuntos, victimasCerco);
+    const puntosCerco = (cercadas - cercadasRobadas) + puntosCercoRobo;
     const authoritativePoints =
       Math.round((subtotal + puntosCerco) * streakMultiplier * (dobleBienvenida ? 2 : 1))
       + puntosObjetos;
@@ -3846,6 +3857,41 @@ function colorDeCorredor(idx: number): string {
     return Math.round(255 * v).toString(16).padStart(2, '0');
   };
   return `#${canal(0)}${canal(8)}${canal(4)}`;
+}
+
+/** Cuánto vale quitarle una celda a alguien, según quién va por delante.
+ *
+ *  Robar al que te saca ventaja vale el DOBLE; robar al que va por detrás, la
+ *  MITAD. Sin esto el que manda se desmarca solo: cuanto más territorio tiene,
+ *  más hay que quitarle para alcanzarlo, y además es a quien más fácil le
+ *  resulta seguir quitando a los demás.
+ *
+ *  La franja del ±20% evita que dos que van parejos se pasen el multiplicador
+ *  de uno a otro por cuatro puntos de diferencia. */
+function factorRobo(puntosMios: number, puntosSuyos: number): number {
+  if (puntosSuyos > puntosMios * 1.2) return 2;
+  if (puntosSuyos < puntosMios * 0.8) return 0.5;
+  return 1;
+}
+
+/** Los puntos de un puñado de celdas robadas, mirando a quién se le quitan.
+ *  Base de 2 por celda, multiplicada por el factor de cada víctima. */
+async function puntosDeRobo(
+  cliente: { query: (sql: string, params?: any[]) => Promise<{ rows: any[]; rowCount: number | null }> },
+  puntosMios: number,
+  porVictima: Map<string, number>,
+): Promise<number> {
+  if (porVictima.size === 0) return 0;
+  const { rows } = await cliente.query(
+    `SELECT user_id, total_points FROM user_stats WHERE user_id = ANY($1::uuid[])`,
+    [[...porVictima.keys()]],
+  );
+  const suyos = new Map<string, number>(rows.map((r: any) => [r.user_id, Number(r.total_points) || 0]));
+  let total = 0;
+  for (const [victima, n] of porVictima) {
+    total += n * 2 * factorRobo(puntosMios, suyos.get(victima) ?? 0);
+  }
+  return Math.round(total);
 }
 
 async function ownerAvatars(ownerIds: string[], log: any): Promise<Record<string, { avatar: string | null }>> {
