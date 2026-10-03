@@ -102,7 +102,7 @@ android {
         applicationId 'app.corrr'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 75
+        versionCode 76
         versionName "1.11.11"
 
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
@@ -136,6 +136,14 @@ android {
         }
         release {
             signingConfig signingConfigs.release
+            // Con `-PcorrrDebuggable=1` sale el MISMO paquete de release —mismo
+            // JavaScript, misma minificación— pero con `run-as` abierto, que es
+            // lo que hace falta para meterle una sesión guardada a mano en el
+            // emulador y probar el arranque de quien ya tiene cuenta (§3 del
+            // CLAUDE.md). Sin la bandera, exactamente igual que siempre; y un
+            // paquete debuggable Play Console no lo admite, así que no se puede
+            // colar por despiste.
+            debuggable findProperty('corrrDebuggable') == '1'
             def enableShrinkResources = findProperty('android.enableShrinkResourcesInReleaseBuilds') ?: 'false'
             shrinkResources enableShrinkResources.toBoolean()
             minifyEnabled enableMinifyInReleaseBuilds

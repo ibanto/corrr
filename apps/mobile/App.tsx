@@ -184,7 +184,6 @@ export default function App() {
           registerForPushNotifications().catch(() => {});
           // Cargar solicitudes de amistad pendientes
           api.getPendingFriendRequests().then(r => setPendingFriends(r.length)).catch(() => {});
-    api.getNotificaciones().then(r => setNotasSinVer(r.sinVer)).catch(() => {});
           api.getNotificaciones().then(r => setNotasSinVer(r.sinVer)).catch(() => {});
         }
       } catch {}
@@ -380,6 +379,26 @@ export default function App() {
     });
   }, []);
 
+  // Las notas sin ver, al volver a la app y al cambiar de pestaña: así la bola
+  // aparece cuando te roban estando fuera, y desaparece en cuanto has mirado la
+  // bandeja de Perfil.
+  //
+  // OJO: este useEffect tiene que estar AQUÍ, con los demás, y no más abajo.
+  // Debajo hay tres `return` —versión caducada, pantalla de carga y pantalla de
+  // bienvenida— y un hook
+  // detrás de un return se ejecuta unos renders sí y otros no. React lleva la
+  // cuenta de los hooks de cada render, y en cuanto no cuadra cierra la app. Eso
+  // es lo que pasó en la 1.11.11 (21) / vc75: al arrancar con sesión guardada se
+  // pasaba de 14 hooks a 15 y la app se cerraba sola. Recién instalada no, porque
+  // nunca llegaba a pasar del `return` de bienvenida.
+  useEffect(() => {
+    if (!user?.id) return;
+    const mirar = () => api.getNotificaciones().then(r => setNotasSinVer(r.sinVer)).catch(() => {});
+    mirar();
+    const sub = AppState.addEventListener('change', (e) => { if (e === 'active') mirar(); });
+    return () => sub.remove();
+  }, [user?.id, activeTab]);
+
   // Versión inservible: pantalla completa, sin salida. Va ANTES que todo lo
   // demás —incluso que la carga de sesión— para que no se pueda correr con
   // ella.
@@ -427,16 +446,6 @@ export default function App() {
   // MapScreen stays mounted across tab switches so an active run survives navigation
   // (location watchers, timers, pathRef etc. are component state that would be lost on unmount).
   // Other tabs mount/unmount on demand — only the map is "live" enough to need persistence.
-  // Al volver a la app y al salir de Perfil: así la bola aparece cuando te roban
-  // estando fuera, y desaparece en cuanto has mirado la bandeja.
-  useEffect(() => {
-    if (!user?.id) return;
-    const mirar = () => api.getNotificaciones().then(r => setNotasSinVer(r.sinVer)).catch(() => {});
-    mirar();
-    const sub = AppState.addEventListener('change', (e) => { if (e === 'active') mirar(); });
-    return () => sub.remove();
-  }, [user?.id, activeTab]);
-
   const renderOverlayScreen = () => {
     switch (activeTab) {
       case 'Stats':   return <StatsScreen user={user} />;

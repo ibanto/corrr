@@ -6,7 +6,7 @@ Instrucciones para Claude trabajando en este repo. Léelo entero antes de tocar 
 
 ## 0. Dónde estamos (leer esto primero)
 
-*Al día a 2-oct-2026, noche. Si algo de aquí abajo contradice a este apartado, manda este.*
+*Al día a 3-oct-2026, tarde. Si algo de aquí abajo contradice a este apartado, manda este.*
 
 **En las tiendas**: 1.11.10 (Android vc67, iPhone build 17). 46 corredores.
 
@@ -16,15 +16,18 @@ El evento de Halloween va del **viernes 23 de octubre al domingo 1 de noviembre*
 
 ### Lo siguiente que hay que hacer
 
-1. **Archivar la build 20 de iPhone** (el AAB `vc72` ya está hecho). Son ~10 min:
-   `cd apps/mobile/ios && xcodebuild -workspace CORRR.xcworkspace -scheme CORRR -configuration Release -destination 'generic/platform=iOS' -archivePath ~/Library/Developer/Xcode/Archives/$(date +%F)/CORRR-1.11.11-build20.xcarchive archive`
-   **El archivado lo lanzo YO desde la terminal; él lo recoge en Organizer y lo sube.**
+1. **Que Iban suba la 1.11.11 (22) / vc76**, que es la que arregla el cierre al
+   abrir. Están hechas las dos: `apps/mobile/builds/corrr-v1.11.11-vc76.aab` y
+   el archivo `CORRR-1.11.11-build22.xcarchive` en Organizer. **Las builds y los
+   archivados los lanzo YO desde la terminal; él los recoge y los sube.**
+   La vc75 / build 21 **no sirve**: se cerraba sola (§9).
 2. **Terminar de bajar las calles**: `cd apps/backend && npm run calles` (va por
-   308 de 442 trozos y 1,23 millones de celdas; se retoma solo). Luego
+   324 de 442 trozos y 1,32 millones de celdas; se retoma solo). Luego
    `npm run calles:subir`.
-3. **Que pruebe la vc72 / build 20**: si las calabazas salen al instante (antes
-   tardaban 18 s), si el detector de Android avisa al salir a correr, y la
-   prueba de calle del GPS (`docs/prueba-gps.md`), que toca porque se tocó el mapa.
+3. **Que pruebe la vc76 / build 22**: que la app abra (lo primero), si las
+   calabazas salen al instante, si el detector de Android avisa al salir a
+   correr, y la prueba de calle del GPS (`docs/prueba-gps.md`).
+   **Las calabazas de prueba caducan el 5 de octubre.**
 
 ### Ya funcionando en producción (servidor, sin build)
 
@@ -122,6 +125,9 @@ corrr/
 # Type-check (rápido, hazlo siempre tras editar)
 cd apps/mobile && npx tsc --noEmit
 
+# Comprobaciones de antes de montar: GPS, mapa y hooks detrás de un return
+cd apps/mobile && npm run test:gps
+
 # Build AAB para Play Console
 cd apps/mobile/android && ./gradlew bundleRelease
 # Output: app/build/outputs/bundle/release/app-release.aab
@@ -133,6 +139,44 @@ cd apps/mobile && npx expo start --dev-client
 # Instalar debug APK por USB (Xiaomi: activa "Instalar via USB")
 cd apps/mobile/android && ./gradlew installDebug
 ```
+
+#### Probar el arranque CON SESIÓN en el emulador
+
+Sin esto no se ve la mitad de los fallos: recién instalada, la app se queda en
+la pantalla de bienvenida y no llega a ejecutar el código de quien ya tiene
+cuenta. Así se le mete una sesión a mano, sin cuenta de verdad y sin tocar la
+base de datos (el token es falso: la app arranca entera y luego dice "sesión
+caducada", que es justo lo que queremos ver).
+
+```bash
+emulator -avd Pixel_7 -no-snapshot-load &          # ~/Library/Android/sdk/emulator
+cd apps/mobile/android && ./gradlew assembleRelease -PcorrrDebuggable=1
+adb install -r app/build/outputs/apk/release/app-release.apk
+adb shell am start -n app.corrr/.MainActivity      # que cree su almacén
+sleep 10 && adb shell am force-stop app.corrr
+
+# Sacar el almacén, meterle la sesión antigua y devolverlo
+adb shell run-as app.corrr cat /data/user/0/app.corrr/databases/RKStorage > /tmp/rk.db
+python3 - <<'FIN'
+import sqlite3, json
+c = sqlite3.connect('/tmp/rk.db')
+s = {"token": "da-igual", "user": {"id": "00000000-0000-0000-0000-000000000000",
+     "username": "PruebaLocal", "email": "prueba@local.invalid", "city": "Bilbao"}}
+c.execute('INSERT OR REPLACE INTO catalystLocalStorage VALUES (?,?)',
+          ('@corrr_session', json.dumps(s)))
+c.commit()
+FIN
+adb push /tmp/rk.db /data/local/tmp/RKStorage && adb shell chmod 666 /data/local/tmp/RKStorage
+adb shell run-as app.corrr cp /data/local/tmp/RKStorage /data/user/0/app.corrr/databases/RKStorage
+
+adb logcat -c && adb shell am start -n app.corrr/.MainActivity
+sleep 15 && adb logcat -d | grep -iE "ReactNativeJS|FATAL"   # aquí sale el error de verdad
+```
+
+`@corrr_session` es el formato antiguo de sesión: la app lo migra sola al
+arrancar y así no hace falta tocar el llavero (SecureStore). `-PcorrrDebuggable=1`
+da el mismo paquete de release pero con `run-as` abierto; **el AAB que se sube
+se monta SIN esa bandera**.
 
 ### Backend
 
@@ -303,6 +347,7 @@ verdad, compilar en **Release** (lleva el código dentro y no necesita nada):
 
 ## 9. Bugs históricos (no re-introducir)
 
+- **La app se cerraba sola al abrirla, en iPhone y en Android** (3-oct-2026, 1.11.11 build 21 / vc75, retiradas): un `useEffect` nuevo —el de las notas sin ver— quedó escrito DEBAJO de los `return` de `App.tsx` (versión caducada, pantalla de carga, pantalla de bienvenida). React cuenta los hooks que ejecuta en cada pintada y exige que siempre sean los mismos: mientras cargaba se ejecutaban 14 y, en cuanto restauraba la sesión guardada, 15 → `Error: Rendered more hooks than during the previous render` y la app abajo, en las dos plataformas. Lo peor es cómo se esconde: **recién instalada funcionaba** —nunca pasaba del `return` de bienvenida—, así que en el emulador parecía sana; solo se cae a quien ya tiene sesión, o sea a todo el mundo menos a quien la acaba de instalar. Ni TypeScript ni el compilador dicen nada. Arreglado subiendo el hook con los demás, y con `npm run test:hooks` (`scripts/hooks-check.mjs`, ya dentro de `npm run test:gps`), que busca hooks detrás de un `return`. **Regla: TODOS los hooks van arriba del todo, antes del primer `return` — sin excepciones.** Y antes de dar una build por buena, probar el arranque CON SESIÓN, no solo recién instalada (§3).
 - **MapView con `display:'none'`**: en versiones < 1.10.0 ocultaba el mapa durante el run pero al volver visible RN-Maps no refrescaba los polígonos. Solución: Modal absoluto encima, no `display:'none'`.
 - **`pathSegments` no limpiado en stopRun**: dejaba dashes naranjas sobre las celdas tras la carrera. Limpiar siempre.
 - **JWT_ACCESS_SECRET vacío**: `TextEncoder().encode(undefined)` produce secret literal "undefined" → cualquiera firma tokens. Fail-fast SIEMPRE si missing.
