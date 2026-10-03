@@ -436,6 +436,20 @@ async function initDB() {
   // para saber, cuando el contador de vistos no sube, si es que no ha llegado
   // o es que la gente no abre.
   await db.query(`ALTER TABLE avisos ADD COLUMN IF NOT EXISTS push_enviados INTEGER NOT NULL DEFAULT 0`).catch(() => {});
+  // Un aviso puede ser dos cosas muy distintas, y mezclarlas era un error:
+  //   · CARTEL (automatico = false): la noticia que escribe Iban en el panel.
+  //     Sale a pantalla completa al abrir la app. Para Halloween, reglas
+  //     nuevas, cosas que le importan a todo el mundo.
+  //   · NOTA (automatico = true): "te han robado", "te han cercado". Las
+  //     genera el juego solo y pasan a diario. Van a una bandeja en Perfil.
+  //     Soltarlas a pantalla completa cada vez era machacón: interrumpía para
+  //     contar algo que solo quiere mirarse cuando a uno le apetece.
+  await db.query(`ALTER TABLE avisos ADD COLUMN IF NOT EXISTS automatico BOOLEAN NOT NULL DEFAULT FALSE`).catch(() => {});
+  // Las que ya existen y son personales son todas automáticas: las de Iban
+  // nunca han ido dirigidas a una sola persona salvo para probar.
+  await db.query(`UPDATE avisos SET automatico = TRUE
+                   WHERE publico = 'corredor' AND titulo IN
+                   ('Te han robado','Te han cercado','Cerco cobrado','Cerco demasiado grande','Territorio devuelto')`).catch(() => {});
   // Adornos del cartel (la línea de arriba, el sello de la esquina y la nota
   // del botón). Opcionales: un aviso sin ellos se ve bien igual.
   await db.query(`ALTER TABLE avisos ADD COLUMN IF NOT EXISTS etiqueta TEXT`).catch(() => {});
@@ -5096,8 +5110,8 @@ app.post('/admin/carreras/:id/rellenar', { preHandler: requireAdmin }, async (re
 
     // Y se le cuenta, que si no aparece territorio de la nada y no se entiende.
     await db.query(
-      `INSERT INTO avisos (titulo, texto, boton, etiqueta, sello, nota, publico, corredor)
-       VALUES ($1, $2, $3, $4, $5, $6, 'corredor', $7)`,
+      `INSERT INTO avisos (titulo, texto, boton, etiqueta, sello, nota, publico, corredor, automatico)
+       VALUES ($1, $2, $3, $4, $5, $6, 'corredor', $7, TRUE)`,
       [
         'Territorio devuelto',
         `Cerraste el círculo y CORRR no te dio lo de dentro: un fallo nuestro con las vueltas grandes. Ya está arreglado y *te hemos devuelto ${nuevas.toLocaleString('es-ES')} celdas*. Perdona el lío.`,
@@ -5194,8 +5208,8 @@ async function avisarCercoEnorme(
   if (yaHay.length > 0) return;
   const km2 = (celdas / 10_000).toFixed(1); // 10.000 celdas de 10×10 m = 1 km²
   await cliente.query(
-    `INSERT INTO avisos (titulo, texto, boton, etiqueta, sello, nota, publico, corredor)
-     VALUES ($1, $2, $3, $4, $5, $6, 'corredor', $7)`,
+    `INSERT INTO avisos (titulo, texto, boton, etiqueta, sello, nota, publico, corredor, automatico)
+     VALUES ($1, $2, $3, $4, $5, $6, 'corredor', $7, TRUE)`,
     [
       'Cerco demasiado grande',
       `Has rodeado *${celdas.toLocaleString('es-ES')} celdas* (unos *${km2} km²*): más de lo que CORRR `
@@ -5220,8 +5234,8 @@ async function avisarCercados(
     const nombre = rows[0]?.display_name;
     if (!nombre) continue;
     await cliente.query(
-      `INSERT INTO avisos (titulo, texto, boton, etiqueta, sello, nota, publico, corredor)
-       VALUES ($1, $2, $3, $4, $5, $6, 'corredor', $7)`,
+      `INSERT INTO avisos (titulo, texto, boton, etiqueta, sello, nota, publico, corredor, automatico)
+       VALUES ($1, $2, $3, $4, $5, $6, 'corredor', $7, TRUE)`,
       [
         'Te han cercado',
         `${quienCerca} ha rodeado tu zona y se ha quedado *${n.toLocaleString('es-ES')} celdas* tuyas. Lo que queda dentro de un cerco cambia de dueño: ve a recuperarlo.`,
@@ -5297,8 +5311,8 @@ app.post('/admin/corredores/cercos', { preHandler: requireAdmin }, async (req: a
     invalidateViewportCache(encerradas);
     await avisarCercados(db, cerco.victimas, nombre);
     await db.query(
-      `INSERT INTO avisos (titulo, texto, boton, etiqueta, sello, nota, publico, corredor)
-       VALUES ($1, $2, $3, $4, $5, $6, 'corredor', $7)`,
+      `INSERT INTO avisos (titulo, texto, boton, etiqueta, sello, nota, publico, corredor, automatico)
+       VALUES ($1, $2, $3, $4, $5, $6, 'corredor', $7, TRUE)`,
       [
         'Cerco cobrado',
         `Ya vale cerrar una zona *entre varios días*: lo que rodea tu territorio es tuyo. Acabas de cobrar *${cerco.total.toLocaleString('es-ES')} celdas* y *${puntos.toLocaleString('es-ES')} puntos*.`,
@@ -5662,6 +5676,7 @@ app.get('/app/aviso', { preHandler: requireAuth }, async (req: any, reply) => {
        FROM avisos a, users u
       WHERE u.id = $1
         AND a.activo
+        AND NOT a.automatico
         AND a.desde <= NOW()
         AND (a.hasta IS NULL OR a.hasta > NOW())
         AND ${SQL_PUBLICO_AVISO}
@@ -5671,6 +5686,43 @@ app.get('/app/aviso', { preHandler: requireAuth }, async (req: any, reply) => {
     [req.userId],
   );
   return reply.send({ aviso: rows[0] ?? null });
+});
+
+/** La bandeja de Perfil: lo que te ha pasado a ti.
+ *
+ *  Aquí van las notas que genera el juego —te han robado, te han cercado— que
+ *  antes salían a pantalla completa. Interrumpir para contar un robo, que es
+ *  cosa de todos los días, era machacón; y además tapaba los carteles de
+ *  verdad, que son los que escribe Iban para todo el mundo. */
+app.get('/app/notificaciones', { preHandler: requireAuth }, async (req: any, reply) => {
+  const { rows } = await db.query(
+    `SELECT a.id, a.titulo, a.texto, a.creado_at,
+            EXISTS (SELECT 1 FROM aviso_vistas v WHERE v.aviso_id = a.id AND v.user_id = $1) AS vista
+       FROM avisos a, users u
+      WHERE u.id = $1 AND a.automatico
+        AND a.publico = 'corredor'
+        AND LOWER(a.corredor) = LOWER(u.display_name)
+      ORDER BY a.creado_at DESC
+      LIMIT 50`,
+    [req.userId],
+  );
+  return reply.send({
+    notificaciones: rows,
+    sinVer: rows.filter((r: any) => !r.vista).length,
+  });
+});
+
+/** Todas por vistas de golpe, al abrir la bandeja. */
+app.post('/app/notificaciones/vistas', { preHandler: requireAuth }, async (req: any, reply) => {
+  await db.query(
+    `INSERT INTO aviso_vistas (aviso_id, user_id)
+     SELECT a.id, u.id FROM avisos a, users u
+      WHERE u.id = $1 AND a.automatico AND a.publico = 'corredor'
+        AND LOWER(a.corredor) = LOWER(u.display_name)
+     ON CONFLICT DO NOTHING`,
+    [req.userId],
+  ).catch(() => {});
+  return reply.send({ ok: true });
 });
 
 /** La app avisa de que ya lo ha enseñado, para no repetirlo. */

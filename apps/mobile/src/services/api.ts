@@ -119,6 +119,15 @@ interface Aviso {
   nota?: string | null;
 }
 
+/** Una nota de la bandeja de Perfil. */
+export type Notificacion = {
+  id: number;
+  titulo: string;
+  texto: string;
+  creado_at: string;
+  vista: boolean;
+};
+
 /** Un robo que me han hecho: quién, cuándo y si ya le he contestado. */
 export type Robo = {
   id: string;
@@ -552,6 +561,24 @@ class ApiService {
       // seguían estando ahí.
       return null;
     }
+  }
+
+  /** Lo que me ha pasado a mí: robos, cercos. Antes salía a pantalla completa
+   *  cada vez; ahora vive en una bandeja dentro de Perfil. */
+  async getNotificaciones(): Promise<{ notificaciones: Notificacion[]; sinVer: number }> {
+    try {
+      const res = await this.request<{ notificaciones?: Notificacion[]; sinVer?: number }>('/app/notificaciones');
+      return { notificaciones: res?.notificaciones ?? [], sinVer: res?.sinVer ?? 0 };
+    } catch {
+      return { notificaciones: [], sinVer: 0 };
+    }
+  }
+
+  /** Todas por vistas, al abrir la bandeja. */
+  async marcarNotificacionesVistas(): Promise<void> {
+    try {
+      await this.request('/app/notificaciones/vistas', { method: 'POST', body: '{}' });
+    } catch {}
   }
 
   /** Quién me ha robado, con fecha. El cartel de "te han robado" sale una

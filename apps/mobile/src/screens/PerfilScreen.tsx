@@ -22,6 +22,7 @@ import * as Location from 'expo-location';
 import { colors, spacing, radius } from '../theme';
 import { api, MyStats, RunRecord, Achievement, ProfileData } from '../services/api';
 import ResumenAdminPanel from '../components/ResumenAdmin';
+import Notificaciones from '../components/Notificaciones';
 import EditProfileScreen from './EditProfileScreen';
 import { checkForUpdates, CURRENT_VERSION } from '../utils/checkForUpdates';
 import { hayDeteccion, estaEncendido, encender, apagar } from '../../modules/deteccion-carrera';
@@ -71,6 +72,11 @@ export default function PerfilScreen({ user, onLogout }: Props) {
   // El aviso de "¿has salido a correr?" (solo Android). Se lee del módulo,
   // que es quien lo recuerda entre arranques.
   const [avisoCarrera, setAvisoCarrera] = useState(false);
+  // La bandeja de lo que te ha pasado (robos, cercos). El número de sin ver se
+  // pide al entrar en Perfil, que es donde está el botón.
+  const [bandeja, setBandeja] = useState(false);
+  const [sinVer, setSinVer] = useState(0);
+  useEffect(() => { api.getNotificaciones().then(r => setSinVer(r.sinVer)).catch(() => {}); }, [bandeja]);
   useEffect(() => { if (hayDeteccion) setAvisoCarrera(estaEncendido()); }, []);
   const [stravaLoading, setStravaLoading] = useState(false);
   // "Tus otras carreras": lo que grabas fuera de CORRR y entra por Salud (solo
@@ -654,6 +660,15 @@ export default function PerfilScreen({ user, onLogout }: Props) {
             />
           </View>
         )}
+        {/* Lo primero de la lista: es lo que uno viene a mirar. */}
+        <TouchableOpacity style={styles.settingsRow} onPress={() => setBandeja(true)}>
+          <Ionicons name="notifications-outline" size={20} color={colors.textSecondary} style={{ width: 28 }} />
+          <Text style={styles.settingsRowLabel}>Lo que te ha pasado</Text>
+          {sinVer > 0 && (
+            <View style={styles.sinVer}><Text style={styles.sinVerTexto}>{sinVer > 9 ? '9+' : sinVer}</Text></View>
+          )}
+          <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+        </TouchableOpacity>
         {[
           { icon: 'flame-outline' as const, label: 'Cómo funcionan los puntos', onPress: () => setPointsModalVisible(true) },
           { icon: 'trophy-outline' as const, label: 'Puntos por logros', onPress: () => setAchievementModalVisible(true) },
@@ -685,6 +700,8 @@ export default function PerfilScreen({ user, onLogout }: Props) {
         </TouchableOpacity>
       </View>
     </ScrollView>
+
+    <Notificaciones visible={bandeja} onClose={() => setBandeja(false)} />
 
     {/* Modal editar perfil */}
     <Modal visible={editModal} animationType="slide" transparent>
@@ -1250,6 +1267,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', paddingVertical: 14,
     borderBottomWidth: 1, borderBottomColor: colors.border, gap: spacing.sm,
   },
+  sinVer: {
+    backgroundColor: colors.orange, borderRadius: 11, minWidth: 22, height: 22,
+    alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6, marginRight: 4,
+  },
+  sinVerTexto: { color: '#fff', fontSize: 12, fontWeight: '800' },
   avisoCarreraNota: {
     color: colors.textSecondary, fontSize: 11, lineHeight: 15, marginTop: 2, paddingRight: spacing.sm,
   },
