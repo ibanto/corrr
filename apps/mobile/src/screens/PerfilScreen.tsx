@@ -178,9 +178,13 @@ export default function PerfilScreen({ user, onLogout }: Props) {
 
   useEffect(() => {
     loadStats();
-    // Siempre intentar actualizar la ciudad por GPS
-    detectCity();
-  }, [loadStats, detectCity]);
+    // La ciudad NO se busca aquí. `loadProfileData` ya la busca por GPS cuando
+    // el perfil no trae ninguna; hacerlo también desde aquí la buscaba SIEMPRE
+    // y la guardaba, así que la ciudad escrita a mano se perdía cada vez que
+    // se entraba en Perfil — y a quien corre en el área de Bilbao el GPS le
+    // devuelve Barakaldo o Getxo, y cambiaba de ranking de ciudad sin tocar
+    // nada.
+  }, [loadStats]);
 
   const handleAvatarResult = async (result: ImagePicker.ImagePickerResult) => {
     if (result.canceled) return;

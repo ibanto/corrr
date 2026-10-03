@@ -74,7 +74,13 @@ export default function RetosScreen() {
     >
       <Image source={CALABAZA} style={styles.calabaza} resizeMode="contain" />
 
-      <Text style={styles.fechas}>{halloween ? 'HASTA EL 31 DE OCTUBRE' : 'DEL 29 AL 31 DE OCTUBRE'}</Text>
+      {/* Las fechas van escritas AQUÍ, dentro de la app: para cambiarlas hace
+          falta una versión nueva en las tiendas. El evento es del 23 de
+          octubre al 1 de noviembre; si alguna vez se mueve, esto se mueve con
+          él o la app contradice al cartel. */}
+      <Text style={styles.fechas}>
+        {halloween ? 'HASTA EL 1 DE NOVIEMBRE' : 'DEL 23 DE OCTUBRE AL 1 DE NOVIEMBRE'}
+      </Text>
       <Text style={styles.titulo}>
         {halloween ? 'HAY CALABAZAS\nEN LA CALLE' : 'ESTE HALLOWEEN,\nPREPÁRATE'}
       </Text>
@@ -110,8 +116,8 @@ export default function RetosScreen() {
       ) : (
         <>
           <Text style={styles.parrafo}>
-            Van a salir calabazas repartidas por toda la ciudad, encima de calles por las que ya ha
-            corrido alguien. Pisa una mientras corres y son{' '}
+            Van a salir calabazas repartidas por toda la ciudad, en cualquier calle de verdad —
+            no hace falta que haya corrido nadie por ahí. Pisa una mientras corres y son{' '}
             <Text style={styles.resalte}>200 puntos</Text>.
           </Text>
           <Text style={styles.parrafo}>

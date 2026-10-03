@@ -16,18 +16,23 @@ El evento de Halloween va del **viernes 23 de octubre al domingo 1 de noviembre*
 
 ### Lo siguiente que hay que hacer
 
-1. **Que Iban suba la 1.11.11 (22) / vc76**, que es la que arregla el cierre al
-   abrir. Están hechas las dos: `apps/mobile/builds/corrr-v1.11.11-vc76.aab` y
-   el archivo `CORRR-1.11.11-build22.xcarchive` en Organizer. **Las builds y los
-   archivados los lanzo YO desde la terminal; él los recoge y los sube.**
-   La vc75 / build 21 **no sirve**: se cerraba sola (§9).
-2. **Terminar de bajar las calles**: `cd apps/backend && npm run calles` (va por
+1. **Que Iban suba la 1.11.11 (23) / vc77.** Están hechas las dos:
+   `apps/mobile/builds/corrr-v1.11.11-vc77.aab` y el archivo
+   `CORRR-1.11.11-build23.xcarchive` en Organizer. **Las builds y los archivados
+   los lanzo YO; él los recoge y los sube.** No valen la vc75 / build 21 (se
+   cerraba sola) ni la vc76 / build 22 (anunciaba las fechas viejas de
+   Halloween). Las dos cosas, en el §9.
+2. **Desplegar el backend**: lleva el nombre de perfil validado, el tope de
+   intentos del panel y fuera una dependencia con dos fallos de seguridad
+   conocidos. No hace falta versión nueva de la app.
+3. **Terminar de bajar las calles**: `cd apps/backend && npm run calles` (va por
    324 de 442 trozos y 1,32 millones de celdas; se retoma solo). Luego
    `npm run calles:subir`.
-3. **Que pruebe la vc76 / build 22**: que la app abra (lo primero), si las
-   calabazas salen al instante, si el detector de Android avisa al salir a
-   correr, y la prueba de calle del GPS (`docs/prueba-gps.md`).
+4. **Que pruebe la vc77 / build 23**: que la app abra, si las calabazas salen al
+   instante, si el detector de Android avisa al salir a correr, y la prueba de
+   calle del GPS (`docs/prueba-gps.md`).
    **Las calabazas de prueba caducan el 5 de octubre.**
+5. **Pendiente de Iban, fuera del código** (auditoría del 3-oct, §12).
 
 ### Ya funcionando en producción (servidor, sin build)
 
@@ -139,6 +144,37 @@ cd apps/mobile && npx expo start --dev-client
 # Instalar debug APK por USB (Xiaomi: activa "Instalar via USB")
 cd apps/mobile/android && ./gradlew installDebug
 ```
+
+#### Probar la app contra datos de mentira (recorrerla entera)
+
+Lo de arriba comprueba que la app ABRE. Esto sirve para RECORRERLA: mapa,
+stats, ranking, retos, perfil, la bandeja, la ficha de un corredor. Hay un
+servidor de mentira en `scripts/mock-api.mjs` que contesta lo que la app pide,
+con datos de sobra o con todo a cero (`MODO=vacio`, que es como lo ve una
+cuenta recién hecha, y donde más se rompe).
+
+```bash
+cd apps/mobile && npm run mock          # o: MODO=vacio npm run mock
+
+# Apuntar la app al servidor de mentira. Las DOS cosas, y DESHACERLAS después:
+#   src/theme/index.ts  → API_BASE = 'http://10.0.2.2:8787'   (10.0.2.2 = este Mac visto desde el emulador)
+#   android/app/src/main/AndroidManifest.xml → <application android:usesCleartextTraffic="true" …
+cd android && ./gradlew assembleRelease -PcorrrDebuggable=1
+adb install -r app/build/outputs/apk/release/app-release.apk
+adb emu geo fix -2.935 43.263           # Bilbao, para que el mapa tenga calles
+
+# Entrar con cualquier correo y contraseña: el servidor de mentira dice que sí.
+adb shell input tap <x> <y>  ·  adb exec-out screencap -p > /tmp/x.png
+adb logcat -d | grep -E "ReactNativeJS: E|JavascriptException"   # los errores de verdad
+```
+
+**Y MIRAR LAS CAPTURAS**, no solo los errores: lo que salió así fue texto
+equivocado —las fechas viejas de Halloween—, que no da ningún error. Al cerrar
+el servidor de mentira con Ctrl-C imprime las rutas que no supo contestar; si
+hay alguna, esa pantalla se ha quedado sin probar.
+
+**Deshacer siempre las dos líneas** antes de montar lo que se sube, y
+comprobarlo con `git status`. `-PcorrrDebuggable=1` NO va en el AAB.
 
 #### Probar el arranque CON SESIÓN en el emulador
 
@@ -347,6 +383,7 @@ verdad, compilar en **Release** (lleva el código dentro y no necesita nada):
 
 ## 9. Bugs históricos (no re-introducir)
 
+- **La app anunciaba las fechas viejas de Halloween** (3-oct-2026, 1.11.11 build 22 / vc76, retiradas): la pantalla de Retos decía *"DEL 29 AL 31 DE OCTUBRE"* y *"HASTA EL 31 DE OCTUBRE"*, de cuando el evento iba a ser el fin de semana de Halloween. El evento es **del 23 de octubre al 1 de noviembre**, y el cartel que se escribe desde el panel sí lo decía bien: la app iba a contradecir al cartel durante los diez días del evento. Esas fechas van ESCRITAS DENTRO de la app, así que no había forma de corregirlas sin otra versión en las tiendas. Salió recorriendo la app contra datos de mentira (§3), no leyendo el código. **Al mover una fecha del juego, buscarla también dentro de la app** — `RetosScreen.tsx` — y no solo en el panel. Lo mismo con los 200 puntos por calabaza: están escritos en esa pantalla y en el panel al sembrarlas; si se cambia en uno hay que cambiarlo en el otro.
 - **La app se cerraba sola al abrirla, en iPhone y en Android** (3-oct-2026, 1.11.11 build 21 / vc75, retiradas): un `useEffect` nuevo —el de las notas sin ver— quedó escrito DEBAJO de los `return` de `App.tsx` (versión caducada, pantalla de carga, pantalla de bienvenida). React cuenta los hooks que ejecuta en cada pintada y exige que siempre sean los mismos: mientras cargaba se ejecutaban 14 y, en cuanto restauraba la sesión guardada, 15 → `Error: Rendered more hooks than during the previous render` y la app abajo, en las dos plataformas. Lo peor es cómo se esconde: **recién instalada funcionaba** —nunca pasaba del `return` de bienvenida—, así que en el emulador parecía sana; solo se cae a quien ya tiene sesión, o sea a todo el mundo menos a quien la acaba de instalar. Ni TypeScript ni el compilador dicen nada. Arreglado subiendo el hook con los demás, y con `npm run test:hooks` (`scripts/hooks-check.mjs`, ya dentro de `npm run test:gps`), que busca hooks detrás de un `return`. **Regla: TODOS los hooks van arriba del todo, antes del primer `return` — sin excepciones.** Y antes de dar una build por buena, probar el arranque CON SESIÓN, no solo recién instalada (§3).
 - **MapView con `display:'none'`**: en versiones < 1.10.0 ocultaba el mapa durante el run pero al volver visible RN-Maps no refrescaba los polígonos. Solución: Modal absoluto encima, no `display:'none'`.
 - **`pathSegments` no limpiado en stopRun**: dejaba dashes naranjas sobre las celdas tras la carrera. Limpiar siempre.
@@ -496,3 +533,42 @@ Ver `docs/publicar-version.md` (el usuario lo sigue a mano). Resumen:
 ## 11. Para más historia y contexto
 
 Ver `context.md` en la raíz del repo — incluye lenguaje de dominio detallado, decisiones de arquitectura, y la auditoría sistemática que se hizo en 1.10.4.
+
+---
+
+## 12. Auditoría del 3-oct-2026: lo que queda pendiente
+
+Lo que se arregló ese día está en el §9 y en el historial. Esto es lo que NO se
+puede arreglar desde el código:
+
+- **La contraseña del keystore de Android está en el historial público de git**
+  (`corrr2026`, commit `f7af8ad`, hasta `df3a863`). El keystore en sí nunca se
+  subió, que es lo único que evita que cualquiera firme como CORRR. Borrarla del
+  historial exige reescribirlo entero y no sirve de nada: GitHub guarda copias de
+  los commits viejos. Lo que sí sirve: en Play Console, si está activada la firma
+  de apps de Google, **cambiar la clave de SUBIDA** (Configuración → Firma de la
+  app → Solicitar cambio de clave de subida). Mientras tanto, el keystore no sale
+  de este Mac y de su copia de seguridad.
+- **La clave de Google Maps viaja dentro de la app** (`app.json`), y eso no tiene
+  arreglo: toda app que lleve mapas lleva su clave dentro, y quien descargue el
+  APK la saca. Lo que la protege es **restringirla en Google Cloud**: APIs y
+  servicios → Credenciales → esa clave → restricción por aplicación de Android
+  (nombre del paquete `app.corrr` + huella SHA-1 de la firma) y de iOS
+  (`app.corrr`), y en "Restricciones de API" dejar solo Maps SDK. Sin eso,
+  cualquiera puede gastar con ella. **Conviene comprobarlo.**
+- **La clave del panel (`ADMIN_KEY`)**: que sean 32 caracteres o más y que no se
+  parezca a nada. Si tiene menos de 16 el servidor ya lo avisa en el arranque.
+  Desde el 3-oct el panel admite 20 intentos por minuto y no acepta la clave por
+  la URL.
+- **Fastify 4 ya no recibe arreglos** (la versión instalada es la 4.29.1; la
+  rama 4 está fuera de soporte). `npm audit` saca 7 avisos que vienen todos de
+  ahí. Mirados uno a uno, hoy no afectan: son de validación por esquema —que
+  este servidor no usa, valida a mano— y de cabeceras de proxy —que tampoco
+  lee—. Pero no van a arreglarse solos: **pasar a Fastify 5 después de
+  Halloween**, con tiempo, no en vísperas de una subida.
+- **Los avisos personales se reparten por NOMBRE, no por identificador**
+  (`avisos.corredor` contra `users.display_name`). Desde el 3-oct no se puede
+  coger el nombre de otro —antes `PUT /users/me` no comprobaba nada—, pero si
+  alguien se cambia de nombre, sus avisos viejos se quedan huérfanos y podría
+  heredarlos quien coja ese nombre después. Arreglarlo de verdad es guardar el
+  identificador en `avisos`; no corre prisa con 46 corredores que se conocen.

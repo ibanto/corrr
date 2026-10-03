@@ -9,6 +9,7 @@
     "web": "expo start --web",
     "test:gps": "tsc -p scripts/tsconfig.gps.json && node node_modules/.cache/gps-check/scripts/map-check.js && node node_modules/.cache/gps-check/scripts/gps-check.js && node scripts/hooks-check.mjs",
     "test:hooks": "node scripts/hooks-check.mjs",
+    "mock": "node scripts/mock-api.mjs",
     "postinstall": "patch-package"
   },
   "dependencies": {

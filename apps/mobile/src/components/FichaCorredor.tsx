@@ -110,12 +110,15 @@ export default function FichaCorredor({ userId, onClose, conAmigo = false }: Pro
                 {/* Los porcentajes van sobre lo YA conquistado, no sobre la
                     superficie real: contra el terreno de verdad todo el mundo
                     saldría con un 0,0001% de España. */}
-                {!!territorio && (territorio.citySharePct !== null || territorio.nationalRank !== null) && (
+                {/* `!= null` (dos iguales) a propósito: así se cae también el
+                    `undefined` de una respuesta a la que le falte el campo. Con
+                    `!== null` se colaba y la ficha decía "undefined% de Bilbao". */}
+                {!!territorio && (territorio.citySharePct != null || territorio.nationalRank != null) && (
                   <Text style={styles.territorioLinea}>
-                    {territorio.citySharePct !== null && !!ficha.city
+                    {territorio.citySharePct != null && !!ficha.city
                       ? `${territorio.citySharePct}% de ${ficha.city}` : ''}
-                    {territorio.nationalRank !== null
-                      ? `${territorio.citySharePct !== null && ficha.city ? '  ·  ' : ''}nº ${territorio.nationalRank} de España`
+                    {territorio.nationalRank != null
+                      ? `${territorio.citySharePct != null && ficha.city ? '  ·  ' : ''}nº ${territorio.nationalRank} de España`
                       : ''}
                   </Text>
                 )}
