@@ -107,6 +107,10 @@ export default function App() {
   /** Carrera en marcha: el menú de abajo se esconde. */
   const [runActive, setRunActive] = useState(false);
   const [pendingFriends, setPendingFriends] = useState(0);
+  // Las notas sin ver (robos, cercos) se enseñan en el menú, sobre Perfil. Ya
+  // no interrumpen con un cartel a pantalla completa, así que si no se vieran
+  // aquí no habría forma de enterarse de que ha pasado algo.
+  const [notasSinVer, setNotasSinVer] = useState(0);
 
   // El mapa avisa de cuándo hay una carrera en marcha, para esconder el menú
   // de abajo: la pantalla de carrera ya lo tapaba, pero al abrir el mapa
@@ -180,6 +184,8 @@ export default function App() {
           registerForPushNotifications().catch(() => {});
           // Cargar solicitudes de amistad pendientes
           api.getPendingFriendRequests().then(r => setPendingFriends(r.length)).catch(() => {});
+    api.getNotificaciones().then(r => setNotasSinVer(r.sinVer)).catch(() => {});
+          api.getNotificaciones().then(r => setNotasSinVer(r.sinVer)).catch(() => {});
         }
       } catch {}
       setLoading(false);
@@ -421,6 +427,16 @@ export default function App() {
   // MapScreen stays mounted across tab switches so an active run survives navigation
   // (location watchers, timers, pathRef etc. are component state that would be lost on unmount).
   // Other tabs mount/unmount on demand — only the map is "live" enough to need persistence.
+  // Al volver a la app y al salir de Perfil: así la bola aparece cuando te roban
+  // estando fuera, y desaparece en cuanto has mirado la bandeja.
+  useEffect(() => {
+    if (!user?.id) return;
+    const mirar = () => api.getNotificaciones().then(r => setNotasSinVer(r.sinVer)).catch(() => {});
+    mirar();
+    const sub = AppState.addEventListener('change', (e) => { if (e === 'active') mirar(); });
+    return () => sub.remove();
+  }, [user?.id, activeTab]);
+
   const renderOverlayScreen = () => {
     switch (activeTab) {
       case 'Stats':   return <StatsScreen user={user} />;
@@ -493,6 +509,11 @@ export default function App() {
                   {tab.key === 'Ranking' && pendingFriends > 0 && (
                     <View style={styles.badge}>
                       <Text style={styles.badgeText}>{pendingFriends}</Text>
+                    </View>
+                  )}
+                  {tab.key === 'Perfil' && notasSinVer > 0 && (
+                    <View style={styles.badge}>
+                      <Text style={styles.badgeText}>{notasSinVer > 9 ? '9+' : notasSinVer}</Text>
                     </View>
                   )}
                 </View>
