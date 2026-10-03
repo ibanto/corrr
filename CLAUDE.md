@@ -551,11 +551,17 @@ puede arreglar desde el código:
   de este Mac y de su copia de seguridad.
 - **La clave de Google Maps viaja dentro de la app** (`app.json`), y eso no tiene
   arreglo: toda app que lleve mapas lleva su clave dentro, y quien descargue el
-  APK la saca. Lo que la protege es **restringirla en Google Cloud**: APIs y
-  servicios → Credenciales → esa clave → restricción por aplicación de Android
-  (nombre del paquete `app.corrr` + huella SHA-1 de la firma) y de iOS
-  (`app.corrr`), y en "Restricciones de API" dejar solo Maps SDK. Sin eso,
-  cualquiera puede gastar con ella. **Conviene comprobarlo.**
+  APK la saca. **Comprobado el 3-oct-2026: por el lado del dinero está cubierta.**
+  En Google Cloud (APIs y servicios → Credenciales → "Maps Platform API Key") las
+  "Restricciones de API" ya dejan solo `Maps SDK for Android` y `Maps SDK for iOS`,
+  que son gratis e ilimitados; no puede tocar Geocoding, Places ni Directions, que
+  son los que se cobran. Google sigue avisando en amarillo porque las
+  "Restricciones de aplicaciones" están en **Ninguno**, y ahí se quedan: una clave
+  admite atarse a Android **o** a iOS, nunca a las dos, y la misma clave sirve para
+  las dos plataformas. **Para cerrarlo hay que partirla en dos claves** (una por
+  plataforma, cada una con su restricción: paquete `app.corrr` + huella SHA-1 en
+  Android, `app.corrr` en iOS), y eso toca `app.json` → versión nueva.
+  **Pendiente para la primera build después de Halloween.**
 - **La clave del panel (`ADMIN_KEY`)**: que sean 32 caracteres o más y que no se
   parezca a nada. Si tiene menos de 16 el servidor ya lo avisa en el arranque.
   Desde el 3-oct el panel admite 20 intentos por minuto y no acepta la clave por
