@@ -661,6 +661,24 @@ a él. Con 26 personas que no han corrido nunca, esperar a que le roben a un bot
 es esperar sentado. Y que su siguiente ruta caiga cerca de donde ha corrido esa
 persona, para que los territorios se toquen y haya pique.
 
+### Lo que el ejército NO toca: calabazas ni zombis
+
+**Un bot pasa por encima de una calabaza y no pasa nada.** Ni la coge, ni la
+hace renacer en otro sitio, ni sale en el ranking de calabazas. Con los zombis,
+igual: le dan lo mismo. Y lo que quede dentro de un cerco suyo, también sigue
+ahí.
+
+Dos motivos, y los dos importan:
+
+- **Vaciarían el mapa.** Cinco bots corriendo por las ciudades donde no hay
+  nadie se comerían las calabazas de esas ciudades antes de que las viera la
+  persona para la que están puestas. Justo al revés de para lo que están.
+- **Ensuciarían el ranking de calabazas**, que es el de la pestaña de Retos y
+  cuenta personas. Un bot en esa tabla no tiene ningún sentido.
+
+En el código es no llamar a `recoger` en la carrera de un bot. El evento es de
+la gente; el ejército solo pone territorio.
+
 ### Las rutas: por la calle, no en cuadrados
 
 Lo pidió Iban y es lo que separa un bot creíble de uno que canta: **la ruta
