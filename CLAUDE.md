@@ -6,7 +6,7 @@ Instrucciones para Claude trabajando en este repo. Léelo entero antes de tocar 
 
 ## 0. Dónde estamos (leer esto primero)
 
-*Al día a 3-oct-2026, tarde. Si algo de aquí abajo contradice a este apartado, manda este.*
+*Al día a 4-oct-2026, tarde. Si algo de aquí abajo contradice a este apartado, manda este.*
 
 **En las tiendas**: 1.11.10 (Android vc67, iPhone build 17). 46 corredores.
 
@@ -16,23 +16,16 @@ El evento de Halloween va del **viernes 23 de octubre al domingo 1 de noviembre*
 
 ### Lo siguiente que hay que hacer
 
-1. **Que Iban suba la 1.11.11 (23) / vc77.** Están hechas las dos:
-   `apps/mobile/builds/corrr-v1.11.11-vc77.aab` y el archivo
-   `CORRR-1.11.11-build23.xcarchive` en Organizer. **Las builds y los archivados
-   los lanzo YO; él los recoge y los sube.** No valen la vc75 / build 21 (se
-   cerraba sola) ni la vc76 / build 22 (anunciaba las fechas viejas de
-   Halloween). Las dos cosas, en el §9.
-2. **Desplegar el backend**: lleva el nombre de perfil validado, el tope de
-   intentos del panel y fuera una dependencia con dos fallos de seguridad
-   conocidos. No hace falta versión nueva de la app.
-3. **Terminar de bajar las calles**: `cd apps/backend && npm run calles` (va por
-   324 de 442 trozos y 1,32 millones de celdas; se retoma solo). Luego
-   `npm run calles:subir`.
-4. **Que pruebe la vc77 / build 23**: que la app abra, si las calabazas salen al
-   instante, si el detector de Android avisa al salir a correr, y la prueba de
-   calle del GPS (`docs/prueba-gps.md`).
-   **Las calabazas de prueba caducan el 5 de octubre.**
-5. **Pendiente de Iban, fuera del código** (auditoría del 3-oct, §12).
+1. **Que Iban suba la 1.11.11 (24) / vc78.** Hechas las dos:
+   `apps/mobile/builds/corrr-v1.11.11-vc78.aab` y el archivo
+   `CORRR-1.11.11-build24.xcarchive` en Organizer. **Las builds y los archivados
+   los lanzo YO; él los recoge y los sube.** Las anteriores no valen: la 21 se
+   cerraba sola, la 22 llevaba las fechas viejas de Halloween y la 23 no
+   explicaba de dónde salían los puntos (§9).
+2. **Que pruebe la vc78 / build 24**: que abra, que las calabazas salgan a la
+   primera, el detector de Android y la prueba de calle del GPS
+   (`docs/prueba-gps.md`).
+3. **Sembrar calabazas de verdad** desde el panel para el evento (§9-bis).
 
 ### Ya funcionando en producción (servidor, sin build)
 
@@ -383,6 +376,9 @@ verdad, compilar en **Release** (lleva el código dentro y no necesita nada):
 
 ## 9. Bugs históricos (no re-introducir)
 
+- **El resumen de carrera no decía de dónde salían los puntos** (hasta la build 23 / vc77): el 4-oct una carrera de 3,46 km dio 8.000 puntos y las líneas del desglose sumaban 1.847. Faltaba la que más pesa: **lo que se queda uno al cerrar un cerco**. El servidor sí lo mandaba (`puntosCerco`, `cercadas`); la app simplemente no lo pintaba, y el tope tampoco se decía. Un total que no cuadra con ninguna línea parece un error nuestro. Arreglado con dos filas nuevas y el orden puesto para que la cuenta se lea de arriba abajo: cerco → multiplicadores → tope → calabazas (que van por fuera). **Al añadir una fuente de puntos nueva, ponerla TAMBIÉN en el desglose** — si no, el número final deja de poder explicarse.
+- **El tope de puntos era plano y premiaba igual la vuelta corta que la paliza** (hasta vc77): 8.000 para todos, y una carrera de 3,4 km los alcanzaba enteros gracias a un cerco. Ahora el tope **se gana corriendo**: 2.000 puntos por km, con techo de 20.000. Las calabazas van **por fuera** (200 son 200 aunque la carrera se tope) y tienen su propio ranking.
+- **Valencia estaba partida en dos ciudades** (hasta el 4-oct-2026): `València` (3 personas) y `Valencia` (1), con rankings de ciudad distintos que no se veían entre ellos. El GPS devuelve "València" y quien lo escribió a mano puso "Valencia". Arreglado con la función `corrr_ciudad` en la base de datos, que compara sin acentos ni mayúsculas; se guarda lo que escribió cada uno, porque quitarle los acentos a un nombre catalán o gallego para enseñarlo sería escribirlo mal. **Toda comparación de ciudad va por esa función**, nunca por `LOWER(city)` a secas.
 - **El servidor NO tenía ningún límite de peticiones, y el código decía que sí** (hasta el 3-oct-2026): los topes estaban escritos —500/min general, 10 en el login, 3 en "he olvidado mi contraseña", 20 carreras/hora— y **no se aplicaba ninguno**. Se podían probar contraseñas sin parar. La causa: `app.register(...)` **sin `await`**. Fastify no carga el plugin ahí, lo apunta para el arranque; las rutas se declaran justo debajo, o sea ANTES, y el limitador se engancha ruta por ruta al cargarse → no cogió ninguna. No daba error, no se veía en los registros, y el código parecía correcto. **Lección: un límite declarado no es un límite. Hay que medirlo.** Se midió a pelo contra producción —540 peticiones a un endpoint con tope de 500, las 540 contestadas— y se reprodujo en local con las mismas versiones. Arreglado poniendo `await` a los tres plugins. **Si se añade otro plugin de Fastify, va con `await` y se comprueba que hace algo.** Debajo había un segundo fallo: `errorResponseBuilder` no devolvía `statusCode`, así que al pasarse del tope contestaba 500 en vez de 429. Comprobado en producción el 3-oct: corta en el intento 21 de 20, con 429, y el contador baja uno por petición **de cada IP por separado** (o sea, el tope no se comparte entre toda la gente: `trustProxy: true` está haciendo su trabajo).
 - **La app anunciaba las fechas viejas de Halloween** (3-oct-2026, 1.11.11 build 22 / vc76, retiradas): la pantalla de Retos decía *"DEL 29 AL 31 DE OCTUBRE"* y *"HASTA EL 31 DE OCTUBRE"*, de cuando el evento iba a ser el fin de semana de Halloween. El evento es **del 23 de octubre al 1 de noviembre**, y el cartel que se escribe desde el panel sí lo decía bien: la app iba a contradecir al cartel durante los diez días del evento. Esas fechas van ESCRITAS DENTRO de la app, así que no había forma de corregirlas sin otra versión en las tiendas. Salió recorriendo la app contra datos de mentira (§3), no leyendo el código. **Al mover una fecha del juego, buscarla también dentro de la app** — `RetosScreen.tsx` — y no solo en el panel. Lo mismo con los 200 puntos por calabaza: están escritos en esa pantalla y en el panel al sembrarlas; si se cambia en uno hay que cambiarlo en el otro.
 - **La app se cerraba sola al abrirla, en iPhone y en Android** (3-oct-2026, 1.11.11 build 21 / vc75, retiradas): un `useEffect` nuevo —el de las notas sin ver— quedó escrito DEBAJO de los `return` de `App.tsx` (versión caducada, pantalla de carga, pantalla de bienvenida). React cuenta los hooks que ejecuta en cada pintada y exige que siempre sean los mismos: mientras cargaba se ejecutaban 14 y, en cuanto restauraba la sesión guardada, 15 → `Error: Rendered more hooks than during the previous render` y la app abajo, en las dos plataformas. Lo peor es cómo se esconde: **recién instalada funcionaba** —nunca pasaba del `return` de bienvenida—, así que en el emulador parecía sana; solo se cae a quien ya tiene sesión, o sea a todo el mundo menos a quien la acaba de instalar. Ni TypeScript ni el compilador dicen nada. Arreglado subiendo el hook con los demás, y con `npm run test:hooks` (`scripts/hooks-check.mjs`, ya dentro de `npm run test:gps`), que busca hooks detrás de un `return`. **Regla: TODOS los hooks van arriba del todo, antes del primer `return` — sin excepciones.** Y antes de dar una build por buena, probar el arranque CON SESIÓN, no solo recién instalada (§3).
