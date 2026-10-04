@@ -66,7 +66,19 @@ for (const z of zonas) {
     [a.x, b.x, a.y, b.y]);
   if (c.n < 500) continue;                 // sin calles suficientes, no es ciudad
   if (g.gente > 1) continue;               // ahí ya hay partida
-  objetivo.push({ caja: { x0: a.x, x1: b.x, y0: a.y, y1: b.y }, gente: g.gente, calles: c.n,
+  // Si en la zona hay UNA persona, el decorado va cerca de donde corre ella:
+  // es para quien está solo, y en Madrid tres manchas al azar pueden quedarle
+  // a diez kilómetros y no verlas nunca.
+  let cerca = null;
+  if (g.gente === 1) {
+    const { rows: [p] } = await db.query(
+      `SELECT ROUND(AVG(c.cell_x))::int x, ROUND(AVG(c.cell_y))::int y
+         FROM cells c JOIN users u ON u.id = c.owner_id
+        WHERE NOT u.es_bot AND c.cell_x BETWEEN $1 AND $2 AND c.cell_y BETWEEN $3 AND $4`,
+      [a.x, b.x, a.y, b.y]);
+    if (p?.x != null) cerca = { x: p.x, y: p.y };
+  }
+  objetivo.push({ caja: { x0: a.x, x1: b.x, y0: a.y, y1: b.y }, gente: g.gente, calles: c.n, cerca,
                   centro: `${((z.sur + z.norte) / 2).toFixed(3)}, ${((z.oeste + z.este) / 2).toFixed(3)}` });
 }
 objetivo.sort((p, q) => q.calles - p.calles);
@@ -77,21 +89,26 @@ console.log(`De esas, vacías o con una sola persona: ${objetivo.length}\n`);
 let totalCeldas = 0;
 const plan = [];
 for (const [i, z] of objetivo.entries()) {
+  // Alrededor de la persona que hay (2 km), o por toda la zona si no hay nadie.
+  const caja = z.cerca
+    ? { x0: z.cerca.x - 200, x1: z.cerca.x + 200, y0: z.cerca.y - 200, y1: z.cerca.y + 200 }
+    : z.caja;
   const { rows: calles } = await db.query(
     `SELECT cell_x x, cell_y y FROM calles
       WHERE cell_x BETWEEN $1 AND $2 AND cell_y BETWEEN $3 AND $4
       ORDER BY random() LIMIT 400`,
-    [z.caja.x0, z.caja.x1, z.caja.y0, z.caja.y1]);
+    [caja.x0, caja.x1, caja.y0, caja.y1]);
   const centros = [];
   for (const c of calles) {
     if (centros.length >= MANCHAS) break;
-    if (centros.every(p => Math.abs(p.x - c.x) > SEPARACION || Math.abs(p.y - c.y) > SEPARACION)) centros.push(c);
+    const sep = z.cerca ? 60 : SEPARACION;   // 600 m si es alrededor de alguien
+    if (centros.every(p => Math.abs(p.x - c.x) > sep || Math.abs(p.y - c.y) > sep)) centros.push(c);
   }
   for (const [j, c] of centros.entries()) {
     plan.push({ zona: i, dueno: (i + j) % EJERCITO.length, centro: c });
     totalCeldas += LADO * LADO;
   }
-  console.log(`  ${z.centro.padEnd(18)} ${String(z.gente)} corredor(es) · ${String(z.calles).padStart(6)} puntos de calle → ${centros.length} manchas`);
+  console.log(`  ${z.centro.padEnd(18)} ${String(z.gente)} corredor(es) · ${String(z.calles).padStart(6)} calles → ${centros.length} manchas${z.cerca ? ' (junto a esa persona)' : ''}`);
 }
 console.log(`\nSe pintarían ${plan.length} manchas de ${LADO * 10}x${LADO * 10} m = ${totalCeldas.toLocaleString('es-ES')} celdas como mucho`);
 console.log('(menos las que ya tengan dueño: a nadie se le quita nada)');

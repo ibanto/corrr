@@ -3327,18 +3327,38 @@ app.post('/runs', {
           [prevOwnerId, robosList.length]
         );
         const { rows: prev } = await client.query(
-          `SELECT push_token, display_name FROM users WHERE id = $1`, [prevOwnerId]
+          `SELECT push_token, display_name, es_bot FROM users WHERE id = $1`, [prevOwnerId]
         );
         const prevName = prev[0]?.display_name ?? 'Alguien';
         for (const r of robosList) stolenCells.push({ x: r.x, y: r.y, prevOwnerId, prevOwnerName: prevName });
-        // Create the "robo_notif" inbox entry that the victim sees when they
-        // open the app — gateway to the taunt chat. One row per robo (per
-        // thief/victim/run trio). The mobile shows the existing "te han robado"
-        // image popup with a "Devolver" button that opens the TauntSelector.
-        await client.query(
-          `INSERT INTO taunts (from_user_id, to_user_id, mode, run_id) VALUES ($1, $2, 'robo_notif', $3)`,
-          [userId, prevOwnerId, runId]
-        );
+        if (prev[0]?.es_bot) {
+          // Al EJÉRCITO CORRR se le da la vuelta a la conversación.
+          //
+          // El taunt solo se puede mandar a quien te ha robado A TI, y el
+          // ejército no roba: así que nadie podría picarles nunca, y —lo que es
+          // peor— le quitas territorio a El Galgo y no pasa absolutamente nada.
+          // Un rival que no reacciona no es un rival, es decorado.
+          //
+          // Así que es ÉL quien te pica a ti en cuanto le quitas terreno. Es el
+          // mismo mensaje que te mandaría una persona a la que acabas de robar,
+          // de los diez de siempre (los de Halloween se ganan con calabazas y
+          // esos no se regalan), y la app ya sabe enseñarlo y dejarte contestar.
+          // Ahí empieza la conversación de verdad.
+          await client.query(
+            `INSERT INTO taunts (from_user_id, to_user_id, mode, taunt_id, run_id)
+             VALUES ($1, $2, 'taunt', $3, $4)`,
+            [prevOwnerId, userId, 1 + Math.floor(Math.random() * 10), runId],
+          );
+        } else {
+          // Create the "robo_notif" inbox entry that the victim sees when they
+          // open the app — gateway to the taunt chat. One row per robo (per
+          // thief/victim/run trio). The mobile shows the existing "te han robado"
+          // image popup with a "Devolver" button that opens the TauntSelector.
+          await client.query(
+            `INSERT INTO taunts (from_user_id, to_user_id, mode, run_id) VALUES ($1, $2, 'robo_notif', $3)`,
+            [userId, prevOwnerId, runId]
+          );
+        }
         if (prev[0]?.push_token) {
           const { rows: thief } = await client.query(
             `SELECT display_name FROM users WHERE id = $1`, [userId]
@@ -4078,13 +4098,24 @@ async function puntosDeRobo(
 ): Promise<number> {
   if (porVictima.size === 0) return 0;
   const { rows } = await cliente.query(
-    `SELECT user_id, total_points FROM user_stats WHERE user_id = ANY($1::uuid[])`,
+    `SELECT s.user_id, s.total_points, u.es_bot
+       FROM user_stats s JOIN users u ON u.id = s.user_id
+      WHERE s.user_id = ANY($1::uuid[])`,
     [[...porVictima.keys()]],
   );
   const suyos = new Map<string, number>(rows.map((r: any) => [r.user_id, Number(r.total_points) || 0]));
+  const bots = new Set<string>(rows.filter((r: any) => r.es_bot).map((r: any) => r.user_id));
   let total = 0;
   for (const [victima, n] of porVictima) {
-    total += n * 2 * factorRobo(puntosMios, suyos.get(victima) ?? 0);
+    // Al EJÉRCITO CORRR se le quita territorio al precio normal, ×1.
+    //
+    // Si no, saldría ×0,5 siempre: ellos tienen 0 puntos, así que van por
+    // detrás de todo el mundo y la regla de "robar al que va por detrás vale
+    // la mitad" les aplicaría a todos. Quitarles el barrio pagaría la mitad
+    // que a cualquiera — justo al revés de lo que queremos, que es que
+    // apetezca ir a por ellos.
+    const factor = bots.has(victima) ? 1 : factorRobo(puntosMios, suyos.get(victima) ?? 0);
+    total += n * 2 * factor;
   }
   return Math.round(total);
 }
