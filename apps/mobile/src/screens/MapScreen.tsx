@@ -96,11 +96,21 @@ const RELLENO_TERRITORIO = '80';   // 50%, por donde se ve el mapa
 const BORDE_TERRITORIO = 'B3';     // 70%, marca el límite sin cerrarlo
 
 const CALABAZA = require('../../assets/calabaza.png');
-const ZOMBI = require('../../assets/zombi.png');
-/** El dibujo de cada objeto del mapa. Se elige por el TIPO, no por los puntos:
- *  los puntos los decide el panel al sembrar y podrían cambiar. */
-const DIBUJO: Record<string, any> = { calabaza: CALABAZA, zombi: ZOMBI };
+const FANTASMA = require('../../assets/fantasma.png');
+/** El dibujo de cada objeto del mapa. Se elige por el TIPO, NUNCA por los
+ *  puntos: los tres fantasmas (nada, −1.000, +500) tienen que verse EXACTAMENTE
+ *  iguales, o se acabó el truco o trato. */
+const DIBUJO: Record<string, any> = { calabaza: CALABAZA, fantasma: FANTASMA };
 const dibujoDe = (tipo: string) => DIBUJO[tipo] ?? CALABAZA;
+
+/** Lo que dice el cartel al pisar algo. El fantasma tiene tres finales y cada
+ *  uno se cuenta con sus palabras: el susto no se lee igual que el premio. */
+function textoObjeto(o: { tipo: string; puntos: number }): string {
+  if (o.tipo !== 'fantasma') return `¡CALABAZA! +${o.puntos}`;
+  if (o.puntos > 0) return `¡TRATO! +${o.puntos}`;
+  if (o.puntos < 0) return `¡TRUCO! ${o.puntos}`;
+  return 'FANTASMA · te has librado';
+}
 
 const ExpoKeepAwake = NativeModules.ExpoKeepAwake;
 const activateScreenAwake = async () => {
@@ -661,7 +671,8 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       streakDays: number; beatPB: boolean; dobleBienvenida?: boolean;
       objetos?: number; puntosObjetos?: number;
       calabazas?: number; puntosCalabazas?: number;
-      zombis?: number; puntosZombis?: number;
+      /** Un número por cada fantasma pisado: lo que le tocó a cada uno. */
+      fantasmas?: number[]; puntosFantasmas?: number;
       cercadas?: number; puntosCerco?: number;
       tope?: number; topeAplicado?: boolean; puntosBrutos?: number;
     } | null;
@@ -2492,14 +2503,19 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
                   {/* Los zombis van en su propia línea y en rojo. Sumados a las
                       calabazas darían un "Calabazas (2) -300" que no hay quien
                       entienda. */}
-                  {(runSummary.breakdown.zombis ?? 0) > 0 && (
+                  {/* Los fantasmas, uno por línea. Es donde se ve el truco o
+                      trato: tres fantasmas pueden ser +500, nada y −1.000, y
+                      sumarlos en una sola línea se cargaría la gracia. */}
+                  {(runSummary.breakdown.fantasmas ?? []).map((p, i) => (
                     <BreakdownRow
-                      label={`Zombis (${runSummary.breakdown.zombis})`}
-                      value={`${runSummary.breakdown.puntosZombis}`}
-                      hint="los has pisado"
-                      malo
+                      key={`fantasma-${i}`}
+                      label={p > 0 ? 'Fantasma · ¡trato!' : p < 0 ? 'Fantasma · ¡truco!' : 'Fantasma'}
+                      value={p > 0 ? `+${p}` : p < 0 ? `${p}` : '0'}
+                      hint={p === 0 ? 'te has librado' : undefined}
+                      highlight={p > 0}
+                      malo={p < 0}
                     />
-                  )}
+                  ))}
                 </View>
               )}
 
@@ -2883,11 +2899,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         {objetoCogido && (
           <View style={[styles.cogido, objetoCogido.puntos < 0 && styles.pisadoMalo]} pointerEvents="none">
             <Image source={dibujoDe(objetoCogido.tipo)} style={styles.objeto} resizeMode="contain" />
-            <Text style={styles.cogidoTexto}>
-              {objetoCogido.puntos < 0
-                ? `¡ZOMBI! ${objetoCogido.puntos}`
-                : `¡CALABAZA! +${objetoCogido.puntos}`}
-            </Text>
+            <Text style={styles.cogidoTexto}>{textoObjeto(objetoCogido)}</Text>
           </View>
         )}
 
@@ -2992,11 +3004,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
             {objetoCogido && (
               <View style={[styles.cogidoRun, objetoCogido.puntos < 0 && styles.pisadoMalo]}>
                 <Image source={dibujoDe(objetoCogido.tipo)} style={styles.objeto} resizeMode="contain" />
-                <Text style={styles.cogidoTexto}>
-                  {objetoCogido.puntos < 0
-                    ? `¡ZOMBI! ${objetoCogido.puntos}`
-                    : `¡CALABAZA! +${objetoCogido.puntos}`}
-                </Text>
+                <Text style={styles.cogidoTexto}>{textoObjeto(objetoCogido)}</Text>
               </View>
             )}
             {gpsWeak && (

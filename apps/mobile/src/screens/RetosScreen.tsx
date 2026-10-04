@@ -25,7 +25,7 @@ import { api, RankingObjeto } from '../services/api';
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 const CALABAZA = require('../../assets/calabaza.png');
-const ZOMBI = require('../../assets/zombi.png');
+const FANTASMA = require('../../assets/fantasma.png');
 
 export default function RetosScreen() {
   const [cargando, setCargando] = useState(true);
@@ -104,16 +104,21 @@ export default function RetosScreen() {
               no se coge cerrando el círculo. Puesto aquí, debajo de lo bueno,
               para que se lea como "y ojo, que además hay esto". */}
           <View style={styles.aviso}>
-            <Image source={ZOMBI} style={styles.zombi} resizeMode="contain" />
+            <Image source={FANTASMA} style={styles.zombi} resizeMode="contain" />
             <View style={{ flex: 1 }}>
-              <Text style={styles.avisoTitulo}>Y CUIDADO CON LOS ZOMBIS</Text>
+              <Text style={styles.avisoTitulo}>TRUCO O TRATO</Text>
               <Text style={styles.avisoTexto}>
-                Hay muchos menos. Si pisas uno, <Text style={styles.malo}>pierdes 500 puntos</Text>.
-                Y a estos <Text style={styles.malo}>no</Text> te los llevas cerrando el círculo: al
-                zombi hay que esquivarlo.
+                Alrededor de cada calabaza hay <Text style={styles.resalte}>2 o 3 fantasmas</Text>.
+                Pisa uno y te toca una de tres, al azar:
               </Text>
               <Text style={styles.avisoTexto}>
-                Tranquilo: una carrera nunca te deja por debajo de cero.
+                <Text style={styles.resalte}>+500</Text>  ·  <Text style={styles.malo}>−1.000</Text>
+                {'  ·  '}nada
+              </Text>
+              <Text style={styles.avisoTexto}>
+                Y <Text style={styles.malo}>se ven todos iguales</Text>, así que no hay forma de
+                saberlo. A estos <Text style={styles.malo}>no</Text> te los llevas cerrando el
+                círculo: hay que pisarlos. Una carrera nunca te deja por debajo de cero.
               </Text>
             </View>
           </View>
@@ -145,14 +150,14 @@ export default function RetosScreen() {
             Así que ya puedes ir olvidándote de dar vueltas a la misma manzana.
           </Text>
           <View style={styles.aviso}>
-            <Image source={ZOMBI} style={styles.zombi} resizeMode="contain" />
+            <Image source={FANTASMA} style={styles.zombi} resizeMode="contain" />
             <View style={{ flex: 1 }}>
-              <Text style={styles.avisoTitulo}>Y HABRÁ ZOMBIS</Text>
+              <Text style={styles.avisoTitulo}>Y HABRÁ TRUCO O TRATO</Text>
               <Text style={styles.avisoTexto}>
-                Muchos menos que calabazas, pero si pisas uno{' '}
-                <Text style={styles.malo}>pierdes 500 puntos</Text>. Y a estos{' '}
-                <Text style={styles.malo}>no</Text> te los llevas cerrando el círculo: hay que
-                esquivarlos. Eso sí, una carrera nunca te deja por debajo de cero.
+                Alrededor de cada calabaza habrá <Text style={styles.resalte}>2 o 3 fantasmas</Text>,
+                y pisar uno te dará <Text style={styles.resalte}>+500</Text>,{' '}
+                <Text style={styles.malo}>−1.000</Text> o nada. Se ven todos iguales, así que ir a
+                por una calabaza es una apuesta. Eso sí, una carrera nunca te deja por debajo de cero.
               </Text>
             </View>
           </View>
@@ -190,7 +195,7 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: colors.danger,
     padding: spacing.md, marginTop: spacing.md, width: '100%',
   },
-  zombi: { width: 64, height: 64 },
+  zombi: { width: 70, height: 70 },
   avisoTitulo: {
     color: colors.danger, fontSize: 13, fontWeight: '900',
     letterSpacing: 1, marginBottom: 4,

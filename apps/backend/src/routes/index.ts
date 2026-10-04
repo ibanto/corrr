@@ -12,7 +12,7 @@ import { Resend } from 'resend';
 import { randomBytes, createHmac, timingSafeEqual } from 'crypto';
 import { SUPABASE_ROOT_CA } from '../db/supabase-ca.js';
 import { agruparEnTiras, Dueno } from '../services/tiras.js';
-import { sembrar, recoger, Objeto } from '../services/objetos.js';
+import { sembrar, sembrarFantasmas, recoger, Objeto } from '../services/objetos.js';
 import {
   celdasEncerradas, cajaDe, cajaDeTrabajo, gruposDeCeldas,
   MAX_CELDAS_CERCO, MAX_CAJA_CERCO, Celda,
@@ -2080,10 +2080,11 @@ edificio ni en medio del monte. Abajo eliges si valen todas las calles (el mapa 
 solo aquellas por las que ya ha corrido alguien. Se cogen pasando por encima al correr, y las que
 queden dentro de un cerco también son tuyas. <b>Solo las ven las apps 1.11.11 o más nuevas, y con
 Halloween encendido.</b></p>
-<p class="nota"><b>Con cada siembra salen zombis</b>, el 40 % de las calabazas, que restan 500 puntos
-al pisarlos. No hay que sembrarlos aparte: van solos, para que no pueda quedar un evento con zombis
-y sin calabazas. Al zombi hay que esquivarlo — <b>el cerco no se los lleva</b>: recoge lo que suma,
-lo que resta hay que pisarlo. Una carrera nunca baja de cero puntos.</p>
+<p class="nota"><b>Con cada calabaza salen 2 o 3 FANTASMAS</b>, en las calles de al lado. Truco o
+trato: al pisar uno te toca <b>nada</b>, <b>−1.000</b> o <b>+500</b>, un tercio cada cosa, y los tres
+se ven iguales en el mapa. Eso convierte cada calabaza en una apuesta. No se siembran aparte: van
+siempre con su calabaza, porque uno suelto por la ciudad no significa nada. <b>El cerco te da las
+calabazas; los fantasmas hay que pisarlos.</b> Y una carrera nunca baja de cero puntos.</p>
 <p class="nota"><b>Ojo con "en TODAS las ciudades".</b> El número de arriba es el TOTAL, no por
 ciudad. Sin poner un nombre, la siembra se reparte por los 1.599 km² del mapa de calles y salen a una
 cada 16 km²: no las encontraría nadie. El botón morado siembra ese número alrededor de CADA corredor
@@ -2458,9 +2459,9 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
     msgObjetos(todas ? 'Sembrando por todas las ciudades, esto tarda…' : 'Sembrando…', true);
     api('/admin/objetos', { method: 'POST', body: JSON.stringify(cuerpo) }).then(function (r) {
       msgObjetos('Sembradas ' + r.puestas + ' calabazas de ' + r.puntos + ' puntos y '
-        + r.zombis + ' zombis' + (r.donde || '')
+        + r.fantasmas + ' fantasmas alrededor' + (r.donde || '')
         + (r.puestas < r.pedidas ? ' · de las calabazas, el resto caía demasiado cerca de otra' : '')
-        + (r.zombis === 0 ? ' · OJO: no cupo ningún zombi, la zona está llena' : ''), true);
+        + (r.fantasmas === 0 ? ' · OJO: no cupo ningún fantasma, no hay calles alrededor' : ''), true);
       cargarObjetos();
     }).catch(function (e) { msgObjetos(e.message, false); });
   }
@@ -2471,12 +2472,13 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
     sembrarCalabazas(true);
   });
   document.getElementById('o_quitar').addEventListener('click', function () {
-    if (!confirm('¿Quitar del mapa las calabazas y los zombis sin coger? Los ya cogidos se quedan.')) return;
+    if (!confirm('¿Quitar del mapa las calabazas y los fantasmas sin coger? Los ya cogidos se quedan.')) return;
     Promise.all([
       api('/admin/objetos?tipo=calabaza', { method: 'DELETE' }),
       api('/admin/objetos?tipo=zombi', { method: 'DELETE' }),
+      api('/admin/objetos?tipo=fantasma', { method: 'DELETE' }),
     ]).then(function (rs) {
-      msgObjetos('Quitadas ' + rs[0].quitadas + ' calabazas y ' + rs[1].quitadas + ' zombis.', true);
+      msgObjetos('Quitadas ' + rs[0].quitadas + ' calabazas y ' + (rs[1].quitadas + rs[2].quitadas) + ' fantasmas.', true);
       cargarObjetos();
     }).catch(function (e) { msgObjetos(e.message, false); });
   });
@@ -3607,8 +3609,8 @@ app.post('/runs', {
     // Separados para el resumen: una carrera con una calabaza y un zombi suma
     // -300, y enseñar "Calabazas (2) -300" no lo entendería nadie. Son dos
     // líneas distintas, una en verde y otra en rojo.
-    const loBueno = objetos.filter((o: Objeto) => o.puntos > 0);
-    const loMalo = objetos.filter((o: Objeto) => o.puntos < 0);
+    const calabazasCogidas = objetos.filter((o: Objeto) => o.tipo === 'calabaza');
+    const fantasmasPisados = objetos.filter((o: Objeto) => o.tipo === 'fantasma');
 
     // Una celda vale lo mismo la pises o la rodees: +1 si estaba libre, +2 si
     // se la quitas a alguien (y a ese se le resta 1, como en cualquier robo).
@@ -3714,12 +3716,24 @@ app.post('/runs', {
     //
     // Si falla, la carrera se guarda igual: es un extra.
     for (const o of objetos) {
+      // Los fantasmas NO renacen por su cuenta: nacen con su calabaza y se
+      // quedan con ella. Uno suelto por la ciudad no significa nada, y además
+      // renacería con el mismo premio que el que acabas de pisar, con lo que
+      // bastaría con acordarse de cuál era bueno.
+      if (o.tipo === 'fantasma') continue;
       const radio = 500; // celdas = 5 km
-      await sembrar(client as any, {
-        cuantos: 1, tipo: o.tipo, puntos: o.puntos,
-        desde: new Date(Date.now() + ESPERA_REAPARICION_MS), hasta: objetoHasta(o),
+      const desde = new Date(Date.now() + ESPERA_REAPARICION_MS);
+      const hasta = objetoHasta(o);
+      const nuevas = await sembrar(client as any, {
+        cuantos: 1, tipo: o.tipo, puntos: o.puntos, desde, hasta,
         caja: { x0: o.x - radio, x1: o.x + radio, y0: o.y - radio, y1: o.y + radio },
-      }).catch(() => 0);
+      }).catch(() => [] as { x: number; y: number }[]);
+      // Y la calabaza que nace trae sus fantasmas, con premios nuevos.
+      if (o.tipo === 'calabaza' && nuevas.length > 0) {
+        await sembrarFantasmas(client as any, {
+          calabazas: nuevas, desde, hasta, premios: PREMIOS_FANTASMA,
+        }).catch(() => 0);
+      }
     }
 
     if (victimasCerco.size > 0) {
@@ -3759,10 +3773,13 @@ app.post('/runs', {
         dobleBienvenida,
         objetos: objetos.length,
         puntosObjetos,
-        calabazas: loBueno.length,
-        puntosCalabazas: loBueno.reduce((n: number, o: Objeto) => n + o.puntos, 0),
-        zombis: loMalo.length,
-        puntosZombis: loMalo.reduce((n: number, o: Objeto) => n + o.puntos, 0),
+        calabazas: calabazasCogidas.length,
+        puntosCalabazas: calabazasCogidas.reduce((n: number, o: Objeto) => n + o.puntos, 0),
+        // Los fantasmas van uno a uno: cada uno te ha dado una cosa distinta
+        // (nada, −1.000 o +500) y el resumen los enseña por separado, que es
+        // donde está la gracia de truco o trato.
+        fantasmas: fantasmasPisados.map((o: Objeto) => o.puntos),
+        puntosFantasmas: fantasmasPisados.reduce((n: number, o: Objeto) => n + o.puntos, 0),
         cercadas,
         cercadasRobadas,
         puntosCerco,
@@ -5786,15 +5803,16 @@ app.get('/admin/calles', { preHandler: requireAdmin }, async (_req, reply) => {
   return reply.send({ celdas: rows[0]?.n ?? 0 });
 });
 
-/** Los zombis: menos que calabazas y restan en vez de sumar.
+/** Los FANTASMAS: truco o trato.
  *
- *  Van en la misma tabla que las calabazas —el servicio de objetos es genérico
- *  y los puntos viven en cada objeto— con puntos NEGATIVOS, y de ahí sale solo
- *  todo lo demás: el cerco no se los lleva (solo recoge lo que suma) y pisarlos
- *  descuenta. Una carrera nunca baja de cero, así que salir a correr no puede
- *  costarte puntos ni pisando tres. */
-const PROPORCION_ZOMBIS = 0.40;
-const PUNTOS_ZOMBI = 500;
+ *  Sustituyen a los zombis, que solo restaban: un zombi lo esquivas y ya está.
+ *  El fantasma te hace decidir, porque no sabes cuál te toca — y los tres se
+ *  ven iguales en el mapa. Van pegados a las calabazas (ver `sembrarFantasmas`),
+ *  que es lo que convierte cada calabaza en una apuesta.
+ *
+ *  Los tres premios pesan lo mismo: un tercio cada uno. */
+const PREMIOS_FANTASMA = [0, -1000, 500];
+/** Fantasmas por calabaza: lo decide `sembrarFantasmas`, entre 2 y 3. */
 
 app.post('/admin/objetos', { preHandler: requireAdmin }, async (req: any, reply) => {
   const { tipo, cuantos, puntos, desde, hasta, cerca, fuente, todos } = req.body ?? {};
@@ -5827,21 +5845,19 @@ app.post('/admin/objetos', { preHandler: requireAdmin }, async (req: any, reply)
    *  sueltas. Si lo que se siembra ya resta puntos, no se le añaden zombis:
    *  no tendría sentido. */
   async function sembrarAqui(caja: any) {
-    const puestas = await sembrar(db, {
+    const celdas = await sembrar(db, {
       cuantos: n, tipo: elTipo, puntos: losPuntos, desde: d, hasta: h, caja, fuente: deDonde,
     });
-    let zombis = 0;
-    if (elTipo === 'calabaza' && losPuntos > 0 && puestas > 0) {
-      const cuantosZombis = Math.max(1, Math.round(puestas * PROPORCION_ZOMBIS));
-      zombis = await sembrar(db, {
-        cuantos: cuantosZombis, tipo: 'zombi', puntos: -PUNTOS_ZOMBI,
-        desde: d, hasta: h, caja, fuente: deDonde,
-        // 50 m de una calabaza, no 300: un zombi al lado de una calabaza es el
-        // cebo. Entre zombis sí se guardan los 300 de siempre.
-        separacionAjena: 5,
+    // Los fantasmas van SIEMPRE con las calabazas, nunca sueltos: se siembran
+    // en las calles de alrededor de cada una, dos o tres. No se pueden sembrar
+    // aparte a propósito — un fantasma en mitad de la ciudad no significa nada.
+    let fantasmas = 0;
+    if (elTipo === 'calabaza' && losPuntos > 0 && celdas.length > 0) {
+      fantasmas = await sembrarFantasmas(db, {
+        calabazas: celdas, desde: d, hasta: h, premios: PREMIOS_FANTASMA, fuente: deDonde,
       });
     }
-    return { puestas, zombis };
+    return { puestas: celdas.length, fantasmas };
   }
 
   // "Cerca de" acota la siembra a la zona donde ESA persona corre. Sin esto,
@@ -5857,16 +5873,16 @@ app.post('/admin/objetos', { preHandler: requireAdmin }, async (req: any, reply)
          WHERE EXISTS (SELECT 1 FROM cells c WHERE c.owner_id = u.id)
          ORDER BY u.display_name`,
     );
-    let puestas = 0, zombis = 0;
+    let puestas = 0, fantasmas = 0;
     const sitios: string[] = [];
     for (const g of gente) {
       const caja = await cajaDeCorredor(g.id);
       if (!caja) continue;
       const r = await sembrarAqui(caja);
-      if (r.puestas > 0) { puestas += r.puestas; zombis += r.zombis; sitios.push(g.display_name); }
+      if (r.puestas > 0) { puestas += r.puestas; fantasmas += r.fantasmas; sitios.push(g.display_name); }
     }
     return reply.send({
-      ok: true, puestas, zombis, pedidas: n * sitios.length, fuente: deDonde, puntos: losPuntos,
+      ok: true, puestas, fantasmas, pedidas: n * sitios.length, fuente: deDonde, puntos: losPuntos,
       donde: ` en ${sitios.length} ${sitios.length === 1 ? 'zona' : 'zonas'} (${sitios.join(', ')})`,
     });
   }
@@ -5885,8 +5901,8 @@ app.post('/admin/objetos', { preHandler: requireAdmin }, async (req: any, reply)
     donde = ` cerca de ${usuarios[0].display_name}`;
   }
 
-  const { puestas, zombis } = await sembrarAqui(caja);
-  return reply.send({ ok: true, puestas, zombis, pedidas: n, donde, fuente: deDonde, puntos: losPuntos });
+  const { puestas, fantasmas } = await sembrarAqui(caja);
+  return reply.send({ ok: true, puestas, fantasmas, pedidas: n, donde, fuente: deDonde, puntos: losPuntos });
 });
 
 /** Quitar del mapa las que queden libres (para cerrar un evento a mano). */

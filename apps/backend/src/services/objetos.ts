@@ -63,10 +63,10 @@ export async function sembrar(
      *  la zona y los zombis, que van detrás, se quedaron sin sitio. Cero. */
     separacionAjena?: number;
   },
-): Promise<number> {
+): Promise<{ x: number; y: number }[]> {
   const { cuantos, tipo, puntos, desde, hasta, caja, fuente = 'calles' } = opciones;
   const sepAjena = opciones.separacionAjena ?? SEPARACION_CELDAS;
-  if (cuantos <= 0) return 0;
+  if (cuantos <= 0) return [];
 
   // Candidatas en orden aleatorio. Se piden de más porque muchas se
   // descartarán por caer demasiado cerca de otro objeto.
@@ -105,7 +105,7 @@ export async function sembrar(
     if (!nuevas.every(lejosDe(SEPARACION_CELDAS))) continue;
     nuevas.push({ x, y });
   }
-  if (nuevas.length === 0) return 0;
+  if (nuevas.length === 0) return [];
 
   await db.query(
     `INSERT INTO objetos (tipo, cell_x, cell_y, puntos, desde, hasta)
@@ -113,7 +113,7 @@ export async function sembrar(
     [tipo, puntos, desde.toISOString(), hasta.toISOString(),
      nuevas.map(n => n.x), nuevas.map(n => n.y)],
   );
-  return nuevas.length;
+  return nuevas;
 }
 
 /** Los objetos libres que caen dentro de las celdas de una carrera, marcados
@@ -128,15 +128,15 @@ export async function recoger(
   /** Las celdas que ha PISADO. De aquí se coge todo, bueno y malo. */
   pisadas: { x: number; y: number }[],
   cuando: Date,
-  /** Las que han quedado DENTRO de un cerco. De aquí solo se coge lo que
-   *  suma.
+  /** Las que han quedado DENTRO de un cerco. De aquí solo se cogen CALABAZAS.
    *
-   *  LA REGLA: el cerco recoge lo que suma; lo que resta hay que pisarlo.
-   *  Si rodeas una manzana, la calabaza de dentro es tuya —te has ganado el
-   *  barrio—, pero el zombi que haya ahí no te hace nada: al zombi hay que
-   *  pisarlo. Si no, cerrar un cerco sería una ruleta rusa y nadie cerraría
-   *  ninguno. Vale igual para lo que venga después: lo que puntúe en negativo
-   *  nunca entra por el cerco. */
+   *  LA REGLA: el cerco te da las calabazas; los fantasmas hay que pisarlos.
+   *
+   *  Si rodeas una manzana, la calabaza de dentro es tuya: te has ganado el
+   *  barrio. Pero los fantasmas no, y da igual lo que lleven dentro. Si los
+   *  buenos entraran por el cerco y los malos no, cerrar un círculo grande
+   *  sería recoger premios sin riesgo y se acabaría el truco o trato — que es
+   *  justo de lo que va el juego: no sabes cuál te toca hasta que lo pisas. */
   cercadas: { x: number; y: number }[] = [],
 ): Promise<Objeto[]> {
   const celdas = [...pisadas, ...cercadas];
@@ -155,7 +155,7 @@ export async function recoger(
         AND EXISTS (
           SELECT 1 FROM unnest($2::int[], $3::int[], $5::boolean[]) AS t(x, y, solo_suma)
            WHERE t.x = o.cell_x AND t.y = o.cell_y
-             AND (NOT t.solo_suma OR o.puntos > 0))
+             AND (NOT t.solo_suma OR o.tipo = 'calabaza'))
       RETURNING o.id, o.cell_x, o.cell_y, o.puntos, o.tipo, o.hasta`,
     [userId, celdas.map(c => c.x), celdas.map(c => c.y), cuando.toISOString(), soloSiSuma],
   );
@@ -163,4 +163,81 @@ export async function recoger(
     id: r.id, x: r.cell_x, y: r.cell_y, puntos: r.puntos, tipo: r.tipo,
     hasta: r.hasta ? new Date(r.hasta).toISOString() : null,
   }));
+}
+
+/** Los FANTASMAS: truco o trato, y van pegados a las calabazas.
+ *
+ *  La gracia está en que no sabes cuál te toca. Cada uno lleva dentro, desde
+ *  que se siembra, una de tres cosas —nada, −1.000 o +500— y todos se ven
+ *  iguales en el mapa. Se decide al sembrar y no al pisarlo: para quien juega
+ *  es exactamente lo mismo, y así no hay ningún sorteo que alguien pueda
+ *  repetir hasta que le salga bien.
+ *
+ *  Y se colocan en las calles de alrededor de una calabaza, a tiro de piedra.
+ *  Eso es lo que convierte cada calabaza en una apuesta: la ves, está a 100 m,
+ *  y entre tú y ella hay dos o tres fantasmas. Sueltos por la ciudad no
+ *  pintarían nada.
+ */
+export async function sembrarFantasmas(
+  db: { query: (sql: string, params?: any[]) => Promise<{ rows: any[]; rowCount: number | null }> },
+  opciones: {
+    /** Las calabazas recién sembradas, que son el ancla. */
+    calabazas: { x: number; y: number }[];
+    desde: Date; hasta: Date;
+    /** Lo que puede tocarte, con el mismo peso cada uno. */
+    premios?: number[];
+    fuente?: 'calles' | 'pisadas';
+  },
+): Promise<number> {
+  const { calabazas, desde, hasta, premios = [0, -1000, 500], fuente = 'calles' } = opciones;
+  if (calabazas.length === 0) return 0;
+
+  /** Entre 80 y 250 m de su calabaza: la calle de al lado, no la otra punta. */
+  const CERCA_MIN = 8, CERCA_MAX = 25;
+  /** Entre fantasmas, 50 m: que no salgan amontonados en la misma esquina. */
+  const ENTRE_ELLOS = 5;
+
+  let tabla = fuente === 'pisadas' ? 'cells' : 'calles';
+  if (tabla === 'calles') {
+    const { rows: hay } = await db.query('SELECT 1 FROM calles LIMIT 1');
+    if (hay.length === 0) tabla = 'cells';
+  }
+  // Las calles de toda la zona de golpe: una consulta en vez de una por calabaza.
+  const x0 = Math.min(...calabazas.map(c => c.x)) - CERCA_MAX;
+  const x1 = Math.max(...calabazas.map(c => c.x)) + CERCA_MAX;
+  const y0 = Math.min(...calabazas.map(c => c.y)) - CERCA_MAX;
+  const y1 = Math.max(...calabazas.map(c => c.y)) + CERCA_MAX;
+  const { rows: candidatas } = await db.query(
+    `SELECT cell_x x, cell_y y FROM ${tabla}
+      WHERE cell_x BETWEEN $1 AND $2 AND cell_y BETWEEN $3 AND $4`,
+    [x0, x1, y0, y1]);
+  const { rows: puestos } = await db.query(
+    `SELECT cell_x x, cell_y y FROM objetos WHERE tomado_por IS NULL AND (hasta IS NULL OR hasta > NOW())`);
+
+  const ocupadas = puestos.map((o: any) => ({ x: o.x, y: o.y }));
+  const nuevos: { x: number; y: number; puntos: number }[] = [];
+  for (const cal of calabazas) {
+    const cuantos = 2 + Math.floor(Math.random() * 2);          // 2 o 3
+    const cerca = candidatas.filter((c: any) => {
+      const d = Math.max(Math.abs(c.x - cal.x), Math.abs(c.y - cal.y));
+      return d >= CERCA_MIN && d <= CERCA_MAX;
+    }).sort(() => Math.random() - 0.5);
+    let puestos_aqui = 0;
+    for (const c of cerca) {
+      if (puestos_aqui >= cuantos) break;
+      const lejos = (p: { x: number; y: number }) =>
+        Math.abs(p.x - c.x) > ENTRE_ELLOS || Math.abs(p.y - c.y) > ENTRE_ELLOS;
+      if (!ocupadas.every(lejos) || !nuevos.every(lejos)) continue;
+      nuevos.push({ x: c.x, y: c.y, puntos: premios[Math.floor(Math.random() * premios.length)] });
+      puestos_aqui++;
+    }
+  }
+  if (nuevos.length === 0) return 0;
+
+  await db.query(
+    `INSERT INTO objetos (tipo, cell_x, cell_y, puntos, desde, hasta)
+     SELECT 'fantasma', x, y, p, $4, $5 FROM unnest($1::int[], $2::int[], $3::int[]) AS t(x, y, p)`,
+    [nuevos.map(n => n.x), nuevos.map(n => n.y), nuevos.map(n => n.puntos),
+     desde.toISOString(), hasta.toISOString()]);
+  return nuevos.length;
 }
