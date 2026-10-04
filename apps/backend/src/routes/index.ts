@@ -598,6 +598,14 @@ async function initDB() {
         // servidor no arranque y se vea, que servir errores en silencio.
   await db.query(`CREATE INDEX IF NOT EXISTS users_ciudad_idx ON users(corrr_ciudad(city))`).catch(() => {});
 
+  // El EJÉRCITO CORRR (§13 del CLAUDE.md). Son filas en `users` como las demás,
+  // así que hay que sacarlos a mano de todo lo que cuenta PERSONAS: si no, el
+  // resumen dice que tienes cinco corredores más de los que tienes, el ranking
+  // nacional se llena de relleno y —lo peor— la campaña de correos escribe a
+  // cinco direcciones inventadas y los rebotes ensucian la reputación de envío.
+  // Marcarlos es más seguro que confiar en que no estén verificados.
+  await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS es_bot BOOLEAN NOT NULL DEFAULT FALSE`).catch(() => {});
+
   // ── Cells (grid-based territory, v2 model) ─────────────────────────────────
   // 10m × 10m cells (v1.8.0 — was 5m before). Identified by integer (cell_x,
   // cell_y) computed from lat/lng. Coexists with the polygon `zones` table
@@ -1354,6 +1362,10 @@ app.get('/ranking/global', { preHandler: requireAuth }, async (req, reply) => {
            s.total_zones
     FROM user_stats s
     JOIN users u ON u.id = s.user_id
+    -- El ejército fuera: el nacional es "quién manda en España" y cinco filas
+    -- de relleno al fondo no aportan nada. En el de ciudad sí salen, porque su
+    -- ciudad es EJÉRCITO CORRR y ahí no le quitan el sitio a nadie.
+    WHERE NOT u.es_bot
     ORDER BY COALESCE(s.total_points, 0) DESC
     LIMIT 100
   `);
@@ -1446,6 +1458,7 @@ app.get('/ranking/podium', { preHandler: requireAuth }, async (req: any, reply) 
        FROM runs r
        JOIN users u ON u.id = r.user_id
       WHERE COALESCE(r.started_at, r.created_at) >= $1
+        AND NOT u.es_bot
         ${filterCity ? 'AND corrr_ciudad(u.city) = corrr_ciudad($2)' : ''}
       GROUP BY u.id, u.display_name, u.city, u.avatar_thumb
      HAVING SUM(r.points) > 0
@@ -1460,6 +1473,7 @@ app.get('/ranking/podium', { preHandler: requireAuth }, async (req: any, reply) 
        FROM user_stats s
        JOIN users u ON u.id = s.user_id
       WHERE COALESCE(s.total_points, 0) > 0
+        AND NOT u.es_bot
         ${filterCity ? 'AND corrr_ciudad(u.city) = corrr_ciudad($1)' : ''}
       ORDER BY points DESC
       LIMIT 3`,
@@ -5504,13 +5518,16 @@ app.get('/admin/resumen', { preHandler: [requireAuth, requireAdminApp] }, async 
        (SELECT COUNT(*)::int FROM runs WHERE created_at >= NOW() - INTERVAL '7 days') AS carreras,
        (SELECT COALESCE(ROUND(SUM(distance_km)::numeric, 1), 0) FROM runs WHERE created_at >= NOW() - INTERVAL '7 days') AS km,
        (SELECT COUNT(*)::int FROM cells WHERE claimed_at >= NOW() - INTERVAL '7 days') AS celdas`),
+    // Estos contadores cuentan PERSONAS, así que el ejército queda fuera: si no,
+    // el panel diría que hay cinco corredores más de los que hay y cinco
+    // "sin estrenar" que no van a estrenarse nunca.
     db.query(`SELECT
-       (SELECT COUNT(*)::int FROM users WHERE email NOT ILIKE '%@corrr.es' AND email NOT ILIKE '%+googletest@%') AS total,
-       (SELECT COUNT(*)::int FROM users u WHERE NOT EXISTS (SELECT 1 FROM runs r WHERE r.user_id = u.id)
+       (SELECT COUNT(*)::int FROM users WHERE NOT es_bot AND email NOT ILIKE '%@corrr.es' AND email NOT ILIKE '%+googletest@%') AS total,
+       (SELECT COUNT(*)::int FROM users u WHERE NOT u.es_bot AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.user_id = u.id)
           AND u.email NOT ILIKE '%@corrr.es' AND u.email NOT ILIKE '%+googletest@%') AS sin_estrenar,
-       (SELECT COUNT(*)::int FROM users u WHERE EXISTS (SELECT 1 FROM runs r WHERE r.user_id = u.id)
+       (SELECT COUNT(*)::int FROM users u WHERE NOT u.es_bot AND EXISTS (SELECT 1 FROM runs r WHERE r.user_id = u.id)
           AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.user_id = u.id AND r.created_at >= NOW() - INTERVAL '14 days')) AS dormidos,
-       (SELECT COUNT(*)::int FROM users WHERE ultimo_acceso_at >= NOW() - INTERVAL '7 days') AS activos_semana`),
+       (SELECT COUNT(*)::int FROM users WHERE NOT es_bot AND ultimo_acceso_at >= NOW() - INTERVAL '7 days') AS activos_semana`),
     db.query(`SELECT COUNT(*)::int AS activos FROM avisos WHERE activo AND (hasta IS NULL OR hasta > NOW())`),
     db.query(`SELECT campana, COUNT(*)::int AS enviados,
                      COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM runs r WHERE r.user_id = e.user_id AND r.created_at > e.enviado_at))::int AS salieron
@@ -6110,6 +6127,7 @@ const FROM_REACTIVACION = `users u LEFT JOIN user_stats s ON s.user_id = u.id`;
  *  - Fuera las cuentas de revisión de Apple (@corrr.es) y de Google (+googletest). */
 const SQL_PENDIENTES_REACTIVACION = `
       (u.email_verified OR u.google_id IS NOT NULL)
+      AND NOT u.es_bot
       AND u.email_baja_at IS NULL
       AND ${SQL_ALTA_CON_MARGEN}
       AND u.email NOT ILIKE '%@corrr.es'
@@ -6124,6 +6142,7 @@ const SQL_PENDIENTES_REACTIVACION = `
  *  todas. */
 const SQL_PENDIENTES_DOBLE = `
       (u.email_verified OR u.google_id IS NOT NULL)
+      AND NOT u.es_bot
       AND u.email_baja_at IS NULL
       AND ${SQL_ALTA_CON_MARGEN}
       AND u.email NOT ILIKE '%@corrr.es'
