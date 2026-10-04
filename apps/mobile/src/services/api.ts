@@ -301,9 +301,20 @@ interface RunSaveResult {
     beatPB: boolean;
     /** La carrera ha contado doble por tener 100 puntos o menos. */
     dobleBienvenida?: boolean;
-    /** Objetos recogidos por el camino y lo que han sumado. */
+    /** Objetos recogidos por el camino y lo que han sumado. Van POR FUERA del
+     *  tope: 200 son 200 aunque la carrera se haya topado. */
     objetos?: number;
     puntosObjetos?: number;
+    /** Lo que se ha quedado al cerrar un cerco. Es lo que más puntúa con
+     *  diferencia, y antes no se enseñaba: el total salía por las nubes y
+     *  ninguna línea del desglose lo explicaba. */
+    cercadas?: number;
+    puntosCerco?: number;
+    /** El tope de esta carrera (2.000 por km, techo 20.000), si ha mordido, y
+     *  lo que habría dado sin él (sin contar calabazas). */
+    tope?: number;
+    topeAplicado?: boolean;
+    puntosBrutos?: number;
   };
 }
 

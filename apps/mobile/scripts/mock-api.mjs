@@ -111,6 +111,19 @@ const DINAMICAS = [
   [/^GET \/users\/[^/]+\/ficha$/, () => ({ id: RIVAL, name: 'Lucía M.', city: 'Bilbao', warCry: 'Nadie me pilla',
      avatar: null, zonas: 87, km: 410.2, carreras: 61, puntos: 28480, hectareas: 12.4, racha: 5, mine: false })],
   [/^GET \/territory\//, () => ({ duenos: [], tiras: [] })],
+  // Una carrera guardada: 3,46 km que cierra un cerco y se topa. Sirve para
+  // mirar que el resumen enseña el cerco, el tope y las calabazas por fuera.
+  [/^POST \/runs$/, () => ({
+    runId: 'run-prueba', stolenZones: [], stolenCells: [], newCellCount: 53,
+    points: 7120,
+    breakdown: {
+      kmPoints: 42, cellPoints: 53, newCells: 53, stolenCells: 385,
+      loopBonus: 50, streakMultiplier: 1.5, pbMultiplier: 1.2, streakDays: 3, beatPB: true,
+      objetos: 1, puntosObjetos: 200,
+      cercadas: 3480, puntosCerco: 3480,
+      tope: 6920, topeAplicado: true, puntosBrutos: 7911,
+    },
+  })],
   [/^POST \/app\/notificaciones\/vistas$/, () => { notasVistas = true; return { ok: true }; }],
   [/^POST \/app\/aviso\/\d+\/visto$/, () => { avisoVisto = true; return { ok: true }; }],
   [/^POST \//, () => ({ ok: true })],
