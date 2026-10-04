@@ -94,31 +94,58 @@ function entre(a, b, dentro) {
   }
 }
 
-/** Una vuelta: salta de punto de calle en punto de calle y vuelve al principio. */
-function daUnaVuelta(puntos, salida) {
+/** Una vuelta ALREDEDOR de un barrio, siguiendo las calles.
+ *
+ *  Dos intentos fallidos antes de llegar aquí, y los dos se vieron dibujando el
+ *  resultado antes de pintar nada:
+ *
+ *   1. Cerrar uniendo el último punto con el primero en línea recta. Si el
+ *      paseo acababa lejos, esa recta cruzaba media ciudad por encima de los
+ *      edificios ("El Galgo ha hecho una cosa muy rara, una recta", Iban).
+ *   2. Alejarse todo lo posible y volver. Sale una tira larga y estrecha: es
+ *      una ida y vuelta, no un circuito, y no encierra un barrio.
+ *
+ *  Lo que hace una persona es DAR LA VUELTA a una manzana. Así que se elige un
+ *  centro y un radio, y se va rodeándolo: en cada paso se busca el punto de
+ *  calle más parecido al siguiente punto del círculo. Como los puntos son calles
+ *  de verdad, el recorrido va por ellas y el círculo sale abollado — que es
+ *  exactamente como se ve el territorio de alguien que ha dado la vuelta a su
+ *  barrio.
+ */
+function daUnaVuelta(puntos, centro) {
   const porClave = new Map(puntos.map(p => [clave(p.x, p.y), p]));
-  const vistos = new Set();
-  const ruta = [salida];
-  vistos.add(clave(salida.x, salida.y));
-  let actual = salida;
-  for (let paso = 0; paso < PASOS; paso++) {
-    const volviendo = paso > PASOS * 0.55;      // en la segunda mitad, de regreso
-    let mejor = null, mejorNota = -Infinity;
-    for (let dx = -SALTO; dx <= SALTO; dx++) for (let dy = -SALTO; dy <= SALTO; dy++) {
-      if (dx === 0 && dy === 0) continue;
-      const c = clave(actual.x + dx, actual.y + dy);
-      if (!porClave.has(c) || vistos.has(c)) continue;
-      const p = porClave.get(c);
-      const aCasa = Math.hypot(p.x - salida.x, p.y - salida.y);
-      // Ir lejos al principio, volver al final, con un poco de azar para que no
-      // salgan dos vueltas iguales.
-      const nota = (volviendo ? -aCasa : aCasa) + Math.random() * 8;
-      if (nota > mejorNota) { mejorNota = nota; mejor = p; }
+  // Radio entre 300 y 650 m: una vuelta de barrio, no una maratón.
+  const radio = 30 + Math.random() * 35;
+  const giro = Math.random() < 0.5 ? 1 : -1;      // a derechas o a izquierdas
+  const desde = Math.random() * Math.PI * 2;
+
+  /** El punto de calle más cercano a una posición ideal, dentro de un margen. */
+  const masCerca = (x, y, margen) => {
+    let mejor = null, mejorD = Infinity;
+    for (let dx = -margen; dx <= margen; dx++) for (let dy = -margen; dy <= margen; dy++) {
+      const c = clave(Math.round(x) + dx, Math.round(y) + dy);
+      if (!porClave.has(c)) continue;
+      const d = dx * dx + dy * dy;
+      if (d < mejorD) { mejorD = d; mejor = porClave.get(c); }
     }
-    if (!mejor) break;
-    ruta.push(mejor); vistos.add(clave(mejor.x, mejor.y)); actual = mejor;
+    return mejor;
+  };
+
+  const ruta = [];
+  const vueltas = 56;                              // puntos del círculo
+  for (let i = 0; i <= vueltas; i++) {
+    const a = desde + giro * (i / vueltas) * Math.PI * 2;
+    // El radio ondula un poco: un barrio no es un compás.
+    const r = radio * (0.82 + 0.18 * Math.sin(a * 3 + desde));
+    const p = masCerca(centro.x + r * Math.cos(a), centro.y + r * Math.sin(a), 14);
+    if (!p) continue;
+    if (ruta.length && p.x === ruta[ruta.length - 1].x && p.y === ruta[ruta.length - 1].y) continue;
+    ruta.push(p);
   }
-  ruta.push(salida);                            // cerrar
+  // Si falta más de un tercio del círculo, ahí no hay callejero: se descarta.
+  if (ruta.length < vueltas * 0.66) return null;
+  ruta.push(ruta[0]);
+
   const celdas = new Set();
   for (let i = 1; i < ruta.length; i++) entre(ruta[i - 1], ruta[i], celdas);
   return celdas;
@@ -196,14 +223,14 @@ for (const [i, z] of objetivo.entries()) {
   if (puntos.length < 400) { console.log(`  ${z.donde.padEnd(18)} pocas calles en el centro, se salta`); continue; }
   let deLaCiudad = 0;
   for (let v = 0; v < VUELTAS; v++) {
-    // La salida, en el primer kilómetro desde el centro: si se coge de toda la
-    // caja, la vuelta acaba en un descampado a las afueras. El 4-oct la primera
-    // mancha de Madrid salió junto a la M-30, al lado del Manzanares.
+    // El barrio que se rodea, en el primer kilómetro desde el centro: si se coge
+    // de toda la caja, la vuelta acaba en un descampado a las afueras. El 4-oct
+    // la primera mancha de Madrid salió junto a la M-30, al lado del Manzanares.
     const cerca = puntos.filter(p => Math.abs(p.x - z.centro.x) < 100 && Math.abs(p.y - z.centro.y) < 100);
     const bolsa = cerca.length > 50 ? cerca : puntos;
-    const salida = bolsa[Math.floor(Math.random() * bolsa.length)];
-    const ruta = daUnaVuelta(puntos, salida);
-    if (ruta.size < 300) continue;
+    const barrio = bolsa[Math.floor(Math.random() * bolsa.length)];
+    const ruta = daUnaVuelta(puntos, barrio);
+    if (!ruta || ruta.size < 300) continue;
     const mancha = rellena(ruta);
     plan.push({ dueno: (i * VUELTAS + v) % EJERCITO.length, celdas: mancha });
     deLaCiudad += mancha.size; total += mancha.size;
