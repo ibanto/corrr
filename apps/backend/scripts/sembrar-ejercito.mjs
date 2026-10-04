@@ -123,10 +123,37 @@ function entre(a, b, dentro) {
  */
 function daUnaVuelta(puntos, centro) {
   const porClave = new Map(puntos.map(p => [clave(p.x, p.y), p]));
-  // Radio entre 300 y 650 m: una vuelta de barrio, no una maratón.
-  const radio = 30 + Math.random() * 35;
+
+  // CADA VUELTA, SU FORMA. La primera versión usaba siempre el mismo molde
+  // —un círculo con tres bultos— y puestas en el mapa una al lado de otra
+  // cantaban: "las formas son todas muy iguales" (Iban, 4-oct). El territorio
+  // de una persona no se parece al de otra, y eso es lo que hay que imitar.
+  //
+  // Tres cosas al azar en cada una:
+  //   · el tamaño, de 250 a 900 m de radio — hay quien da la vuelta a la
+  //     manzana y quien se hace el barrio entero;
+  //   · un achatamiento en una dirección cualquiera, que es lo que sale cuando
+  //     corres a lo largo de un río, una avenida o un paseo marítimo;
+  //   · dos o tres ondas de distinto tamaño, que hacen los entrantes y
+  //     salientes. Antes era siempre una, y de ahí el aire de familia.
+  const radio = 25 + Math.random() * 65;
   const giro = Math.random() < 0.5 ? 1 : -1;      // a derechas o a izquierdas
   const desde = Math.random() * Math.PI * 2;
+  // Achatamiento: 1 es redonda, 0,45 es claramente alargada.
+  const achata = 0.45 + Math.random() * 0.55;
+  const ejeAchatado = Math.random() * Math.PI;
+  // Las ondas del borde.
+  const ondas = Array.from({ length: 2 + Math.floor(Math.random() * 2) }, () => ({
+    veces: 2 + Math.floor(Math.random() * 4),     // cuántos entrantes da
+    tamano: 0.06 + Math.random() * 0.17,
+    giro: Math.random() * Math.PI * 2,
+  }));
+  /** El radio en un ángulo dado, ya con sus ondas. */
+  const radioEn = (a) => {
+    let r = 1;
+    for (const o of ondas) r += o.tamano * Math.sin(o.veces * a + o.giro);
+    return radio * Math.max(0.35, r);
+  };
 
   /** El punto de calle más cercano a una posición ideal, dentro de un margen. */
   const masCerca = (x, y, margen) => {
@@ -140,19 +167,79 @@ function daUnaVuelta(puntos, centro) {
     return mejor;
   };
 
-  const ruta = [];
-  const vueltas = 56;                              // puntos del círculo
-  for (let i = 0; i <= vueltas; i++) {
+  // Los sitios por los que tiene que pasar la vuelta, repartidos por el
+  // contorno. NO son el recorrido: son las balizas. Entre una y otra se va
+  // ANDANDO por las calles.
+  const balizas = [];
+  const vueltas = 36;
+  for (let i = 0; i < vueltas; i++) {
     const a = desde + giro * (i / vueltas) * Math.PI * 2;
-    // El radio ondula un poco: un barrio no es un compás.
-    const r = radio * (0.82 + 0.18 * Math.sin(a * 3 + desde));
-    const p = masCerca(centro.x + r * Math.cos(a), centro.y + r * Math.sin(a), 14);
-    if (!p) continue;
-    if (ruta.length && p.x === ruta[ruta.length - 1].x && p.y === ruta[ruta.length - 1].y) continue;
-    ruta.push(p);
+    const r = radioEn(a);
+    // Se achata en una dirección cualquiera: se gira el punto al eje, se
+    // aplasta, y se devuelve. Es lo que convierte un redondel en la forma de
+    // quien corre siempre a lo largo de la misma avenida.
+    const bx = r * Math.cos(a), by = r * Math.sin(a);
+    const cs = Math.cos(ejeAchatado), sn = Math.sin(ejeAchatado);
+    const gx = (bx * cs + by * sn), gy = (-bx * sn + by * cs) * achata;
+    balizas.push({ x: centro.x + (gx * cs - gy * sn), y: centro.y + (gx * sn + gy * cs) });
   }
-  // Si falta más de un tercio del círculo, ahí no hay callejero: se descarta.
-  if (ruta.length < vueltas * 0.66) return null;
+
+  // Y ahora, de baliza en baliza, ANDANDO.
+  //
+  // Antes se unía una baliza con la siguiente en línea recta, y esas rectas
+  // cruzaban por encima de las manzanas: "deben seguir las calles, que si no es
+  // muy fake" (Iban, 4-oct). Ahora se da un paso de 60 m cada vez, siempre a un
+  // punto de calle, eligiendo el que más acerca a la baliza. Como todos los
+  // puntos son calle de verdad, el recorrido entero va por la calle y el
+  // contorno sale con los quiebros del callejero, no redondeado.
+  const PASO = 4;                                  // 40 m: el mismo paso con el que se bajó el mapa
+  const primera = masCerca(balizas[0].x, balizas[0].y, 16);
+  if (!primera) return null;
+  const ruta = [primera];
+  let actual = primera;
+  let rumbo = null;                                // hacia dónde se venía andando
+  let perdidas = 0;
+  for (const baliza of [...balizas.slice(1), balizas[0]]) {
+    let margen = 80;                               // pasos como mucho por tramo
+    while (margen-- > 0) {
+      const d = Math.hypot(actual.x - baliza.x, actual.y - baliza.y);
+      if (d <= PASO) break;
+      let mejor = null, mejorNota = -Infinity;
+      for (let dx = -PASO; dx <= PASO; dx++) for (let dy = -PASO; dy <= PASO; dy++) {
+        if (dx === 0 && dy === 0) continue;
+        const c = porClave.get(clave(actual.x + dx, actual.y + dy));
+        if (!c) continue;
+        const nd = Math.hypot(c.x - baliza.x, c.y - baliza.y);
+        if (nd >= d) continue;                     // solo pasos que acercan
+        // LA INERCIA, que es lo que hace que parezca de verdad.
+        //
+        // Sin esto, el paseo va casi recto hacia la baliza: en el centro de una
+        // ciudad hay puntos de calle cada 40 m en todas direcciones, así que
+        // siempre hay uno "hacia allá" y el borde sale redondeado. Una persona
+        // no hace eso: tira recto por la calle hasta la esquina y entonces
+        // gira. Premiando seguir en la misma dirección salen tramos rectos y
+        // esquinas, que es lo que se ve en el mapa de alguien de verdad.
+        const largo = Math.hypot(dx, dy) || 1;
+        const seguido = rumbo ? (dx * rumbo.x + dy * rumbo.y) / largo : 0;
+        // El 14 está medido, no puesto a ojo: con 4,5 el borde serpentea y
+        // sale redondeado; con 14 tira recto por la calle y solo gira cuando
+        // no le queda otra, que es lo que hace esquinas en ángulo. Se comparó
+        // dibujando las dos con la misma forma de partida.
+        const nota = (d - nd) + seguido * 14;
+        if (nota > mejorNota) { mejorNota = nota; mejor = c; }
+      }
+      if (!mejor) break;                           // calle sin salida hacia allí
+      const vx = mejor.x - actual.x, vy = mejor.y - actual.y;
+      const n = Math.hypot(vx, vy) || 1;
+      rumbo = { x: vx / n, y: vy / n };
+      ruta.push(mejor);
+      actual = mejor;
+    }
+    if (Math.hypot(actual.x - baliza.x, actual.y - baliza.y) > PASO * 4) perdidas++;
+  }
+  // Si no ha podido llegar a un tercio de las balizas, ahí no hay callejero
+  // suficiente: se descarta la vuelta entera en vez de inventar un atajo.
+  if (perdidas > vueltas / 3 || ruta.length < 40) return null;
   ruta.push(ruta[0]);
 
   const celdas = new Set();
