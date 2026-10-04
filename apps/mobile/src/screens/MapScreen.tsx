@@ -96,6 +96,11 @@ const RELLENO_TERRITORIO = '80';   // 50%, por donde se ve el mapa
 const BORDE_TERRITORIO = 'B3';     // 70%, marca el límite sin cerrarlo
 
 const CALABAZA = require('../../assets/calabaza.png');
+const ZOMBI = require('../../assets/zombi.png');
+/** El dibujo de cada objeto del mapa. Se elige por el TIPO, no por los puntos:
+ *  los puntos los decide el panel al sembrar y podrían cambiar. */
+const DIBUJO: Record<string, any> = { calabaza: CALABAZA, zombi: ZOMBI };
+const dibujoDe = (tipo: string) => DIBUJO[tipo] ?? CALABAZA;
 
 const ExpoKeepAwake = NativeModules.ExpoKeepAwake;
 const activateScreenAwake = async () => {
@@ -602,14 +607,19 @@ function polygonArea(coords: Coord[]): number {
 
 /** Una fila del desglose de puntos del resumen post-carrera. `highlight` pinta
  *  el valor en naranja (para multiplicadores, que son lo "premium"). */
-function BreakdownRow({ label, value, hint, highlight }: { label: string; value: string; hint?: string; highlight?: boolean }) {
+function BreakdownRow({ label, value, hint, highlight, malo }:
+  { label: string; value: string; hint?: string; highlight?: boolean; malo?: boolean }) {
   return (
     <View style={styles.breakdownRow}>
       <View style={{ flex: 1 }}>
         <Text style={styles.breakdownLabel}>{label}</Text>
         {hint ? <Text style={styles.breakdownHint}>{hint}</Text> : null}
       </View>
-      <Text style={[styles.breakdownValue, highlight && styles.breakdownValueHi]}>{value}</Text>
+      {/* `malo` pinta la cifra en rojo. Lo que resta no puede salir del mismo
+          color que lo que suma. */}
+      <Text style={[styles.breakdownValue, highlight && styles.breakdownValueHi, malo && styles.breakdownValueMalo]}>
+        {value}
+      </Text>
     </View>
   );
 }
@@ -650,6 +660,8 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       loopBonus: number; streakMultiplier: number; pbMultiplier: number;
       streakDays: number; beatPB: boolean; dobleBienvenida?: boolean;
       objetos?: number; puntosObjetos?: number;
+      calabazas?: number; puntosCalabazas?: number;
+      zombis?: number; puntosZombis?: number;
       cercadas?: number; puntosCerco?: number;
       tope?: number; topeAplicado?: boolean; puntosBrutos?: number;
     } | null;
@@ -2469,12 +2481,23 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
                   {/* Las calabazas van LAS ÚLTIMAS y después del tope, porque
                       se suman por fuera: 200 son 200 aunque la carrera se haya
                       topado. Puestas antes, la cuenta no salía. */}
-                  {(runSummary.breakdown.objetos ?? 0) > 0 && (
+                  {(runSummary.breakdown.calabazas ?? runSummary.breakdown.objetos ?? 0) > 0 && (
                     <BreakdownRow
-                      label={`Calabazas (${runSummary.breakdown.objetos})`}
-                      value={`+${runSummary.breakdown.puntosObjetos ?? 0}`}
+                      label={`Calabazas (${runSummary.breakdown.calabazas ?? runSummary.breakdown.objetos})`}
+                      value={`+${runSummary.breakdown.puntosCalabazas ?? runSummary.breakdown.puntosObjetos ?? 0}`}
                       hint={runSummary.breakdown.topeAplicado ? 'por el camino · aparte del tope' : 'por el camino'}
                       highlight
+                    />
+                  )}
+                  {/* Los zombis van en su propia línea y en rojo. Sumados a las
+                      calabazas darían un "Calabazas (2) -300" que no hay quien
+                      entienda. */}
+                  {(runSummary.breakdown.zombis ?? 0) > 0 && (
+                    <BreakdownRow
+                      label={`Zombis (${runSummary.breakdown.zombis})`}
+                      value={`${runSummary.breakdown.puntosZombis}`}
+                      hint="los has pisado"
+                      malo
                     />
                   )}
                 </View>
@@ -2805,7 +2828,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
               anchor={{ x: 0.5, y: 0.5 }}
               tracksViewChanges={objetosEnDirecto}
             >
-              <Image source={CALABAZA} style={styles.objeto} resizeMode="contain" />
+              <Image source={dibujoDe(o.tipo)} style={styles.objeto} resizeMode="contain" />
             </Marker>
           ))}
 
@@ -2858,9 +2881,13 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         {/* Has pisado una calabaza. Sale aquí y en la pantalla de carrera,
             que es donde está mirando quien corre. */}
         {objetoCogido && (
-          <View style={styles.cogido} pointerEvents="none">
-            <Image source={CALABAZA} style={styles.objeto} resizeMode="contain" />
-            <Text style={styles.cogidoTexto}>¡CALABAZA! +{objetoCogido.puntos}</Text>
+          <View style={[styles.cogido, objetoCogido.puntos < 0 && styles.pisadoMalo]} pointerEvents="none">
+            <Image source={dibujoDe(objetoCogido.tipo)} style={styles.objeto} resizeMode="contain" />
+            <Text style={styles.cogidoTexto}>
+              {objetoCogido.puntos < 0
+                ? `¡ZOMBI! ${objetoCogido.puntos}`
+                : `¡CALABAZA! +${objetoCogido.puntos}`}
+            </Text>
           </View>
         )}
 
@@ -2963,9 +2990,13 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
               desaparecer descolocaría el tiempo, la distancia y la frase. */}
           <View style={styles.avisoSlot} pointerEvents="none">
             {objetoCogido && (
-              <View style={styles.cogidoRun}>
-                <Image source={CALABAZA} style={styles.objeto} resizeMode="contain" />
-                <Text style={styles.cogidoTexto}>¡CALABAZA! +{objetoCogido.puntos}</Text>
+              <View style={[styles.cogidoRun, objetoCogido.puntos < 0 && styles.pisadoMalo]}>
+                <Image source={dibujoDe(objetoCogido.tipo)} style={styles.objeto} resizeMode="contain" />
+                <Text style={styles.cogidoTexto}>
+                  {objetoCogido.puntos < 0
+                    ? `¡ZOMBI! ${objetoCogido.puntos}`
+                    : `¡CALABAZA! +${objetoCogido.puntos}`}
+                </Text>
               </View>
             )}
             {gpsWeak && (
@@ -3634,6 +3665,10 @@ const styles = StyleSheet.create({
   // La calabaza del mapa. Es un emoji y no una imagen: no pesa, se ve igual en
   // Android y en iPhone, y no hay que mantener otro archivo.
   objeto: { width: 38, height: 38 },
+  // El cartel de "has pisado algo" es naranja de celebración. Si lo pisado
+  // resta, en rojo: el color tiene que decir lo mismo que el número.
+  pisadoMalo: { backgroundColor: colors.danger },
+  breakdownValueMalo: { color: colors.danger },
   cogido: {
     position: 'absolute', left: spacing.md, right: spacing.md, top: 96,
     backgroundColor: colors.orange, borderRadius: radius.lg,

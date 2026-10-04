@@ -25,6 +25,7 @@ import { api, RankingObjeto } from '../services/api';
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 const CALABAZA = require('../../assets/calabaza.png');
+const ZOMBI = require('../../assets/zombi.png');
 
 export default function RetosScreen() {
   const [cargando, setCargando] = useState(true);
@@ -95,8 +96,27 @@ export default function RetosScreen() {
           </View>
           <Text style={styles.parrafo}>
             Sal a correr y píllalas. <Text style={styles.resalte}>200 puntos</Text> cada una, y cada
-            una te abre un mensaje nuevo para picar a tus rivales.
+            una te abre un mensaje nuevo para picar a tus rivales. Las que queden{' '}
+            <Text style={styles.resalte}>dentro de un círculo que cierres</Text> también son tuyas.
           </Text>
+
+          {/* El zombi, con su dibujo al lado. Dos reglas y se acabó: resta, y
+              no se coge cerrando el círculo. Puesto aquí, debajo de lo bueno,
+              para que se lea como "y ojo, que además hay esto". */}
+          <View style={styles.aviso}>
+            <Image source={ZOMBI} style={styles.zombi} resizeMode="contain" />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.avisoTitulo}>Y CUIDADO CON LOS ZOMBIS</Text>
+              <Text style={styles.avisoTexto}>
+                Hay muchos menos. Si pisas uno, <Text style={styles.malo}>pierdes 500 puntos</Text>.
+                Y a estos <Text style={styles.malo}>no</Text> te los llevas cerrando el círculo: al
+                zombi hay que esquivarlo.
+              </Text>
+              <Text style={styles.avisoTexto}>
+                Tranquilo: una carrera nunca te deja por debajo de cero.
+              </Text>
+            </View>
+          </View>
 
           {ranking.length > 0 && (
             <View style={styles.tabla}>
@@ -124,6 +144,19 @@ export default function RetosScreen() {
             En cuanto alguien se come una, nace otra <Text style={styles.resalte}>en otro sitio</Text>.
             Así que ya puedes ir olvidándote de dar vueltas a la misma manzana.
           </Text>
+          <View style={styles.aviso}>
+            <Image source={ZOMBI} style={styles.zombi} resizeMode="contain" />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.avisoTitulo}>Y HABRÁ ZOMBIS</Text>
+              <Text style={styles.avisoTexto}>
+                Muchos menos que calabazas, pero si pisas uno{' '}
+                <Text style={styles.malo}>pierdes 500 puntos</Text>. Y a estos{' '}
+                <Text style={styles.malo}>no</Text> te los llevas cerrando el círculo: hay que
+                esquivarlos. Eso sí, una carrera nunca te deja por debajo de cero.
+              </Text>
+            </View>
+          </View>
+
           <Text style={styles.parrafo}>
             Cada calabaza que cojas te desbloquea{' '}
             <Text style={styles.resalte}>un mensaje nuevo</Text> para picar a tus rivales. Hay diez,
@@ -151,6 +184,19 @@ const styles = StyleSheet.create({
 
   calabaza: { width: SCREEN_W * 0.5, height: SCREEN_W * 0.5 },
 
+  aviso: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
+    backgroundColor: colors.bgCard, borderRadius: radius.lg,
+    borderWidth: 1, borderColor: colors.danger,
+    padding: spacing.md, marginTop: spacing.md, width: '100%',
+  },
+  zombi: { width: 64, height: 64 },
+  avisoTitulo: {
+    color: colors.danger, fontSize: 13, fontWeight: '900',
+    letterSpacing: 1, marginBottom: 4,
+  },
+  avisoTexto: { color: colors.textSecondary, fontSize: 14, lineHeight: 20, marginTop: 2 },
+  malo: { color: colors.danger, fontWeight: '700' },
   fechas: {
     color: colors.orange, fontSize: 12, fontWeight: '800',
     letterSpacing: 2, marginTop: spacing.sm,

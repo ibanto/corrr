@@ -75,8 +75,11 @@ const RUTAS = {
     formato: 'tiras', duenos: [{ id: YO, name: 'Auditor', warCry: 'A por todas', mine: true, color: '#FF5500' },
              { id: RIVAL, name: 'Lucía M.', warCry: 'Nadie me pilla', mine: false, color: '#2E86DE' }],
     tiras, owners: { [YO]: { avatar: null }, [RIVAL]: { avatar: null } } }),
-  'GET /objetos/viewport': () => vacio ? { objetos: [] } : ({ objetos:
-    [0,1,2,3,4,5,6,7].map(i => ({ id: 100 + i, x: CX + 10 + i * 6, y: CY + 12 + (i % 4) * 7, puntos: 50, tipo: 'calabaza' })) }),
+  'GET /objetos/viewport': () => vacio ? { objetos: [] } : ({ objetos: [
+    ...[0,1,2,3,4,5,6,7].map(i => ({ id: 100 + i, x: CX + 10 + i * 6, y: CY + 12 + (i % 4) * 7, puntos: 200, tipo: 'calabaza' })),
+    // El 15% de zombis, para mirar que se distinguen de un vistazo en el mapa.
+    { id: 200, x: CX + 18, y: CY + 40, puntos: -500, tipo: 'zombi' },
+  ] }),
   'GET /objetos/ranking': () => vacio ? { ranking: [], mias: 0 } : ({ mias: 7, ranking: [
     { userId: RIVAL, name: 'Lucía M.', cuantos: 14, puntos: 700, mine: false },
     { userId: YO, name: 'Auditor', cuantos: 7, puntos: 350, mine: true }] }),
@@ -115,11 +118,12 @@ const DINAMICAS = [
   // mirar que el resumen enseña el cerco, el tope y las calabazas por fuera.
   [/^POST \/runs$/, () => ({
     runId: 'run-prueba', stolenZones: [], stolenCells: [], newCellCount: 53,
-    points: 7120,
+    points: 6620,
     breakdown: {
       kmPoints: 42, cellPoints: 53, newCells: 53, stolenCells: 385,
       loopBonus: 50, streakMultiplier: 1.5, pbMultiplier: 1.2, streakDays: 3, beatPB: true,
-      objetos: 1, puntosObjetos: 200,
+      objetos: 2, puntosObjetos: -300,
+      calabazas: 1, puntosCalabazas: 200, zombis: 1, puntosZombis: -500,
       cercadas: 3480, puntosCerco: 3480,
       tope: 6920, topeAplicado: true, puntosBrutos: 7911,
     },
