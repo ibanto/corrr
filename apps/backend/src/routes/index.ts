@@ -2063,9 +2063,17 @@ sale el cartel de "prepárate" y la pestaña de mensajes de Halloween dice "pró
 <h2>Juego del mapa</h2>
 <p class="nota">Las calabazas se siembran sobre calles de verdad, así que ninguna cae dentro de un
 edificio ni en medio del monte. Abajo eliges si valen todas las calles (el mapa de OpenStreetMap) o
-solo aquellas por las que ya ha corrido alguien. Se cogen pasando por encima al correr, y cuando
-alguien se come una, nace otra cerca. <b>Solo las ven las apps 1.11.11 o más nuevas, y con Halloween
-encendido.</b></p>
+solo aquellas por las que ya ha corrido alguien. Se cogen pasando por encima al correr, y las que
+queden dentro de un cerco también son tuyas. <b>Solo las ven las apps 1.11.11 o más nuevas, y con
+Halloween encendido.</b></p>
+<p class="nota"><b>Con cada siembra salen zombis</b>, el 15 % de las calabazas, que restan 500 puntos
+al pisarlos. No hay que sembrarlos aparte: van solos, para que no pueda quedar un evento con zombis
+y sin calabazas. Al zombi hay que esquivarlo — <b>el cerco no se los lleva</b>: recoge lo que suma,
+lo que resta hay que pisarlo. Una carrera nunca baja de cero puntos.</p>
+<p class="nota"><b>Ojo con "en TODAS las ciudades".</b> El número de arriba es el TOTAL, no por
+ciudad. Sin poner un nombre, la siembra se reparte por los 1.599 km² del mapa de calles y salen a una
+cada 16 km²: no las encontraría nadie. El botón morado siembra ese número alrededor de CADA corredor
+que tenga territorio, que es como hay que sembrar un evento.</p>
 <p class="nota" id="calles_estado">—</p>
 <div id="objetos_estado"></div>
 <form class="form" id="fo">
@@ -2083,7 +2091,8 @@ encendido.</b></p>
     <input id="o_desde" type="datetime-local"></label>
   <label class="campo">Hasta
     <input id="o_hasta" type="datetime-local"></label>
-  <button class="btn" id="o_sembrar" type="button">Sembrar calabazas</button>
+  <button class="btn" id="o_sembrar" type="button">Sembrar donde dice arriba</button>
+  <button class="btn" id="o_todos" type="button" style="background:#7B2FBE">Sembrar en TODAS las ciudades</button>
   <button class="mini" id="o_quitar" type="button">Quitar las que queden sin coger</button>
   <div id="o_msg" class="resultado" style="display:none"></div>
 </form>
@@ -2421,27 +2430,38 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
       m.textContent = '✗ ' + e.message;
     });
   });
-  document.getElementById('o_sembrar').addEventListener('click', function () {
+  function sembrarCalabazas(todas) {
     var cuerpo = {
       tipo: 'calabaza',
       fuente: document.getElementById('o_fuente').value,
-      cerca: val('o_cerca') || null,
+      cerca: todas ? null : (val('o_cerca') || null),
+      todos: !!todas,
       cuantos: Number(document.getElementById('o_cuantas').value),
       puntos: Number(document.getElementById('o_puntos').value),
       desde: val('o_desde') || null,
       hasta: val('o_hasta') || null,
     };
+    msgObjetos(todas ? 'Sembrando por todas las ciudades, esto tarda…' : 'Sembrando…', true);
     api('/admin/objetos', { method: 'POST', body: JSON.stringify(cuerpo) }).then(function (r) {
-      msgObjetos('Sembradas ' + r.puestas + ' de ' + r.pedidas + ' calabazas de ' + r.puntos
-        + ' puntos cada una' + (r.donde || '')
+      msgObjetos('Sembradas ' + r.puestas + ' calabazas de ' + r.puntos + ' puntos'
+        + (r.zombis ? ' y ' + r.zombis + ' zombis' : '') + (r.donde || '')
         + (r.puestas < r.pedidas ? ' (el resto caían demasiado cerca de otra)' : ''), true);
       cargarObjetos();
     }).catch(function (e) { msgObjetos(e.message, false); });
+  }
+  document.getElementById('o_sembrar').addEventListener('click', function () { sembrarCalabazas(false); });
+  document.getElementById('o_todos').addEventListener('click', function () {
+    var n = Number(document.getElementById('o_cuantas').value);
+    if (!confirm('Se van a sembrar ' + n + ' calabazas (y sus zombis) alrededor de CADA corredor con territorio. ¿Seguimos?')) return;
+    sembrarCalabazas(true);
   });
   document.getElementById('o_quitar').addEventListener('click', function () {
-    if (!confirm('¿Quitar del mapa las calabazas sin coger? Las ya cogidas se quedan.')) return;
-    api('/admin/objetos?tipo=calabaza', { method: 'DELETE' }).then(function (r) {
-      msgObjetos('Quitadas ' + r.quitadas + '.', true);
+    if (!confirm('¿Quitar del mapa las calabazas y los zombis sin coger? Los ya cogidos se quedan.')) return;
+    Promise.all([
+      api('/admin/objetos?tipo=calabaza', { method: 'DELETE' }),
+      api('/admin/objetos?tipo=zombi', { method: 'DELETE' }),
+    ]).then(function (rs) {
+      msgObjetos('Quitadas ' + rs[0].quitadas + ' calabazas y ' + rs[1].quitadas + ' zombis.', true);
       cargarObjetos();
     }).catch(function (e) { msgObjetos(e.message, false); });
   });
@@ -3546,9 +3566,14 @@ app.post('/runs', {
       }
     }
     const objetos = halloweenLeToca
-      ? await recoger(client, userId, [...claimedCells, ...celdasDelCerco], new Date(isImport ? runEndMs : nowMs))
+      ? await recoger(client, userId, claimedCells, new Date(isImport ? runEndMs : nowMs), celdasDelCerco)
       : [];
     const puntosObjetos = objetos.reduce((n: number, o: Objeto) => n + o.puntos, 0);
+    // Separados para el resumen: una carrera con una calabaza y un zombi suma
+    // -300, y enseñar "Calabazas (2) -300" no lo entendería nadie. Son dos
+    // líneas distintas, una en verde y otra en rojo.
+    const loBueno = objetos.filter((o: Objeto) => o.puntos > 0);
+    const loMalo = objetos.filter((o: Objeto) => o.puntos < 0);
 
     // Una celda vale lo mismo la pises o la rodees: +1 si estaba libre, +2 si
     // se la quitas a alguien (y a ese se le resta 1, como en cualquier robo).
@@ -3595,7 +3620,9 @@ app.post('/runs', {
     const puntosCarrera =
       Math.round((subtotal + puntosCerco) * streakMultiplier * (dobleBienvenida ? 2 : 1));
     const puntosBrutos = puntosCarrera + puntosObjetos;
-    const authoritativePoints = Math.min(puntosCarrera, MAX_PUNTOS_CARRERA) + puntosObjetos;
+    // Nunca por debajo de cero: pisar zombis puede dejarte la carrera en nada,
+    // pero no en deuda. Salir a correr jamás te puede costar puntos.
+    const authoritativePoints = Math.max(0, Math.min(puntosCarrera, MAX_PUNTOS_CARRERA) + puntosObjetos);
     if (puntosCarrera > MAX_PUNTOS_CARRERA) {
       req.log.info(
         { userId, puntosCarrera, dados: MAX_PUNTOS_CARRERA, km: distanceKm, calabazas: puntosObjetos },
@@ -3697,6 +3724,10 @@ app.post('/runs', {
         dobleBienvenida,
         objetos: objetos.length,
         puntosObjetos,
+        calabazas: loBueno.length,
+        puntosCalabazas: loBueno.reduce((n: number, o: Objeto) => n + o.puntos, 0),
+        zombis: loMalo.length,
+        puntosZombis: loMalo.reduce((n: number, o: Objeto) => n + o.puntos, 0),
         cercadas,
         cercadasRobadas,
         puntosCerco,
@@ -5706,8 +5737,18 @@ app.get('/admin/calles', { preHandler: requireAdmin }, async (_req, reply) => {
   return reply.send({ celdas: rows[0]?.n ?? 0 });
 });
 
+/** Los zombis: hay bastantes menos que calabazas y restan en vez de sumar.
+ *
+ *  Van en la misma tabla que las calabazas —el servicio de objetos es genérico
+ *  y los puntos viven en cada objeto— con puntos NEGATIVOS, y de ahí sale solo
+ *  todo lo demás: el cerco no se los lleva (solo recoge lo que suma) y pisarlos
+ *  descuenta. Una carrera nunca baja de cero, así que salir a correr no puede
+ *  costarte puntos ni pisando tres. */
+const PROPORCION_ZOMBIS = 0.15;
+const PUNTOS_ZOMBI = 500;
+
 app.post('/admin/objetos', { preHandler: requireAdmin }, async (req: any, reply) => {
-  const { tipo, cuantos, puntos, desde, hasta, cerca, fuente } = req.body ?? {};
+  const { tipo, cuantos, puntos, desde, hasta, cerca, fuente, todos } = req.body ?? {};
   const n = Math.min(Math.max(1, Number(cuantos) || 0), 500);
   if (!n) return reply.status(400).send({ error: 'Falta cuántas' });
   const d = desde ? new Date(desde) : new Date();
@@ -5715,8 +5756,69 @@ app.post('/admin/objetos', { preHandler: requireAdmin }, async (req: any, reply)
   if (isNaN(d.getTime()) || isNaN(h.getTime()) || h <= d) {
     return reply.status(400).send({ error: 'Las fechas no cuadran' });
   }
+  /** La caja donde corre una persona: su zona más grande (si ha corrido en dos
+   *  ciudades, la de casa) con medio kilómetro de margen. */
+  async function cajaDeCorredor(id: string) {
+    const { rows: suyas } = await db.query(
+      'SELECT cell_x AS x, cell_y AS y FROM cells WHERE owner_id = $1', [id],
+    );
+    if (suyas.length === 0) return null;
+    return cajaDe(gruposDeCeldas(suyas)[0], 50);
+  }
+
+  const deDonde = fuente === 'pisadas' ? 'pisadas' : 'calles';
+  const elTipo = String(tipo || 'calabaza');
+  const losPuntos = Number(puntos) || 200;
+
+  /** Siembra en una caja, y detrás los zombis que le tocan.
+   *
+   *  Los zombis son el 15% de las calabazas y restan 500. No se siembran por
+   *  separado a propósito: así no puede pasar que haya un evento con zombis y
+   *  sin calabazas, ni al revés, ni que el 15% se desajuste a base de siembras
+   *  sueltas. Si lo que se siembra ya resta puntos, no se le añaden zombis:
+   *  no tendría sentido. */
+  async function sembrarAqui(caja: any) {
+    const puestas = await sembrar(db, {
+      cuantos: n, tipo: elTipo, puntos: losPuntos, desde: d, hasta: h, caja, fuente: deDonde,
+    });
+    let zombis = 0;
+    if (elTipo === 'calabaza' && losPuntos > 0 && puestas > 0) {
+      const cuantosZombis = Math.max(1, Math.round(puestas * PROPORCION_ZOMBIS));
+      zombis = await sembrar(db, {
+        cuantos: cuantosZombis, tipo: 'zombi', puntos: -PUNTOS_ZOMBI,
+        desde: d, hasta: h, caja, fuente: deDonde,
+      });
+    }
+    return { puestas, zombis };
+  }
+
   // "Cerca de" acota la siembra a la zona donde ESA persona corre. Sin esto,
   // para probar el evento habría que cruzar la ciudad a ver si aparece alguna.
+  //
+  // Y con `todos`, una vuelta por el barrio de CADA corredor que haya corrido
+  // alguna vez. Hace falta porque sin caja la siembra se reparte por los 1.599
+  // km² del mapa de calles: cien calabazas serían una cada 16 km² y no las
+  // encontraría nadie. El evento se siembra ciudad por ciudad o no se siembra.
+  if (todos === true) {
+    const { rows: gente } = await db.query(
+      `SELECT DISTINCT u.id, u.display_name FROM users u
+         WHERE EXISTS (SELECT 1 FROM cells c WHERE c.owner_id = u.id)
+         ORDER BY u.display_name`,
+    );
+    let puestas = 0, zombis = 0;
+    const sitios: string[] = [];
+    for (const g of gente) {
+      const caja = await cajaDeCorredor(g.id);
+      if (!caja) continue;
+      const r = await sembrarAqui(caja);
+      if (r.puestas > 0) { puestas += r.puestas; zombis += r.zombis; sitios.push(g.display_name); }
+    }
+    return reply.send({
+      ok: true, puestas, zombis, pedidas: n * sitios.length, fuente: deDonde, puntos: losPuntos,
+      donde: ` en ${sitios.length} ${sitios.length === 1 ? 'zona' : 'zonas'} (${sitios.join(', ')})`,
+    });
+  }
+
   let caja;
   let donde = '';
   if (typeof cerca === 'string' && cerca.trim()) {
@@ -5726,22 +5828,13 @@ app.post('/admin/objetos', { preHandler: requireAdmin }, async (req: any, reply)
         WHERE LOWER(email) = LOWER($1) OR LOWER(display_name) = LOWER($1)`, [quien],
     );
     if (usuarios.length === 0) return reply.status(400).send({ error: `No hay nadie que se llame "${quien}"` });
-    const { rows: suyas } = await db.query(
-      'SELECT cell_x AS x, cell_y AS y FROM cells WHERE owner_id = $1', [usuarios[0].id],
-    );
-    if (suyas.length === 0) return reply.status(400).send({ error: `${usuarios[0].display_name} no tiene territorio todavía` });
-    // Su zona MÁS GRANDE: si ha corrido en dos ciudades, la de casa.
-    const zona = gruposDeCeldas(suyas)[0];
-    caja = cajaDe(zona, 50); // medio km de margen alrededor de su barrio
+    caja = await cajaDeCorredor(usuarios[0].id);
+    if (!caja) return reply.status(400).send({ error: `${usuarios[0].display_name} no tiene territorio todavía` });
     donde = ` cerca de ${usuarios[0].display_name}`;
   }
 
-  const deDonde = fuente === 'pisadas' ? 'pisadas' : 'calles';
-  const puestas = await sembrar(db, {
-    cuantos: n, tipo: String(tipo || 'calabaza'), puntos: Number(puntos) || 200,
-    desde: d, hasta: h, caja, fuente: deDonde,
-  });
-  return reply.send({ ok: true, puestas, pedidas: n, donde, fuente: deDonde, puntos: Number(puntos) || 200 });
+  const { puestas, zombis } = await sembrarAqui(caja);
+  return reply.send({ ok: true, puestas, zombis, pedidas: n, donde, fuente: deDonde, puntos: losPuntos });
 });
 
 /** Quitar del mapa las que queden libres (para cerrar un evento a mano). */

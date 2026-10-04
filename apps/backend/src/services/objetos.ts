@@ -110,18 +110,39 @@ export async function sembrar(
 export async function recoger(
   client: { query: (sql: string, params?: any[]) => Promise<{ rows: any[]; rowCount: number | null }> },
   userId: string,
-  celdas: { x: number; y: number }[],
+  /** Las celdas que ha PISADO. De aquí se coge todo, bueno y malo. */
+  pisadas: { x: number; y: number }[],
   cuando: Date,
+  /** Las que han quedado DENTRO de un cerco. De aquí solo se coge lo que
+   *  suma.
+   *
+   *  LA REGLA: el cerco recoge lo que suma; lo que resta hay que pisarlo.
+   *  Si rodeas una manzana, la calabaza de dentro es tuya —te has ganado el
+   *  barrio—, pero el zombi que haya ahí no te hace nada: al zombi hay que
+   *  pisarlo. Si no, cerrar un cerco sería una ruleta rusa y nadie cerraría
+   *  ninguno. Vale igual para lo que venga después: lo que puntúe en negativo
+   *  nunca entra por el cerco. */
+  cercadas: { x: number; y: number }[] = [],
 ): Promise<Objeto[]> {
+  const celdas = [...pisadas, ...cercadas];
   if (celdas.length === 0) return [];
+  // Las de dentro del cerco solo valen si el objeto suma. Se marca con un
+  // booleano por celda, en paralelo a las coordenadas.
+  const soloSiSuma = [
+    ...pisadas.map(() => false),
+    ...cercadas.map(() => true),
+  ];
   const { rows } = await client.query(
     `UPDATE objetos o
         SET tomado_por = $1, tomado_at = $4
       WHERE o.tomado_por IS NULL
         AND o.desde <= $4 AND (o.hasta IS NULL OR o.hasta > $4)
-        AND (o.cell_x, o.cell_y) IN (SELECT x, y FROM unnest($2::int[], $3::int[]) AS t(x, y))
+        AND EXISTS (
+          SELECT 1 FROM unnest($2::int[], $3::int[], $5::boolean[]) AS t(x, y, solo_suma)
+           WHERE t.x = o.cell_x AND t.y = o.cell_y
+             AND (NOT t.solo_suma OR o.puntos > 0))
       RETURNING o.id, o.cell_x, o.cell_y, o.puntos, o.tipo, o.hasta`,
-    [userId, celdas.map(c => c.x), celdas.map(c => c.y), cuando.toISOString()],
+    [userId, celdas.map(c => c.x), celdas.map(c => c.y), cuando.toISOString(), soloSiSuma],
   );
   return rows.map((r: any) => ({
     id: r.id, x: r.cell_x, y: r.cell_y, puntos: r.puntos, tipo: r.tipo,
