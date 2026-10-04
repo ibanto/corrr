@@ -35,7 +35,7 @@ import { CHECK_TAUNTS_EVENT, RUN_TABS_EVENT } from '../services/notifications';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { colors, spacing, radius } from '../theme';
-import { api, RemoteZone, MapTerritory, ObjetoMapa, TauntInbox } from '../services/api';
+import { api, RemoteZone, MapTerritory, ObjetoMapa, TauntInbox, CellRunPayload } from '../services/api';
 import ZonePopup, { PopupType } from '../components/ZonePopup';
 import ShareRunCard, { ShareRunData, ShareSteal } from '../components/ShareRunCard';
 import { randomSharePhrase } from '../data/sharePhrases';
@@ -97,6 +97,8 @@ const BORDE_TERRITORIO = 'B3';     // 70%, marca el límite sin cerrarlo
 
 const CALABAZA = require('../../assets/calabaza.png');
 const FANTASMA = require('../../assets/fantasma.png');
+/** Dónde espera una carrera que no se ha podido mandar todavía. */
+const CARRERA_PENDIENTE = '@corrr_carrera_pendiente';
 /** El dibujo de cada objeto del mapa. Se elige por el TIPO, NUNCA por los
  *  puntos: los tres fantasmas (nada, −1.000, +500) tienen que verse EXACTAMENTE
  *  iguales, o se acabó el truco o trato. */
@@ -810,6 +812,42 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     const id = setInterval(() => setRunPhrase(p => randomPhrase(p)), 60000);
     return () => clearInterval(id);
   }, [isRunning]);
+
+  // La carrera que se quedó sin mandar, al abrir la app.
+  //
+  // Si el móvil se quedó sin cobertura, o la app se cerró mientras guardaba
+  // —le pasó a Oriol15 el 4-oct con una carrera larga—, la carrera está
+  // esperando en el disco. Se manda aquí y se borra si el servidor la acepta.
+  //
+  // Si vuelve a fallar se queda donde está y se reintentará la próxima vez: no
+  // se borra jamás sin confirmación, que es justo el fallo que había.
+  useEffect(() => {
+    let cancelado = false;
+    (async () => {
+      let guardada: string | null = null;
+      try { guardada = await AsyncStorage.getItem(CARRERA_PENDIENTE); } catch { return; }
+      if (!guardada || cancelado) return;
+      try {
+        const carrera = JSON.parse(guardada) as CellRunPayload;
+        const res = await api.saveRun(carrera);
+        await AsyncStorage.removeItem(CARRERA_PENDIENTE);
+        if (cancelado) return;
+        // `duplicate` llega cuando esa carrera ya estaba guardada: el envío sí
+        // había llegado y lo que falló fue la respuesta. Tampoco hay que
+        // avisar de nada, pero la copia sobra igual.
+        if (!res?.duplicate) {
+          Alert.alert(
+            'Carrera recuperada',
+            'La carrera que no se pudo guardar ya está contada. No has perdido nada.',
+          );
+          loadCells();
+        }
+      } catch (e) {
+        console.warn('[pendiente] no se pudo mandar todavía:', e);
+      }
+    })();
+    return () => { cancelado = true; };
+  }, []);
   const [isPaused, setIsPaused] = useState(false);
   // Splits (parciales): pace per completed km. Recorded when distance crosses an integer km.
   const [splits, setSplits] = useState<{ km: number; paceSecs: number }[]>([]);
@@ -1986,6 +2024,8 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     try { await AsyncStorage.removeItem(BG_BUFFER_KEY); } catch {}
 
     // Si no cerró loop durante la carrera, comprobar si está cerca del inicio al parar
+    let cerroCirculoAlParar = false;
+    let caminoParaPintar: Coord[] | null = null;
     const allPts = [...pathSegments.flat(), ...pathRef.current];
     if (!loopDetected && allPts.length >= 10) {
       const start = allPts[0];
@@ -1995,7 +2035,18 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       if (distToStart < 50) {
         console.log('[StopRun] Auto-cerrando loop');
         pathRef.current.push(start);
-        await closeLoop([...pathRef.current]);
+        // OJO con el orden: `closeLoop` recorta y une POLÍGONOS contra cada
+        // zona rival y cada zona propia, y es con diferencia lo más caro que
+        // hace la app. En una carrera larga, un Android justo de memoria se
+        // queda ahí y el sistema mata la app — y la carrera todavía no existía
+        // en ningún sitio, así que se perdía entera. Le pasó a Oriol15 el
+        // 4-oct: pulsó parar, se quedó pensando y se cerró sola.
+        //
+        // Así que aquí solo se APUNTA que cerró el círculo (que es lo único
+        // que necesita el servidor) y el trabajo de pintar se hace al final,
+        // con la carrera ya guardada y a salvo.
+        cerroCirculoAlParar = true;
+        caminoParaPintar = [...pathRef.current];
       }
     }
 
@@ -2052,7 +2103,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       // Activamos el LoadingScreen mientras la carrera se guarda y los cells
       // se recargan. Se desactiva en finally para cubrir éxito y error.
       setSavingRun(true);
-      api.saveRun({
+      const carrera: CellRunPayload = {
         // El mayor de los dos métodos, el mismo criterio que ya se usaba para
         // decidir si la carrera es válida. Guardar solo el Doppler era
         // incoherente: una carrera podía pasar la validación por posición y
@@ -2061,7 +2112,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         durationSecs: runTime,
         points: finalPoints, // client estimate — backend ignores and recomputes
         loopBonus: totalPoints, // legacy: preview de bonos de loop (backend lo clampa)
-        loopClosed: loopClosedRef.current || loopsFound > 0, // v1.10.10: el backend calcula el bono autoritativo
+        loopClosed: loopClosedRef.current || loopsFound > 0 || cerroCirculoAlParar, // v1.10.10: el backend calcula el bono autoritativo
         xp: earnedXP,
         zonesCount,
         zones: closedZones.map(z => ({ coords: z.coords, area: z.area, points: z.points })),
@@ -2074,7 +2125,24 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         diag: tracker ? { ...tracker.diag } : undefined,
         startedAt: new Date(runStartedAtMs).toISOString(),
         endedAt: new Date(runEndedAtMs).toISOString(),
-      }).then(async (res) => {
+      };
+
+      // ANTES de mandarla: la carrera se guarda en el móvil.
+      //
+      // Hasta hoy no existía en ninguna parte hasta que el servidor la
+      // confirmaba. Si la app se caía, se quedaba sin memoria, se quedaba sin
+      // batería o el usuario la deslizaba, la carrera entera desaparecía — una
+      // hora en la calle a la basura, y en Halloween además con sus calabazas y
+      // sus fantasmas dentro.
+      //
+      // Ahora se escribe aquí, se intenta mandar, y SOLO SE BORRA cuando el
+      // servidor confirma. Si algo sale mal, se queda esperando y se reintenta
+      // sola al volver a abrir la app.
+      try { await AsyncStorage.setItem(CARRERA_PENDIENTE, JSON.stringify(carrera)); } catch {}
+
+      api.saveRun(carrera).then(async (res) => {
+        // Confirmada: ya no hace falta la copia del móvil.
+        try { await AsyncStorage.removeItem(CARRERA_PENDIENTE); } catch {}
         loadZones();
         // Ocultar polígonos ANTES del reload: cuando polygonsVisible=false
         // el render del array colapsa a `false` y React desmonta TODOS los
@@ -2197,7 +2265,11 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         // estimados — la carrera sí ocurrió y el usuario merece ver lo que
         // hizo aunque no se haya guardado. También alertamos para que sepa
         // que la carrera está perdida (auth expiró, red, etc).
-        Alert.alert('Error al guardar la carrera', String(err?.message ?? err));
+        Alert.alert(
+          'No se ha podido guardar todavía',
+          'Tu carrera está a salvo en el móvil. Se mandará sola la próxima vez que abras CORRR.',
+        );
+        console.warn('[StopRun] no se pudo guardar:', String(err?.message ?? err));
         setSavingRun(false);
         setRunSummary({
           visible: true,
@@ -2211,6 +2283,14 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       });
       // (sin .finally — setSavingRun(false) se hace en cada branch para
       // batchear en el mismo render que setRunSummary).
+    }
+
+    // Y ahora sí, lo caro: recortar y unir los polígonos para pintar la zona.
+    // Va AQUÍ, con la carrera ya guardada en el móvil y mandada: si esto se
+    // atraganta en un teléfono justo de memoria, lo peor que pasa es que no se
+    // vea bien pintada una zona. La carrera ya no se pierde.
+    if (caminoParaPintar) {
+      try { await closeLoop(caminoParaPintar); } catch (e) { console.warn('[StopRun] no se pudo pintar la zona:', e); }
     }
 
     setCurrentPath([]);
