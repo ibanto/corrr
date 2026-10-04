@@ -3456,6 +3456,12 @@ app.post('/runs', {
     let cercadas = 0;
     let cercadasRobadas = 0;
     let victimasCerco = new Map<string, number>();
+    // Lo que ha quedado DENTRO del cerco. Se guarda para recoger también las
+    // calabazas de ahí: si rodeas una manzana, lo de dentro es tuyo, y una
+    // calabaza en mitad de esa manzana también. Antes solo contaban las que
+    // pisabas, así que cerrabas el círculo, veías dos dentro y se quedaban
+    // ahí, encima de tu propio territorio, sin poder cogerlas.
+    let celdasDelCerco: Celda[] = [];
     if (Array.isArray(claimedCells) && claimedCells.length > 0) {
       try {
         // Solo la zona de esta carrera, con hasta 3 km de margen: el cerco
@@ -3490,6 +3496,7 @@ app.post('/runs', {
             cercadas = cerco.total;
             cercadasRobadas = cerco.robadas;
             victimasCerco = cerco.victimas;
+            celdasDelCerco = encerradas;
           }
         } else {
           req.log.warn(
@@ -3521,7 +3528,7 @@ app.post('/runs', {
       }
     }
     const objetos = halloweenLeToca
-      ? await recoger(client, userId, claimedCells, new Date(isImport ? runEndMs : nowMs))
+      ? await recoger(client, userId, [...claimedCells, ...celdasDelCerco], new Date(isImport ? runEndMs : nowMs))
       : [];
     const puntosObjetos = objetos.reduce((n: number, o: Objeto) => n + o.puntos, 0);
 
@@ -3541,15 +3548,33 @@ app.post('/runs', {
      *  Hace falta porque un cerco grande los dispara: el 3-oct una carrera de
      *  13 km cerró 8,8 km² y dio 127.494 puntos de golpe, cuando una buena
      *  carrera normal ronda los 5.000. Una sola vuelta decidía la
-     *  clasificación de todos. */
-    const MAX_PUNTOS_CARRERA = 8000;
+     *  clasificación de todos.
+     *
+     *  El tope ya no es un número fijo: SE GANA CORRIENDO. Eran 8.000 para
+     *  todos, y el 4-oct una carrera de 3,4 km se llevó los 8.000 enteros
+     *  —casi todo de un cerco— lo mismo que quien se hace diez kilómetros.
+     *  Premiaba igual la vuelta a la manzana bien dada que la paliza.
+     *
+     *  Ahora son 2.000 puntos por kilómetro recorrido, con un techo de 20.000:
+     *
+     *      3,4 km →  6.800      10 km → 20.000
+     *      5   km → 10.000      20 km → 20.000 (el techo)
+     *
+     *  Casi nadie lo nota: una carrera normal ronda los 5.000 y solo lo toca
+     *  quien cierra un cerco gordo, que es justo para lo que está. */
+    const TOPE_POR_KM = 2000;
+    const TECHO_CARRERA = 20000;
+    const MAX_PUNTOS_CARRERA = Math.min(
+      Math.max(Math.round(distanceKm * TOPE_POR_KM), TOPE_POR_KM),
+      TECHO_CARRERA,
+    );
     const puntosBrutos =
       Math.round((subtotal + puntosCerco) * streakMultiplier * (dobleBienvenida ? 2 : 1))
       + puntosObjetos;
     const authoritativePoints = Math.min(puntosBrutos, MAX_PUNTOS_CARRERA);
     if (puntosBrutos > MAX_PUNTOS_CARRERA) {
       req.log.info(
-        { userId, puntosBrutos, dados: MAX_PUNTOS_CARRERA },
+        { userId, puntosBrutos, dados: MAX_PUNTOS_CARRERA, km: distanceKm },
         '[puntos] carrera por encima del tope',
       );
     }
@@ -3651,6 +3676,12 @@ app.post('/runs', {
         cercadas,
         cercadasRobadas,
         puntosCerco,
+        // El tope y si ha mordido. Sin esto, quien cierra un cerco ve un total
+        // que no cuadra con ninguna línea del desglose y no entiende nada: el
+        // 4-oct una carrera dio 8.000 y las líneas visibles sumaban 1.847.
+        tope: MAX_PUNTOS_CARRERA,
+        topeAplicado: puntosBrutos > MAX_PUNTOS_CARRERA,
+        puntosBrutos,
       },
     });
   } catch (err) {

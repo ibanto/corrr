@@ -650,6 +650,8 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       loopBonus: number; streakMultiplier: number; pbMultiplier: number;
       streakDays: number; beatPB: boolean; dobleBienvenida?: boolean;
       objetos?: number; puntosObjetos?: number;
+      cercadas?: number; puntosCerco?: number;
+      tope?: number; topeAplicado?: boolean; puntosBrutos?: number;
     } | null;
   } | null>(null);
   const [loopDetected, setLoopDetected] = useState(false);
@@ -2435,6 +2437,17 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
                   {runSummary.breakdown.loopBonus > 0 && (
                     <BreakdownRow label="Cierre de círculo" value={`+${runSummary.breakdown.loopBonus}`} hint="¡zona cerrada!" />
                   )}
+                  {/* Lo de DENTRO del cerco. Es lo que más puntos da con
+                      diferencia y era justo lo que no se enseñaba: el total
+                      salía por las nubes y ninguna línea lo explicaba. */}
+                  {(runSummary.breakdown.puntosCerco ?? 0) > 0 && (
+                    <BreakdownRow
+                      label="Lo de dentro del cerco"
+                      value={`+${runSummary.breakdown.puntosCerco}`}
+                      hint={`${(runSummary.breakdown.cercadas ?? 0).toLocaleString('es-ES')} celdas rodeadas`}
+                      highlight
+                    />
+                  )}
                   {runSummary.breakdown.pbMultiplier > 1 && (
                     <BreakdownRow label="Récord personal" value="×1.2" hint="nueva mejor distancia" highlight />
                   )}
@@ -2451,6 +2464,15 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
                   )}
                   {runSummary.breakdown.dobleBienvenida && (
                     <BreakdownRow label="Primeros pasos" value="×2" hint="mientras tengas menos de 100 puntos" highlight />
+                  )}
+                  {/* Y si el tope ha mordido, se dice. Un total más bajo que la
+                      suma de arriba, sin explicación, parece un error nuestro. */}
+                  {runSummary.breakdown.topeAplicado && (
+                    <BreakdownRow
+                      label="Tope de esta carrera"
+                      value={`${(runSummary.breakdown.tope ?? 0).toLocaleString('es-ES')}`}
+                      hint={`salían ${(runSummary.breakdown.puntosBrutos ?? 0).toLocaleString('es-ES')} · 2.000 por km`}
+                    />
                   )}
                 </View>
               )}
