@@ -2043,9 +2043,11 @@ sale el cartel de "prepárate" y la pestaña de mensajes de Halloween dice "pró
 </div>
 <div class="caja">
 <h2>Juego del mapa</h2>
-<p class="nota">Las calabazas se siembran sobre calles por las que YA ha corrido alguien, así que
-ninguna cae dentro de un edificio. Se cogen pasando por encima al correr, y cuando alguien se come
-una, nace otra cerca. <b>Solo las ven las apps 1.11.11 o más nuevas, y con Halloween encendido.</b></p>
+<p class="nota">Las calabazas se siembran sobre calles de verdad, así que ninguna cae dentro de un
+edificio ni en medio del monte. Abajo eliges si valen todas las calles (el mapa de OpenStreetMap) o
+solo aquellas por las que ya ha corrido alguien. Se cogen pasando por encima al correr, y cuando
+alguien se come una, nace otra cerca. <b>Solo las ven las apps 1.11.11 o más nuevas, y con Halloween
+encendido.</b></p>
 <p class="nota" id="calles_estado">—</p>
 <div id="objetos_estado"></div>
 <form class="form" id="fo">
@@ -2053,11 +2055,16 @@ una, nace otra cerca. <b>Solo las ven las apps 1.11.11 o más nuevas, y con Hall
     <option value="calles">Por cualquier calle (OpenStreetMap)</option>
     <option value="pisadas">Solo por calles que ya ha pisado alguien</option>
   </select>
-  <input id="o_cerca" placeholder="Sembrar cerca de (nombre del corredor; vacío = todas las zonas)">
-  <input id="o_cuantas" type="number" min="1" max="500" value="100" placeholder="Cuántas">
-  <input id="o_puntos" type="number" min="1" max="1000" value="200" placeholder="Puntos cada una">
-  <input id="o_desde" type="datetime-local">
-  <input id="o_hasta" type="datetime-local">
+  <label class="campo">Sembrar cerca de (nombre del corredor; vacío = todas las zonas)
+    <input id="o_cerca" placeholder="ibanto"></label>
+  <label class="campo">Cuántas calabazas
+    <input id="o_cuantas" type="number" min="1" max="500" value="100"></label>
+  <label class="campo">Puntos que vale cada una
+    <input id="o_puntos" type="number" min="1" max="1000" value="200"></label>
+  <label class="campo">Desde
+    <input id="o_desde" type="datetime-local"></label>
+  <label class="campo">Hasta
+    <input id="o_hasta" type="datetime-local"></label>
   <button class="btn" id="o_sembrar" type="button">Sembrar calabazas</button>
   <button class="mini" id="o_quitar" type="button">Quitar las que queden sin coger</button>
   <div id="o_msg" class="resultado" style="display:none"></div>
@@ -2362,8 +2369,8 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
   api('/admin/calles').then(function (r) {
     var e = document.getElementById('calles_estado');
     e.textContent = r.celdas > 0
-      ? 'Mapa de calles cargado: ' + r.celdas.toLocaleString('es-ES') + ' puntos de calle ('
-        + (r.celdas / 10000).toFixed(1) + ' km²). Las calabazas pueden caer por cualquiera de ellas.'
+      ? 'Mapa de calles cargado: ' + r.celdas.toLocaleString('es-ES') + ' puntos de calle repartidos por '
+        + Math.round(r.celdas / 100).toLocaleString('es-ES') + ' km². Las calabazas pueden caer por cualquiera de ellos.'
       : 'Sin mapa de calles cargado: las calabazas solo pueden caer por donde ya ha corrido alguien.';
   }).catch(function () {});
   function pintarHalloween(r) {
@@ -2639,6 +2646,10 @@ app.get('/admin/stats', { preHandler: requireAdmin }, async (req: any, reply) =>
   .card{background:#111;border:1px solid #222;border-radius:16px;padding:20px}
   .card .num{font-size:32px;font-weight:900;color:#FF5500}
   .card .label{font-size:13px;color:#888;margin-top:4px}
+  /* La etiqueta ENCIMA del campo, no dentro. Un placeholder desaparece en
+     cuanto escribes, y dos casillas de números seguidas se vuelven iguales. */
+  .form label.campo{display:block;font-size:12px;color:#888;margin-bottom:2px}
+  .form label.campo input{margin-top:3px}
 </style></head><body>
 <h1>CORRR Dashboard</h1>
 <div class="grid">
