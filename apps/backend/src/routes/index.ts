@@ -577,8 +577,26 @@ async function initDB() {
   // leerlo ya ordenado y cortar en LIMIT 100. user_id ya tiene unique/PK (el
   // INSERT sin ON CONFLICT no genera duplicados), así que no hace falta tocarlo.
   await db.query(`CREATE INDEX IF NOT EXISTS user_stats_total_points_idx ON user_stats(total_points DESC)`).catch(() => {});
-  // /ranking/city filtra y /cities agrupa por LOWER(city). Índice funcional.
-  await db.query(`CREATE INDEX IF NOT EXISTS users_city_lower_idx ON users(LOWER(city))`).catch(() => {});
+  // Las ciudades se comparan SIN ACENTOS y sin mayúsculas.
+  //
+  // El 4-oct-2026 había `València` (3 personas) y `Valencia` (1): la misma
+  // ciudad partida en dos rankings que no se veían entre ellos. No es culpa de
+  // nadie — el GPS devuelve "València" y quien lo escribió a mano puso
+  // "Valencia". Lo mismo pasaría con Cornellà, Vallès o A Coruña.
+  //
+  // Se comparan normalizadas pero se GUARDA lo que escribió cada uno: quitarle
+  // los acentos a los nombres catalanes o gallegos para enseñarlos sería
+  // escribirlos mal.
+  await db.query(`
+    CREATE OR REPLACE FUNCTION corrr_ciudad(t TEXT) RETURNS TEXT
+    LANGUAGE SQL IMMUTABLE AS $f$
+      SELECT NULLIF(TRIM(TRANSLATE(LOWER(COALESCE(t, '')),
+        'áàäâãéèëêíìïîóòöôõúùüûñç',
+        'aaaaaeeeeiiiiooooouuuunc')), '')
+    $f$`);  // SIN .catch a propósito: si esto falla, el ranking de ciudad, el
+        // podio y los avisos por ciudad se caen a la vez. Más vale que el
+        // servidor no arranque y se vea, que servir errores en silencio.
+  await db.query(`CREATE INDEX IF NOT EXISTS users_ciudad_idx ON users(corrr_ciudad(city))`).catch(() => {});
 
   // ── Cells (grid-based territory, v2 model) ─────────────────────────────────
   // 10m × 10m cells (v1.8.0 — was 5m before). Identified by integer (cell_x,
@@ -1355,7 +1373,7 @@ app.get('/ranking/city', async (req: any, reply) => {
            s.total_zones
     FROM user_stats s
     JOIN users u ON u.id = s.user_id
-    WHERE LOWER(u.city) = LOWER($1)
+    WHERE corrr_ciudad(u.city) = corrr_ciudad($1)
     ORDER BY COALESCE(s.total_points, 0) DESC
     LIMIT 100
   `, [city]);
@@ -1368,14 +1386,14 @@ app.get('/ranking/cities', async (req, reply) => {
   const cached = getRankingCache('cities');
   if (cached) return reply.send(cached);
   const { rows } = await db.query(`
-    SELECT DISTINCT ON (LOWER(u.city))
+    SELECT DISTINCT ON (corrr_ciudad(u.city))
            u.id AS user_id, u.display_name, u.city,
            COALESCE(s.total_points, 0) AS total_points,
            s.total_zones
     FROM user_stats s
     JOIN users u ON u.id = s.user_id
     WHERE u.city IS NOT NULL AND u.city != ''
-    ORDER BY LOWER(u.city), COALESCE(s.total_points, 0) DESC
+    ORDER BY corrr_ciudad(u.city), COALESCE(s.total_points, 0) DESC
   `);
   setRankingCache('cities', rows);
   return reply.send(rows);
@@ -1428,7 +1446,7 @@ app.get('/ranking/podium', { preHandler: requireAuth }, async (req: any, reply) 
        FROM runs r
        JOIN users u ON u.id = r.user_id
       WHERE COALESCE(r.started_at, r.created_at) >= $1
-        ${filterCity ? 'AND LOWER(u.city) = LOWER($2)' : ''}
+        ${filterCity ? 'AND corrr_ciudad(u.city) = corrr_ciudad($2)' : ''}
       GROUP BY u.id, u.display_name, u.city, u.avatar_thumb
      HAVING SUM(r.points) > 0
       ORDER BY points DESC
@@ -1442,7 +1460,7 @@ app.get('/ranking/podium', { preHandler: requireAuth }, async (req: any, reply) 
        FROM user_stats s
        JOIN users u ON u.id = s.user_id
       WHERE COALESCE(s.total_points, 0) > 0
-        ${filterCity ? 'AND LOWER(u.city) = LOWER($1)' : ''}
+        ${filterCity ? 'AND corrr_ciudad(u.city) = corrr_ciudad($1)' : ''}
       ORDER BY points DESC
       LIMIT 3`,
     filterCity ? [city] : [],
@@ -3803,8 +3821,7 @@ app.get('/territory/:userId', { preHandler: requireAuth }, async (req: any, repl
     cityKey
       ? db.query(
           `SELECT count(*)::int n FROM cells c JOIN users u ON u.id = c.owner_id
-            WHERE LOWER(TRANSLATE(u.city, 'àèìòùáéíóúÀÈÌÒÙÁÉÍÓÚ', 'aeiouaeiouAEIOUAEIOU'))
-                = LOWER(TRANSLATE($1,     'àèìòùáéíóúÀÈÌÒÙÁÉÍÓÚ', 'aeiouaeiouAEIOUAEIOU'))`,
+            WHERE corrr_ciudad(u.city) = corrr_ciudad($1)`,
           [cityKey],
         )
       : Promise.resolve({ rows: [{ n: 0 }] } as any),
@@ -5748,7 +5765,7 @@ app.delete('/admin/objetos', { preHandler: requireAdmin }, async (req: any, repl
  *  mandarle a la app datos de nadie. */
 const SQL_PUBLICO_AVISO = `(
      a.publico = 'todos'
-  OR (a.publico = 'ciudad' AND a.ciudad IS NOT NULL AND LOWER(u.city) = LOWER(a.ciudad))
+  OR (a.publico = 'ciudad' AND a.ciudad IS NOT NULL AND corrr_ciudad(u.city) = corrr_ciudad(a.ciudad))
   OR (a.publico = 'sin-carreras' AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.user_id = u.id))
   OR (a.publico = 'ios' AND u.plataforma = 'ios')
   OR (a.publico = 'android' AND u.plataforma = 'android')
