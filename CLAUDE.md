@@ -590,3 +590,96 @@ podrían no estar puestas sin que nadie se entere. Son dos `SELECT` de nada.
   alguien se cambia de nombre, sus avisos viejos se quedan huérfanos y podría
   heredarlos quien coja ese nombre después. Arreglarlo de verdad es guardar el
   identificador en `avisos`; no corre prisa con 46 corredores que se conocen.
+
+---
+
+## 13. EJÉRCITO CORRR (decidido el 4-oct-2026, se monta en noviembre)
+
+**No se toca antes de Halloween.** El evento acaba el 1 de noviembre y esto mete
+mano al motor de territorio: es la mejor forma de romper algo la semana que más
+gente mira.
+
+### Para qué es
+
+De 47 corredores, **26 no han corrido nunca**, y hay 27 ciudades con una sola
+persona. Quien se da de alta en Burgos abre el mapa, lo ve gris y no vuelve.
+El trabajo del ejército no es tanto picar como **que la primera vez que abres la
+app no parezca un pueblo fantasma** — y, si ya corres solo en tu ciudad, que al
+menos pase algo.
+
+### Qué NO es
+
+No son personas falsas. Iban descartó disimular, y con razón: en una comunidad
+donde se conocen, el día que alguien lo descubra no piensa "qué listo", piensa
+"¿entonces el ranking también es mentira?" — y justo se acaba de montar lo de
+*quién* te ha robado. Son de la casa y lo dicen.
+
+### Cómo se ven
+
+Cinco, para toda España, con nombre propio y único:
+
+> **El Galgo · La Liebre · El Zorro · El Lobo · La Gaviota**
+
+Debajo del nombre, donde los demás llevan su ciudad, va **EJÉRCITO CORRR**. En
+el ranking, en la ficha y en el aviso de robo. El nombre queda limpio —"CORRR ·
+Patas Largas" no pica a nadie— y aun así nadie se come ningún engaño.
+
+Color distinto cada uno (`colorDeCorredor` ya los reparte bien separados).
+
+### Cómo se portan
+
+| | |
+|---|---|
+| Cuántos | **5 en toda España**, no uno por ciudad |
+| Dónde | rotando; más visitas donde menos gente hay |
+| Ruta | 3-6 km, sobre el mapa de calles (`calles`) |
+| Cerco | **sí**, pero solo si la vuelta no pasa de **3 km** |
+| Lo que se lleva al cerrar | ~2.500-3.000 celdas (unos 500 × 500 m) |
+| Puntos que ganan | **10 por carrera**. Nada por celdas |
+| Puntos que te quitan al robarte | **la mitad** de lo normal |
+| Recuperarles territorio | paga **×1** (ni el ×2 ni el ×0,5 de `factorRobo`) |
+| Entre ellos | no se roban |
+| Ranking nacional | **fuera**. Solo en el de su ciudad y en el mapa |
+
+**El cerco va con tope de 3 km por una razón medida**: la carrera de Iban del
+4-oct, de 3,46 km, cerró unas 3.400 celdas. Sin tope, cinco bots se comen Madrid
+en tres meses, y demasiado territorio espanta más que el mapa vacío — el que
+llega mira y piensa "esto ya está cogido".
+
+### El ritmo: corren una vez y esperan
+
+La regla que lo limita todo, y es de Iban:
+
+> **Un bot corre UNA vez y se queda quieto hasta que alguien de verdad corra en
+> su ciudad.** Si no hay movimiento, espera. Cuanta más gente aparece, menos
+> corre.
+
+Con esto no hace falta ningún techo de acumulación: se frena solo, y solo actúa
+cuando hay alguien con quien jugar. Su territorio se queda ahí de decorado,
+que es justo lo que hace falta en una ciudad vacía.
+
+**Matiz**: despierta cuando alguien corre EN SU CIUDAD, no solo cuando le roban
+a él. Con 26 personas que no han corrido nunca, esperar a que le roben a un bot
+es esperar sentado. Y que su siguiente ruta caiga cerca de donde ha corrido esa
+persona, para que los territorios se toquen y haya pique.
+
+### Lo tedioso, que es lo que hay que hacer con cuidado
+
+Un bot es una fila en `users`, así que aparecería donde NO debe. Hace falta una
+marca `es_bot` y sacarlos de:
+
+- la **campaña de correos** (`emailReactivacion`): si no, a los dos días les
+  mandas "¿te has olvidado de CORRR?" a cinco direcciones inventadas, y los
+  rebotes te ensucian la reputación de envío;
+- los contadores del **resumen** (`/admin/resumen`): "dormidos", "sin estrenar",
+  el total de gente;
+- el **podio** semanal y el **ranking nacional**;
+- las **notificaciones push** (no tienen móvil) y las **solicitudes de amistad**.
+
+### Detalles que se notan
+
+- Si contestan a un taunt, que **no sea al segundo**. Un rato aleatorio, y a
+  veces que no contesten. Contestar es barato: un taunt es un número en la tabla
+  y el dibujo ya lo lleva la app (`respuesta1.png`…).
+- Que tengan **foto**. Sin ella sale la inicial en un círculo y cinco círculos
+  iguales en el ranking quedan raros.
