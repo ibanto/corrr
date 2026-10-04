@@ -661,6 +661,29 @@ a él. Con 26 personas que no han corrido nunca, esperar a que le roben a un bot
 es esperar sentado. Y que su siguiente ruta caiga cerca de donde ha corrido esa
 persona, para que los territorios se toquen y haya pique.
 
+### Las rutas: por la calle, no en cuadrados
+
+Lo pidió Iban y es lo que separa un bot creíble de uno que canta: **la ruta
+tiene que ir POR LA CALLE**, doblando esquinas, no un cuadrado ni un círculo
+dibujado sobre el mapa.
+
+**Y aquí hay un trabajo que no está hecho.** La tabla `calles` son 159.900
+puntos sueltos — una nube de celdas, adelgazada a una cada 100 m. Vale para
+sembrar calabazas (solo hace falta saber que ahí hay asfalto) pero **no dice qué
+calle conecta con cuál**, así que no se puede caminar por ella: un bot que fuera
+saltando al punto más cercano cortaría por dentro de las manzanas.
+
+Para rutas de verdad hace falta la RED, no la nube. O sea, volver a bajar de
+OpenStreetMap las mismas vías pero **guardando su geometría** (la lista de
+puntos de cada calle, que es lo que `bajar-calles.mjs` convierte a celdas y
+tira). Con eso, una ruta es: elegir un punto de salida, ir enlazando calles que
+se tocan hasta juntar los kilómetros que toquen, y si se quiere cerrar un cerco,
+volver al principio.
+
+Es el mismo `bajar-calles.mjs` cambiando qué se guarda, y solo para las ciudades
+donde haya bots. Hay que contarlo en la estimación: es la parte más gorda de
+todo esto.
+
 ### Lo tedioso, que es lo que hay que hacer con cuidado
 
 Un bot es una fila en `users`, así que aparecería donde NO debe. Hace falta una
