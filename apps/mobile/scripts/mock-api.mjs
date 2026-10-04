@@ -77,8 +77,11 @@ const RUTAS = {
     tiras, owners: { [YO]: { avatar: null }, [RIVAL]: { avatar: null } } }),
   'GET /objetos/viewport': () => vacio ? { objetos: [] } : ({ objetos: [
     ...[0,1,2,3,4,5,6,7].map(i => ({ id: 100 + i, x: CX + 10 + i * 6, y: CY + 12 + (i % 4) * 7, puntos: 200, tipo: 'calabaza' })),
-    // El 15% de zombis, para mirar que se distinguen de un vistazo en el mapa.
-    { id: 200, x: CX + 18, y: CY + 40, puntos: -500, tipo: 'zombi' },
+    // Fantasmas pegados a las calabazas, uno de cada premio, para ver que los
+    // tres se dibujan EXACTAMENTE igual: si se distinguieran, adiós al juego.
+    { id: 200, x: CX + 13, y: CY + 14, puntos: 500, tipo: 'fantasma' },
+    { id: 201, x: CX + 19, y: CY + 24, puntos: -1000, tipo: 'fantasma' },
+    { id: 202, x: CX + 25, y: CY + 16, puntos: 0, tipo: 'fantasma' },
   ] }),
   'GET /objetos/ranking': () => vacio ? { ranking: [], mias: 0 } : ({ mias: 7, ranking: [
     { userId: RIVAL, name: 'Lucía M.', cuantos: 14, puntos: 700, mine: false },
@@ -122,8 +125,9 @@ const DINAMICAS = [
     breakdown: {
       kmPoints: 42, cellPoints: 53, newCells: 53, stolenCells: 385,
       loopBonus: 50, streakMultiplier: 1.5, pbMultiplier: 1.2, streakDays: 3, beatPB: true,
-      objetos: 2, puntosObjetos: -300,
-      calabazas: 1, puntosCalabazas: 200, zombis: 1, puntosZombis: -500,
+      objetos: 4, puntosObjetos: -300,
+      calabazas: 1, puntosCalabazas: 200,
+      fantasmas: [500, 0, -1000], puntosFantasmas: -500,
       cercadas: 3480, puntosCerco: 3480,
       tope: 6920, topeAplicado: true, puntosBrutos: 7911,
     },
