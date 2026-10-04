@@ -53,9 +53,19 @@ export async function sembrar(
      *  Las dos garantizan que la calabaza cae sobre asfalto y se puede coger:
      *  soltarlas al azar por España dejaría el 99,99% en mitad de un campo. */
     fuente?: 'calles' | 'pisadas';
+    /** A cuánto hay que quedarse de un objeto de OTRO tipo, en celdas.
+     *
+     *  Por defecto, lo mismo que de los del propio tipo. Los zombis usan mucho
+     *  menos a propósito: un zombi pegado a una calabaza es el cebo, lo mejor
+     *  que puede pasarte en una esquina. Y hace falta además por pura
+     *  aritmética — el 4-oct se sembraron 65 calabazas en el barrio de Iban y
+     *  NO cupo ni un zombi: con 300 m contra todo, las calabazas habían llenado
+     *  la zona y los zombis, que van detrás, se quedaron sin sitio. Cero. */
+    separacionAjena?: number;
   },
 ): Promise<number> {
   const { cuantos, tipo, puntos, desde, hasta, caja, fuente = 'calles' } = opciones;
+  const sepAjena = opciones.separacionAjena ?? SEPARACION_CELDAS;
   if (cuantos <= 0) return 0;
 
   // Candidatas en orden aleatorio. Se piden de más porque muchas se
@@ -76,18 +86,23 @@ export async function sembrar(
   );
 
   // Los que ya están puestos y siguen libres, para respetar la separación.
+  // Separados por tipo: a los del propio tipo se les guarda la distancia
+  // entera; a los de otro tipo, la que diga `separacionAjena`.
   const { rows: puestos } = await db.query(
-    `SELECT cell_x, cell_y FROM objetos WHERE tomado_por IS NULL AND (hasta IS NULL OR hasta > NOW())`,
+    `SELECT cell_x, cell_y, tipo FROM objetos WHERE tomado_por IS NULL AND (hasta IS NULL OR hasta > NOW())`,
   );
-  const ocupadas = puestos.map((o: any) => ({ x: o.cell_x, y: o.cell_y }));
+  const mismos = puestos.filter((o: any) => o.tipo === tipo).map((o: any) => ({ x: o.cell_x, y: o.cell_y }));
+  const ajenos = puestos.filter((o: any) => o.tipo !== tipo).map((o: any) => ({ x: o.cell_x, y: o.cell_y }));
 
   const nuevas: { x: number; y: number }[] = [];
   for (const c of candidatas) {
     if (nuevas.length >= cuantos) break;
     const x = c.cell_x, y = c.cell_y;
-    const lejos = (p: { x: number; y: number }) =>
-      Math.abs(p.x - x) > SEPARACION_CELDAS || Math.abs(p.y - y) > SEPARACION_CELDAS;
-    if (!ocupadas.every(lejos) || !nuevas.every(lejos)) continue;
+    const lejosDe = (sep: number) => (p: { x: number; y: number }) =>
+      Math.abs(p.x - x) > sep || Math.abs(p.y - y) > sep;
+    if (!mismos.every(lejosDe(SEPARACION_CELDAS))) continue;
+    if (!ajenos.every(lejosDe(sepAjena))) continue;
+    if (!nuevas.every(lejosDe(SEPARACION_CELDAS))) continue;
     nuevas.push({ x, y });
   }
   if (nuevas.length === 0) return 0;

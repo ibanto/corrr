@@ -2066,7 +2066,7 @@ edificio ni en medio del monte. Abajo eliges si valen todas las calles (el mapa 
 solo aquellas por las que ya ha corrido alguien. Se cogen pasando por encima al correr, y las que
 queden dentro de un cerco también son tuyas. <b>Solo las ven las apps 1.11.11 o más nuevas, y con
 Halloween encendido.</b></p>
-<p class="nota"><b>Con cada siembra salen zombis</b>, el 15 % de las calabazas, que restan 500 puntos
+<p class="nota"><b>Con cada siembra salen zombis</b>, el 40 % de las calabazas, que restan 500 puntos
 al pisarlos. No hay que sembrarlos aparte: van solos, para que no pueda quedar un evento con zombis
 y sin calabazas. Al zombi hay que esquivarlo — <b>el cerco no se los lleva</b>: recoge lo que suma,
 lo que resta hay que pisarlo. Una carrera nunca baja de cero puntos.</p>
@@ -2443,9 +2443,10 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
     };
     msgObjetos(todas ? 'Sembrando por todas las ciudades, esto tarda…' : 'Sembrando…', true);
     api('/admin/objetos', { method: 'POST', body: JSON.stringify(cuerpo) }).then(function (r) {
-      msgObjetos('Sembradas ' + r.puestas + ' calabazas de ' + r.puntos + ' puntos'
-        + (r.zombis ? ' y ' + r.zombis + ' zombis' : '') + (r.donde || '')
-        + (r.puestas < r.pedidas ? ' (el resto caían demasiado cerca de otra)' : ''), true);
+      msgObjetos('Sembradas ' + r.puestas + ' calabazas de ' + r.puntos + ' puntos y '
+        + r.zombis + ' zombis' + (r.donde || '')
+        + (r.puestas < r.pedidas ? ' · de las calabazas, el resto caía demasiado cerca de otra' : '')
+        + (r.zombis === 0 ? ' · OJO: no cupo ningún zombi, la zona está llena' : ''), true);
       cargarObjetos();
     }).catch(function (e) { msgObjetos(e.message, false); });
   }
@@ -5737,14 +5738,14 @@ app.get('/admin/calles', { preHandler: requireAdmin }, async (_req, reply) => {
   return reply.send({ celdas: rows[0]?.n ?? 0 });
 });
 
-/** Los zombis: hay bastantes menos que calabazas y restan en vez de sumar.
+/** Los zombis: menos que calabazas y restan en vez de sumar.
  *
  *  Van en la misma tabla que las calabazas —el servicio de objetos es genérico
  *  y los puntos viven en cada objeto— con puntos NEGATIVOS, y de ahí sale solo
  *  todo lo demás: el cerco no se los lleva (solo recoge lo que suma) y pisarlos
  *  descuenta. Una carrera nunca baja de cero, así que salir a correr no puede
  *  costarte puntos ni pisando tres. */
-const PROPORCION_ZOMBIS = 0.15;
+const PROPORCION_ZOMBIS = 0.40;
 const PUNTOS_ZOMBI = 500;
 
 app.post('/admin/objetos', { preHandler: requireAdmin }, async (req: any, reply) => {
@@ -5787,6 +5788,9 @@ app.post('/admin/objetos', { preHandler: requireAdmin }, async (req: any, reply)
       zombis = await sembrar(db, {
         cuantos: cuantosZombis, tipo: 'zombi', puntos: -PUNTOS_ZOMBI,
         desde: d, hasta: h, caja, fuente: deDonde,
+        // 50 m de una calabaza, no 300: un zombi al lado de una calabaza es el
+        // cebo. Entre zombis sí se guardan los 300 de siempre.
+        separacionAjena: 5,
       });
     }
     return { puestas, zombis };
