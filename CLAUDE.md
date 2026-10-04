@@ -6,7 +6,7 @@ Instrucciones para Claude trabajando en este repo. Léelo entero antes de tocar 
 
 ## 0. Dónde estamos (leer esto primero)
 
-*Al día a 4-oct-2026, tarde. Si algo de aquí abajo contradice a este apartado, manda este.*
+*Al día a 4-oct-2026, noche. Si algo de aquí abajo contradice a este apartado, manda este.*
 
 **En las tiendas**: 1.11.10 (Android vc67, iPhone build 17). 46 corredores.
 
@@ -16,16 +16,15 @@ El evento de Halloween va del **viernes 23 de octubre al domingo 1 de noviembre*
 
 ### Lo siguiente que hay que hacer
 
-1. **Que Iban suba la 1.11.11 (24) / vc78.** Hechas las dos:
-   `apps/mobile/builds/corrr-v1.11.11-vc78.aab` y el archivo
-   `CORRR-1.11.11-build24.xcarchive` en Organizer. **Las builds y los archivados
-   los lanzo YO; él los recoge y los sube.** Las anteriores no valen: la 21 se
-   cerraba sola, la 22 llevaba las fechas viejas de Halloween y la 23 no
-   explicaba de dónde salían los puntos (§9).
-2. **Que pruebe la vc78 / build 24**: que abra, que las calabazas salgan a la
-   primera, el detector de Android y la prueba de calle del GPS
-   (`docs/prueba-gps.md`).
-3. **Sembrar calabazas de verdad** desde el panel para el evento (§9-bis).
+1. **Que Iban suba la 1.11.11 (26) / vc80**:
+   `apps/mobile/builds/corrr-v1.11.11-vc80.aab` y el archivo
+   `CORRR-1.11.11-build26.xcarchive` en Organizer. **Las builds las lanzo YO; él
+   las recoge y las sube.** Lleva los fantasmas, la calabaza nueva y la carrera
+   que se guarda en el móvil antes de mandarla.
+2. **Que la pruebe**: pisar un fantasma y ver qué le toca, que el resumen los
+   enseñe uno por línea, y una carrera larga cerrando el círculo (a ver si el
+   cuelgue de Oriol15 ha desaparecido).
+3. **Sembrar para el evento** con el botón morado del panel (§9-bis).
 
 ### Ya funcionando en producción (servidor, sin build)
 
@@ -722,3 +721,25 @@ marca `es_bot` y sacarlos de:
   y el dibujo ya lo lleva la app (`respuesta1.png`…).
 - Que tengan **foto**. Sin ella sale la inicial en un círculo y cinco círculos
   iguales en el ranking quedan raros.
+
+---
+
+## 14. Para DESPUÉS de Halloween
+
+- **Guardar la carrera en el móvil MIENTRAS se corre.** Hoy solo se guarda al
+  pulsar PARAR (que es lo que mató la carrera de Oriol15 el 4-oct y ya está
+  arreglado), y en segundo plano. Con la app abierta en pantalla, los puntos
+  viven solo en memoria: si se cae a mitad, se pierde lo corrido.
+  **Cómo, sin que se note**: un trocito cada 15 s (unos 20 puntos, 2 KB), NO la
+  lista entera cada segundo — eso al final de una hora sería reescribir 300 KB
+  por segundo y se notaría en tirones y batería. Al volver, los puntos se pasan
+  por el mismo `RunTracker` y sale la misma distancia y el mismo territorio.
+  **Se aparcó a propósito**: toca el motor de la carrera, que es la pieza más
+  delicada, y a quince días del evento no compensaba el riesgo.
+- **El EJÉRCITO CORRR de verdad** (§13): rutas por la red de calles, robar,
+  reaccionar cuando alguien corre en su ciudad. Lo que hay ahora es solo
+  decorado pintado, más el taunt cuando les quitas territorio.
+- **Partir la clave de Google Maps en dos** (§12), una por plataforma, para
+  poder atarla a la app.
+- **Cambiar la clave de subida de Android** (§12).
+- **Pasar a Fastify 5** (§12): la rama 4 está fuera de soporte.
