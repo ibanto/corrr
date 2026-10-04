@@ -1,21 +1,28 @@
 /**
  * Pinta el decorado del EJÉRCITO CORRR en las ciudades donde no corre nadie.
  *
- *   node scripts/sembrar-ejercito.mjs            # ENSAYO: solo dice qué haría
+ *   node scripts/sembrar-ejercito.mjs            # ENSAYO
  *   node scripts/sembrar-ejercito.mjs --de-verdad
  *
- * PARA QUÉ: de 47 corredores, 26 no han corrido nunca, y hay 27 ciudades con
- * una sola persona. Quien se da de alta en Burgos abre el mapa, lo ve gris y no
- * vuelve. Esto no es el juego de los bots (§13 del CLAUDE.md) — eso llega en
- * noviembre, con rutas por calles de verdad y reaccionando a la gente. Esto es
- * SOLO decorado: territorio pintado para que el mapa de una ciudad vacía no
- * parezca un pueblo fantasma antes de Halloween.
+ * PARA QUÉ: de 47 corredores, 26 no han corrido nunca y hay 27 ciudades con una
+ * sola persona. Quien se da de alta en Burgos abre el mapa, lo ve gris y no
+ * vuelve. Esto NO es el juego de los bots (§13 del CLAUDE.md) — eso llega en
+ * noviembre. Esto es territorio pintado para que una ciudad vacía no parezca un
+ * pueblo fantasma.
  *
- * No hace falta versión nueva de la app: la ciudad de estos cinco es
- * "EJÉRCITO CORRR", y la app ya pinta la ciudad debajo del nombre. Así se lee
- * quiénes son sin tocar una línea de código del móvil.
+ * CÓMO SE PINTA, que es lo que importa. La primera versión dejaba rectángulos
+ * perfectos y cantaba a la legua: "es un cuadrado, no nos sirve" (Iban, 4-oct).
+ * Ahora se imita lo que hace una persona: se DA UNA VUELTA saltando de punto de
+ * calle en punto de calle —así el recorrido va por la calle y no por dentro de
+ * las manzanas—, se vuelve al principio y se rellena lo de dentro. Sale una
+ * mancha con bordes irregulares, con mordiscos donde hay un parque o un río, y
+ * con la forma del callejero de esa ciudad.
  *
- * NO roba nada: solo ocupa celdas que no tengan dueño (ON CONFLICT DO NOTHING).
+ * Y la vuelta se da EN EL CENTRO: el centro se saca de los datos, buscando dónde
+ * hay más calles por kilómetro cuadrado, que es el casco urbano. Antes salía en
+ * un descampado junto a la M-30.
+ *
+ * No roba nada: solo ocupa celdas sin dueño.
  */
 import 'dotenv/config';
 import pg from 'pg';
@@ -24,18 +31,25 @@ import { randomUUID } from 'node:crypto';
 
 const deVerdad = process.argv.includes('--de-verdad');
 
-/** Los cinco. Nombres de bicho rápido: suenan a mote y no a robot. */
 const EJERCITO = ['El Galgo', 'La Liebre', 'El Zorro', 'El Lobo', 'La Gaviota'];
 const CIUDAD = 'EJÉRCITO CORRR';
 
-/** Una mancha de 25x25 celdas = 250x250 m. Es lo que deja una vuelta cerrada a
- *  un par de manzanas: se ve en el mapa y no se come el barrio. */
-const LADO = 25;
-/** Manchas por ciudad. Pocas y separadas: demasiado territorio espanta más que
- *  el mapa vacío — el que llega piensa "esto ya está cogido". */
-const MANCHAS = 3;
-/** Entre manchas, al menos 1,5 km, para que se vean como sitios distintos. */
-const SEPARACION = 150;
+/** Vueltas por ciudad. */
+const VUELTAS = 2;
+/** Pasos por vuelta. El mapa COMPLETO (datos/calles.json) tiene un punto cada
+ *  40 m, así que 130 pasos son unos 5 km: una vuelta larga de barrio.
+ *
+ *  Se usa el fichero completo y no la tabla `calles` a propósito: la tabla está
+ *  adelgazada a un punto cada 100 m —vale para sembrar calabazas, que solo
+ *  necesitan saber que ahí hay asfalto— y con esa separación el paseo salta en
+ *  línea recta de punto a punto y corta por encima de las manzanas. Con 40 m,
+ *  el salto cabe dentro de la propia calle y el recorrido la sigue. */
+const PASOS = 130;
+/** Salto máximo entre dos puntos seguidos, en celdas. 6 = 60 m: por encima del
+ *  paso de 40 m del mapa, pero menos que el ancho de una manzana. */
+const SALTO = 6;
+/** Ancho del rastro, en celdas a cada lado (1 = 30 m de ancho). */
+const ANCHO = 1;
 
 const ca = readFileSync(new URL('../src/db/supabase-ca.ts', import.meta.url), 'utf8')
   .match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/)?.[0];
@@ -45,73 +59,158 @@ const db = new pg.Pool({
 });
 
 const CELL_LAT = 10 / 111000, CELL_LNG = 10 / (111000 * Math.cos(40 * Math.PI / 180));
+
+/** El mapa de calles SIN adelgazar, tal y como se bajó: un punto cada 40 m. */
+const MAPA_COMPLETO = (() => {
+  const c = JSON.parse(readFileSync(new URL('../datos/calles.json', import.meta.url), 'utf8'));
+  return Array.isArray(c) ? c : (c.celdas ?? []);
+})();
+console.log(`Mapa de calles completo: ${MAPA_COMPLETO.length.toLocaleString('es-ES')} puntos (uno cada 40 m)\n`);
+
+/** Los puntos de ese mapa que caen en una caja. */
+function calles(caja) {
+  const out = [];
+  for (const p of MAPA_COMPLETO) {
+    const x = Array.isArray(p) ? p[0] : p.x, y = Array.isArray(p) ? p[1] : p.y;
+    if (x >= caja.x0 && x <= caja.x1 && y >= caja.y0 && y <= caja.y1) out.push({ x, y });
+  }
+  return out;
+}
 const aCelda = (lat, lon) => ({ x: Math.floor(lon / CELL_LNG), y: Math.floor(lat / CELL_LAT) });
+const clave = (x, y) => x + ',' + y;
+
+/** Línea entre dos celdas (Bresenham), para que el rastro no tenga huecos. */
+function entre(a, b, dentro) {
+  let x = a.x, y = a.y;
+  const dx = Math.abs(b.x - x), dy = Math.abs(b.y - y);
+  const sx = x < b.x ? 1 : -1, sy = y < b.y ? 1 : -1;
+  let err = dx - dy, guarda = 0;
+  for (;;) {
+    for (let i = -ANCHO; i <= ANCHO; i++) for (let j = -ANCHO; j <= ANCHO; j++) dentro.add(clave(x + i, y + j));
+    if ((x === b.x && y === b.y) || guarda++ > 3000) break;
+    const e2 = 2 * err;
+    if (e2 > -dy) { err -= dy; x += sx; }
+    if (e2 < dx) { err += dx; y += sy; }
+  }
+}
+
+/** Una vuelta: salta de punto de calle en punto de calle y vuelve al principio. */
+function daUnaVuelta(puntos, salida) {
+  const porClave = new Map(puntos.map(p => [clave(p.x, p.y), p]));
+  const vistos = new Set();
+  const ruta = [salida];
+  vistos.add(clave(salida.x, salida.y));
+  let actual = salida;
+  for (let paso = 0; paso < PASOS; paso++) {
+    const volviendo = paso > PASOS * 0.55;      // en la segunda mitad, de regreso
+    let mejor = null, mejorNota = -Infinity;
+    for (let dx = -SALTO; dx <= SALTO; dx++) for (let dy = -SALTO; dy <= SALTO; dy++) {
+      if (dx === 0 && dy === 0) continue;
+      const c = clave(actual.x + dx, actual.y + dy);
+      if (!porClave.has(c) || vistos.has(c)) continue;
+      const p = porClave.get(c);
+      const aCasa = Math.hypot(p.x - salida.x, p.y - salida.y);
+      // Ir lejos al principio, volver al final, con un poco de azar para que no
+      // salgan dos vueltas iguales.
+      const nota = (volviendo ? -aCasa : aCasa) + Math.random() * 8;
+      if (nota > mejorNota) { mejorNota = nota; mejor = p; }
+    }
+    if (!mejor) break;
+    ruta.push(mejor); vistos.add(clave(mejor.x, mejor.y)); actual = mejor;
+  }
+  ruta.push(salida);                            // cerrar
+  const celdas = new Set();
+  for (let i = 1; i < ruta.length; i++) entre(ruta[i - 1], ruta[i], celdas);
+  return celdas;
+}
+
+/** Lo de dentro de la vuelta: se inunda desde el borde y lo que no se moja,
+ *  está encerrado. Es lo mismo que hace el servidor con los cercos. */
+function rellena(celdas) {
+  const xs = [...celdas].map(k => +k.split(',')[0]), ys = [...celdas].map(k => +k.split(',')[1]);
+  const x0 = Math.min(...xs) - 1, x1 = Math.max(...xs) + 1;
+  const y0 = Math.min(...ys) - 1, y1 = Math.max(...ys) + 1;
+  const fuera = new Set();
+  const cola = [];
+  for (let x = x0; x <= x1; x++) { cola.push([x, y0]); cola.push([x, y1]); }
+  for (let y = y0; y <= y1; y++) { cola.push([x0, y]); cola.push([x1, y]); }
+  while (cola.length) {
+    const [x, y] = cola.pop();
+    const k = clave(x, y);
+    if (x < x0 || x > x1 || y < y0 || y > y1 || fuera.has(k) || celdas.has(k)) continue;
+    fuera.add(k);
+    cola.push([x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]);
+  }
+  const todo = new Set(celdas);
+  for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) {
+    const k = clave(x, y);
+    if (!fuera.has(k)) todo.add(k);
+  }
+  return todo;
+}
 
 // ── Dónde hace falta ────────────────────────────────────────────────────────
-// Las zonas son las mismas que se bajaron de OpenStreetMap. Para cada una se
-// mira cuánta gente DE VERDAD tiene territorio dentro: las vacías y las de una
-// sola persona son las que necesitan decorado.
 const zonas = JSON.parse(readFileSync(new URL('../datos/zonas.json', import.meta.url), 'utf8'));
 const objetivo = [];
 for (const z of zonas) {
   const a = aCelda(z.sur, z.oeste), b = aCelda(z.norte, z.este);
   const { rows: [g] } = await db.query(
-    `SELECT COUNT(DISTINCT c.owner_id)::int AS gente
-       FROM cells c JOIN users u ON u.id = c.owner_id
+    `SELECT COUNT(DISTINCT c.owner_id)::int AS gente FROM cells c JOIN users u ON u.id = c.owner_id
       WHERE NOT u.es_bot AND c.cell_x BETWEEN $1 AND $2 AND c.cell_y BETWEEN $3 AND $4`,
     [a.x, b.x, a.y, b.y]);
   const { rows: [c] } = await db.query(
-    `SELECT COUNT(*)::int AS n FROM calles
-      WHERE cell_x BETWEEN $1 AND $2 AND cell_y BETWEEN $3 AND $4`,
+    `SELECT COUNT(*)::int AS n FROM calles WHERE cell_x BETWEEN $1 AND $2 AND cell_y BETWEEN $3 AND $4`,
     [a.x, b.x, a.y, b.y]);
-  if (c.n < 500) continue;                 // sin calles suficientes, no es ciudad
-  if (g.gente > 1) continue;               // ahí ya hay partida
-  // Si en la zona hay UNA persona, el decorado va cerca de donde corre ella:
-  // es para quien está solo, y en Madrid tres manchas al azar pueden quedarle
-  // a diez kilómetros y no verlas nunca.
-  let cerca = null;
+  if (c.n < 500 || g.gente > 1) continue;
+
+  // El centro: si hay una persona, su barrio. Si no, donde más calles hay por
+  // km², que es el casco urbano — no el descampado de la salida de la ciudad.
+  let centro = null;
   if (g.gente === 1) {
     const { rows: [p] } = await db.query(
-      `SELECT ROUND(AVG(c.cell_x))::int x, ROUND(AVG(c.cell_y))::int y
-         FROM cells c JOIN users u ON u.id = c.owner_id
+      `SELECT ROUND(AVG(c.cell_x))::int x, ROUND(AVG(c.cell_y))::int y FROM cells c JOIN users u ON u.id = c.owner_id
         WHERE NOT u.es_bot AND c.cell_x BETWEEN $1 AND $2 AND c.cell_y BETWEEN $3 AND $4`,
       [a.x, b.x, a.y, b.y]);
-    if (p?.x != null) cerca = { x: p.x, y: p.y };
+    if (p?.x != null) centro = { x: p.x, y: p.y, porque: 'junto a esa persona' };
   }
-  objetivo.push({ caja: { x0: a.x, x1: b.x, y0: a.y, y1: b.y }, gente: g.gente, calles: c.n, cerca,
-                  centro: `${((z.sur + z.norte) / 2).toFixed(3)}, ${((z.oeste + z.este) / 2).toFixed(3)}` });
+  if (!centro) {
+    const { rows: [p] } = await db.query(
+      `SELECT (cell_x / 100 * 100) gx, (cell_y / 100 * 100) gy, COUNT(*)::int n FROM calles
+        WHERE cell_x BETWEEN $1 AND $2 AND cell_y BETWEEN $3 AND $4
+        GROUP BY 1, 2 ORDER BY n DESC LIMIT 1`,
+      [a.x, b.x, a.y, b.y]);
+    if (p) centro = { x: p.gx + 50, y: p.gy + 50, porque: 'el centro' };
+  }
+  if (!centro) continue;
+  objetivo.push({ caja: { x0: a.x, x1: b.x, y0: a.y, y1: b.y }, gente: g.gente, calles: c.n, centro,
+                  donde: `${((z.sur + z.norte) / 2).toFixed(3)}, ${((z.oeste + z.este) / 2).toFixed(3)}` });
 }
 objetivo.sort((p, q) => q.calles - p.calles);
-console.log(`Zonas con calles bajadas: ${zonas.length}`);
-console.log(`De esas, vacías o con una sola persona: ${objetivo.length}\n`);
+console.log(`Ciudades a decorar: ${objetivo.length}\n`);
 
-// ── Qué se pintaría ─────────────────────────────────────────────────────────
-let totalCeldas = 0;
+// ── Las vueltas ─────────────────────────────────────────────────────────────
 const plan = [];
+let total = 0;
 for (const [i, z] of objetivo.entries()) {
-  // Alrededor de la persona que hay (2 km), o por toda la zona si no hay nadie.
-  const caja = z.cerca
-    ? { x0: z.cerca.x - 200, x1: z.cerca.x + 200, y0: z.cerca.y - 200, y1: z.cerca.y + 200 }
-    : z.caja;
-  const { rows: calles } = await db.query(
-    `SELECT cell_x x, cell_y y FROM calles
-      WHERE cell_x BETWEEN $1 AND $2 AND cell_y BETWEEN $3 AND $4
-      ORDER BY random() LIMIT 400`,
-    [caja.x0, caja.x1, caja.y0, caja.y1]);
-  const centros = [];
-  for (const c of calles) {
-    if (centros.length >= MANCHAS) break;
-    const sep = z.cerca ? 60 : SEPARACION;   // 600 m si es alrededor de alguien
-    if (centros.every(p => Math.abs(p.x - c.x) > sep || Math.abs(p.y - c.y) > sep)) centros.push(c);
+  const puntos = calles({ x0: z.centro.x - 250, x1: z.centro.x + 250, y0: z.centro.y - 250, y1: z.centro.y + 250 });
+  if (puntos.length < 400) { console.log(`  ${z.donde.padEnd(18)} pocas calles en el centro, se salta`); continue; }
+  let deLaCiudad = 0;
+  for (let v = 0; v < VUELTAS; v++) {
+    // La salida, en el primer kilómetro desde el centro: si se coge de toda la
+    // caja, la vuelta acaba en un descampado a las afueras. El 4-oct la primera
+    // mancha de Madrid salió junto a la M-30, al lado del Manzanares.
+    const cerca = puntos.filter(p => Math.abs(p.x - z.centro.x) < 100 && Math.abs(p.y - z.centro.y) < 100);
+    const bolsa = cerca.length > 50 ? cerca : puntos;
+    const salida = bolsa[Math.floor(Math.random() * bolsa.length)];
+    const ruta = daUnaVuelta(puntos, salida);
+    if (ruta.size < 300) continue;
+    const mancha = rellena(ruta);
+    plan.push({ dueno: (i * VUELTAS + v) % EJERCITO.length, celdas: mancha });
+    deLaCiudad += mancha.size; total += mancha.size;
   }
-  for (const [j, c] of centros.entries()) {
-    plan.push({ zona: i, dueno: (i + j) % EJERCITO.length, centro: c });
-    totalCeldas += LADO * LADO;
-  }
-  console.log(`  ${z.centro.padEnd(18)} ${String(z.gente)} corredor(es) · ${String(z.calles).padStart(6)} calles → ${centros.length} manchas${z.cerca ? ' (junto a esa persona)' : ''}`);
+  console.log(`  ${z.donde.padEnd(18)} ${String(z.gente)} corredor(es) · ${z.centro.porque.padEnd(18)} → ${(deLaCiudad / 10000).toFixed(2)} km²`);
 }
-console.log(`\nSe pintarían ${plan.length} manchas de ${LADO * 10}x${LADO * 10} m = ${totalCeldas.toLocaleString('es-ES')} celdas como mucho`);
-console.log('(menos las que ya tengan dueño: a nadie se le quita nada)');
+console.log(`\n${plan.length} vueltas · ${total.toLocaleString('es-ES')} celdas = ${(total / 10000).toFixed(1)} km² en total`);
 
 if (!deVerdad) { console.log('\nEnsayo. Para hacerlo de verdad: --de-verdad'); await db.end(); process.exit(0); }
 
@@ -121,10 +220,8 @@ try {
   await cliente.query('BEGIN');
   const ids = [];
   for (const nombre of EJERCITO) {
-    const { rows: ya } = await cliente.query(
-      'SELECT id FROM users WHERE LOWER(display_name) = LOWER($1)', [nombre]);
+    const { rows: ya } = await cliente.query('SELECT id FROM users WHERE LOWER(display_name) = LOWER($1)', [nombre]);
     if (ya.length) { ids.push(ya[0].id); continue; }
-    // Sin contraseña utilizable y sin verificar: no se puede entrar con ellas.
     const { rows: [u] } = await cliente.query(
       `INSERT INTO users (email, password_hash, display_name, city, es_bot)
        VALUES ($1, $2, $3, $4, TRUE) RETURNING id`,
@@ -133,20 +230,23 @@ try {
     ids.push(u.id);
     console.log(`  creado: ${nombre}`);
   }
+  // Fuera lo de la vez anterior (los cuadrados). Solo lo suyo.
+  const { rowCount: borradas } = await cliente.query(
+    `DELETE FROM cells WHERE owner_id = ANY($1::uuid[])`, [ids]);
+  if (borradas) console.log(`  borradas ${borradas.toLocaleString('es-ES')} celdas de la vez anterior`);
 
   let puestas = 0;
   for (const m of plan) {
     const xs = [], ys = [];
-    for (let dx = 0; dx < LADO; dx++) for (let dy = 0; dy < LADO; dy++) {
-      xs.push(m.centro.x - (LADO >> 1) + dx);
-      ys.push(m.centro.y - (LADO >> 1) + dy);
+    for (const k of m.celdas) { const [x, y] = k.split(',').map(Number); xs.push(x); ys.push(y); }
+    for (let i = 0; i < xs.length; i += 5000) {
+      const { rowCount } = await cliente.query(
+        `INSERT INTO cells (cell_x, cell_y, owner_id, claimed_at)
+         SELECT x, y, $3::uuid, NOW() FROM unnest($1::int[], $2::int[]) AS t(x, y)
+         ON CONFLICT (cell_x, cell_y) DO NOTHING`,
+        [xs.slice(i, i + 5000), ys.slice(i, i + 5000), ids[m.dueno]]);
+      puestas += rowCount ?? 0;
     }
-    const { rowCount } = await cliente.query(
-      `INSERT INTO cells (cell_x, cell_y, owner_id, claimed_at)
-       SELECT x, y, $3::uuid, NOW() FROM unnest($1::int[], $2::int[]) AS t(x, y)
-       ON CONFLICT (cell_x, cell_y) DO NOTHING`,
-      [xs, ys, ids[m.dueno]]);
-    puestas += rowCount ?? 0;
   }
   for (const id of ids) {
     await cliente.query(
