@@ -34,8 +34,17 @@ const deVerdad = process.argv.includes('--de-verdad');
 const EJERCITO = ['El Galgo', 'La Liebre', 'El Zorro', 'El Lobo', 'La Gaviota'];
 const CIUDAD = 'EJÉRCITO CORRR';
 
-/** Vueltas por ciudad. */
-const VUELTAS = 2;
+/** Vueltas por ciudad, según lo grande que sea.
+ *
+ *  Dos para todas no vale: Madrid son 600 km² y dos manchas se pierden ("queda
+ *  desangelado", Iban). Se calcula con los puntos de calle de la zona, que es
+ *  una buena medida de cuánto casco urbano hay: Madrid saca 7, una capital
+ *  mediana 4, un pueblo 2. */
+const vueltasDe = (puntosDeCalle) =>
+  Math.max(2, Math.min(8, Math.round(puntosDeCalle / 900)));
+/** Separación mínima entre los barrios que se rodean, en celdas. 120 = 1,2 km:
+ *  lo bastante lejos para que se vean como sitios distintos de la ciudad. */
+const SEPARACION_BARRIOS = 120;
 /** Pasos por vuelta. El mapa COMPLETO (datos/calles.json) tiene un punto cada
  *  40 m, así que 130 pasos son unos 5 km: una vuelta larga de barrio.
  *
@@ -219,23 +228,41 @@ console.log(`Ciudades a decorar: ${objetivo.length}\n`);
 const plan = [];
 let total = 0;
 for (const [i, z] of objetivo.entries()) {
-  const puntos = calles({ x0: z.centro.x - 250, x1: z.centro.x + 250, y0: z.centro.y - 250, y1: z.centro.y + 250 });
-  if (puntos.length < 400) { console.log(`  ${z.donde.padEnd(18)} pocas calles en el centro, se salta`); continue; }
+  // Los barrios a rodear: los cuadrados de 1 km con más calles, repartidos por
+  // la ciudad y separados entre sí. Así en Madrid salen manchas en el centro y
+  // en varios barrios, en vez de todas apiladas en el mismo sitio.
+  const { rows: densos } = await db.query(
+    `SELECT (cell_x / 100 * 100) gx, (cell_y / 100 * 100) gy, COUNT(*)::int n FROM calles
+      WHERE cell_x BETWEEN $1 AND $2 AND cell_y BETWEEN $3 AND $4
+      GROUP BY 1, 2 ORDER BY n DESC LIMIT 80`,
+    [z.caja.x0, z.caja.x1, z.caja.y0, z.caja.y1]);
+  const cuantas = vueltasDe(z.calles);
+  const barrios = [];
+  // El primero, el centro de la ciudad (o el barrio de quien vive ahí).
+  barrios.push({ x: z.centro.x, y: z.centro.y });
+  for (const d of densos) {
+    if (barrios.length >= cuantas) break;
+    const c = { x: d.gx + 50, y: d.gy + 50 };
+    if (barrios.every(b => Math.abs(b.x - c.x) > SEPARACION_BARRIOS || Math.abs(b.y - c.y) > SEPARACION_BARRIOS)) {
+      barrios.push(c);
+    }
+  }
+  // Los puntos de calle de TODA la ciudad: las vueltas ya no son solo del centro.
+  const puntos = calles(z.caja);
+  if (puntos.length < 400) { console.log(`  ${z.donde.padEnd(18)} pocas calles, se salta`); continue; }
   let deLaCiudad = 0;
-  for (let v = 0; v < VUELTAS; v++) {
-    // El barrio que se rodea, en el primer kilómetro desde el centro: si se coge
-    // de toda la caja, la vuelta acaba en un descampado a las afueras. El 4-oct
-    // la primera mancha de Madrid salió junto a la M-30, al lado del Manzanares.
-    const cerca = puntos.filter(p => Math.abs(p.x - z.centro.x) < 100 && Math.abs(p.y - z.centro.y) < 100);
-    const bolsa = cerca.length > 50 ? cerca : puntos;
-    const barrio = bolsa[Math.floor(Math.random() * bolsa.length)];
-    const ruta = daUnaVuelta(puntos, barrio);
+  for (const [v, barrio] of barrios.entries()) {
+    // Solo las calles de ese barrio: así la vuelta no se va a buscar una calle
+    // al otro lado de la ciudad.
+    const cerca = puntos.filter(p => Math.abs(p.x - barrio.x) < 120 && Math.abs(p.y - barrio.y) < 120);
+    if (cerca.length < 300) continue;
+    const ruta = daUnaVuelta(cerca, barrio);
     if (!ruta || ruta.size < 300) continue;
     const mancha = rellena(ruta);
-    plan.push({ dueno: (i * VUELTAS + v) % EJERCITO.length, celdas: mancha });
+    plan.push({ dueno: (i * 3 + v) % EJERCITO.length, celdas: mancha });
     deLaCiudad += mancha.size; total += mancha.size;
   }
-  console.log(`  ${z.donde.padEnd(18)} ${String(z.gente)} corredor(es) · ${z.centro.porque.padEnd(18)} → ${(deLaCiudad / 10000).toFixed(2)} km²`);
+  console.log(`  ${z.donde.padEnd(18)} ${String(z.gente)} corredor(es) · ${String(barrios.length).padStart(2)} barrios → ${(deLaCiudad / 10000).toFixed(2)} km²`);
 }
 console.log(`\n${plan.length} vueltas · ${total.toLocaleString('es-ES')} celdas = ${(total / 10000).toFixed(1)} km² en total`);
 
