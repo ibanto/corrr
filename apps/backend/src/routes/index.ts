@@ -2057,9 +2057,9 @@ encendido.</b></p>
   </select>
   <label class="campo">Sembrar cerca de (nombre del corredor; vacío = todas las zonas)
     <input id="o_cerca" placeholder="ibanto"></label>
-  <label class="campo">Cuántas calabazas
+  <label class="campo">CALABAZAS — cuántas se siembran
     <input id="o_cuantas" type="number" min="1" max="500" value="100"></label>
-  <label class="campo">Puntos que vale cada una
+  <label class="campo">PUNTOS — lo que vale cada una (siempre 200, salvo que quieras otra cosa)
     <input id="o_puntos" type="number" min="1" max="1000" value="200"></label>
   <label class="campo">Desde
     <input id="o_desde" type="datetime-local"></label>
@@ -2414,7 +2414,8 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
       hasta: val('o_hasta') || null,
     };
     api('/admin/objetos', { method: 'POST', body: JSON.stringify(cuerpo) }).then(function (r) {
-      msgObjetos('Sembradas ' + r.puestas + ' de ' + r.pedidas + (r.donde || '')
+      msgObjetos('Sembradas ' + r.puestas + ' de ' + r.pedidas + ' calabazas de ' + r.puntos
+        + ' puntos cada una' + (r.donde || '')
         + (r.puestas < r.pedidas ? ' (el resto caían demasiado cerca de otra)' : ''), true);
       cargarObjetos();
     }).catch(function (e) { msgObjetos(e.message, false); });
@@ -5684,7 +5685,7 @@ app.post('/admin/objetos', { preHandler: requireAdmin }, async (req: any, reply)
     cuantos: n, tipo: String(tipo || 'calabaza'), puntos: Number(puntos) || 200,
     desde: d, hasta: h, caja, fuente: deDonde,
   });
-  return reply.send({ ok: true, puestas, pedidas: n, donde, fuente: deDonde });
+  return reply.send({ ok: true, puestas, pedidas: n, donde, fuente: deDonde, puntos: Number(puntos) || 200 });
 });
 
 /** Quitar del mapa las que queden libres (para cerrar un evento a mano). */
