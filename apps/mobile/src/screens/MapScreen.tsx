@@ -2454,14 +2454,6 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
                   {runSummary.breakdown.streakMultiplier > 1 && (
                     <BreakdownRow label={`Racha ${runSummary.breakdown.streakDays} días`} value="×1.5" hint="¡sigue así!" highlight />
                   )}
-                  {(runSummary.breakdown.objetos ?? 0) > 0 && (
-                    <BreakdownRow
-                      label={`Calabazas (${runSummary.breakdown.objetos})`}
-                      value={`+${runSummary.breakdown.puntosObjetos ?? 0}`}
-                      hint="por el camino"
-                      highlight
-                    />
-                  )}
                   {runSummary.breakdown.dobleBienvenida && (
                     <BreakdownRow label="Primeros pasos" value="×2" hint="mientras tengas menos de 100 puntos" highlight />
                   )}
@@ -2472,6 +2464,17 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
                       label="Tope de esta carrera"
                       value={`${(runSummary.breakdown.tope ?? 0).toLocaleString('es-ES')}`}
                       hint={`salían ${(runSummary.breakdown.puntosBrutos ?? 0).toLocaleString('es-ES')} · 2.000 por km`}
+                    />
+                  )}
+                  {/* Las calabazas van LAS ÚLTIMAS y después del tope, porque
+                      se suman por fuera: 200 son 200 aunque la carrera se haya
+                      topado. Puestas antes, la cuenta no salía. */}
+                  {(runSummary.breakdown.objetos ?? 0) > 0 && (
+                    <BreakdownRow
+                      label={`Calabazas (${runSummary.breakdown.objetos})`}
+                      value={`+${runSummary.breakdown.puntosObjetos ?? 0}`}
+                      hint={runSummary.breakdown.topeAplicado ? 'por el camino · aparte del tope' : 'por el camino'}
+                      highlight
                     />
                   )}
                 </View>

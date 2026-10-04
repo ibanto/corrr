@@ -3568,14 +3568,20 @@ app.post('/runs', {
       Math.max(Math.round(distanceKm * TOPE_POR_KM), TOPE_POR_KM),
       TECHO_CARRERA,
     );
-    const puntosBrutos =
-      Math.round((subtotal + puntosCerco) * streakMultiplier * (dobleBienvenida ? 2 : 1))
-      + puntosObjetos;
-    const authoritativePoints = Math.min(puntosBrutos, MAX_PUNTOS_CARRERA);
-    if (puntosBrutos > MAX_PUNTOS_CARRERA) {
+    // Las calabazas van POR FUERA del tope, a propósito. Doscientos puntos son
+    // doscientos puntos: si entraran dentro, quien cierra un cerco gordo ya
+    // estaría topado y las calabazas que cogiera no le darían nada — sales a
+    // buscarlas, pillas cuatro, y no ves los 800 por ningún lado. Además
+    // tienen su propio ranking (el de la pestaña de Retos, que cuenta
+    // calabazas y no puntos), así que son un juego aparte y así se comportan.
+    const puntosCarrera =
+      Math.round((subtotal + puntosCerco) * streakMultiplier * (dobleBienvenida ? 2 : 1));
+    const puntosBrutos = puntosCarrera + puntosObjetos;
+    const authoritativePoints = Math.min(puntosCarrera, MAX_PUNTOS_CARRERA) + puntosObjetos;
+    if (puntosCarrera > MAX_PUNTOS_CARRERA) {
       req.log.info(
-        { userId, puntosBrutos, dados: MAX_PUNTOS_CARRERA, km: distanceKm },
-        '[puntos] carrera por encima del tope',
+        { userId, puntosCarrera, dados: MAX_PUNTOS_CARRERA, km: distanceKm, calabazas: puntosObjetos },
+        '[puntos] carrera por encima del tope (las calabazas van aparte)',
       );
     }
 
@@ -3680,8 +3686,10 @@ app.post('/runs', {
         // que no cuadra con ninguna línea del desglose y no entiende nada: el
         // 4-oct una carrera dio 8.000 y las líneas visibles sumaban 1.847.
         tope: MAX_PUNTOS_CARRERA,
-        topeAplicado: puntosBrutos > MAX_PUNTOS_CARRERA,
-        puntosBrutos,
+        topeAplicado: puntosCarrera > MAX_PUNTOS_CARRERA,
+        // Lo que habría dado la carrera sin tope, SIN contar calabazas: son las
+        // que se comparan con el tope, y las calabazas se suman después.
+        puntosBrutos: puntosCarrera,
       },
     });
   } catch (err) {
