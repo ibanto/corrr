@@ -6,7 +6,7 @@ Instrucciones para Claude trabajando en este repo. Léelo entero antes de tocar 
 
 ## 0. Dónde estamos (leer esto primero)
 
-*Al día a 4-oct-2026, noche. Si algo de aquí abajo contradice a este apartado, manda este.*
+*Al día a 5-oct-2026, tarde. Si algo de aquí abajo contradice a este apartado, manda este.*
 
 **En las tiendas**: 1.11.10 (Android vc67, iPhone build 17). 46 corredores.
 
@@ -16,11 +16,13 @@ El evento de Halloween va del **viernes 23 de octubre al domingo 1 de noviembre*
 
 ### Lo siguiente que hay que hacer
 
-1. **Que Iban suba la 1.11.11 (26) / vc80**:
-   `apps/mobile/builds/corrr-v1.11.11-vc80.aab` y el archivo
-   `CORRR-1.11.11-build26.xcarchive` en Organizer. **Las builds las lanzo YO; él
-   las recoge y las sube.** Lleva los fantasmas, la calabaza nueva y la carrera
-   que se guarda en el móvil antes de mandarla.
+1. **Que Iban suba la 1.11.11 (28) / vc81**:
+   `apps/mobile/builds/corrr-v1.11.11-vc81.aab` y el archivo
+   `CORRR-1.11.11-build28.xcarchive` en Organizer. **Las builds las lanzo YO; él
+   las recoge y las sube.** Lleva los fantasmas, la calabaza nueva, la carrera
+   que se guarda en el móvil antes de mandarla y las calabazas y fantasmas que
+   se esconden al alejar el mapa.
+   Las dos pasadas por `node apps/mobile/scripts/comprobar-paquete.mjs`.
 2. **Que la pruebe**: pisar un fantasma y ver qué le toca, que el resumen los
    enseñe uno por línea, y una carrera larga cerrando el círculo (a ver si el
    cuelgue de Oriol15 ha desaparecido).
@@ -39,7 +41,8 @@ Calabazas en el mapa · 10+10 mensajes de Halloween y selector rehecho · pantal
 de Retos con el cartel del evento · detector automático de carrera en Android ·
 ficha del corredor (ranking y mapa, la misma) · resumen de administración ·
 el cartel de robo dice quién fue · historial "te han robado" en Stats · colores
-que no se repiten · territorio que deja ver las calles · y los arreglos de
+que no se repiten · territorio que deja ver las calles · calabazas y fantasmas
+que se esconden al alejar el mapa, igual que el territorio · y los arreglos de
 puntos partidos, vueltas grandes sin rellenar y calabazas que tardaban 18 s.
 
 ### Para DESPUÉS de Halloween
@@ -285,7 +288,9 @@ verdad, compilar en **Release** (lleva el código dentro y no necesita nada):
   (ignorado por git) y en el gestor de contraseñas del usuario. El keystore es **PKCS12**:
   una sola contraseña, aunque el archivo pida los dos campos. Para cambiarla:
   `keytool -storepasswd -keystore ...` — ojo, `-keypasswd` NO funciona en PKCS12.
-- **Huella del certificado** (para verificar cualquier copia): `74:45:0F:D6:82:05:25:32:...`
+- **Huella del certificado** (para verificar cualquier copia, es la **SHA-256**):
+  `74:45:0F:D6:82:05:25:32:B4:B0:F3:2F:28:22:28:71:62:71:ED:A5:B1:15:42:D2:4B:4B:A8:9D:5E:37:86:5D`.
+  Se saca del propio AAB: `unzip -o x.aab 'META-INF/*.RSA'` y `keytool -printcert -file META-INF/CORRR.RSA`.
 
 **CRÍTICO**: Sin este keystore no puedes firmar AABs nuevos. Backups en ubicación segura.
 

@@ -1092,8 +1092,17 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
   const loadCells = async (lat?: number, lng?: number) => {
     try {
       // Skip when zoomed out — would return thousands of cells and choke the map.
+      //
+      // Las calabazas y los fantasmas se van con el territorio, al mismo
+      // umbral. Antes solo se vaciaba el territorio y ellos se quedaban
+      // colgados de la última carga: al alejar el mapa desaparecía todo lo
+      // conquistado y quedaban las calabazas flotando sobre una ciudad vacía,
+      // además amontonadas unas encima de otras. Se ven donde se ve el
+      // territorio, y si no, no se ven.
       if (currentDelta.current.latDelta > MAX_DELTA_FOR_CELLS) {
         setTerritorio(TERRITORIO_VACIO);
+        objetosRef.current = [];
+        setObjetos([]);
         return;
       }
       const useLat = lat ?? mapRegion.latitude;
@@ -2914,7 +2923,10 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
           {/* Objetos del mapa: se cogen pasando por encima al correr. */}
           {/* Las calabazas solo si Halloween está encendido desde el panel: la
               versión se publica semanas antes del evento. */}
-          {halloweenActivo && objetos.map(o => (
+          {/* `!zoomedOutTooMuch` además de vaciarlos al cargar: entre que se
+              aleja el mapa y termina la recarga hay unos fotogramas en los que
+              el territorio ya no está y ellos todavía sí. */}
+          {halloweenActivo && !zoomedOutTooMuch && objetos.map(o => (
             <Marker
               key={`objeto-${o.id}`}
               coordinate={{
