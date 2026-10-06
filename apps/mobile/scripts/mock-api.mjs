@@ -53,8 +53,18 @@ const RUTAS = {
     { user_id: RIVAL, display_name: 'Lucía M.', city: 'Bilbao', total_points: 28480, total_zones: 87 },
     { user_id: YO, display_name: 'Auditor', city: 'Bilbao', total_points: 18540, total_zones: 41 },
     { user_id: '33333333-3333-3333-3333-333333333333', display_name: 'Dani', city: 'Madrid', total_points: 9120, total_zones: 22 }],
+  // Forma de verdad (el servidor devuelve el LÍDER de cada ciudad). Van con
+  // acentos y con Valencia repetida de las dos formas: es lo que hay en la base
+  // de datos de verdad y es donde se rompe el buscador si está mal hecho.
   'GET /ranking/cities': () => vacio ? [] : [
-    { position: 1, city: 'Bilbao', points: 51000, runners: 12 }, { position: 2, city: 'Madrid', points: 30200, runners: 9 }],
+    { user_id: RIVAL, display_name: 'Lucía M.', city: 'Bilbao', total_points: 51000, total_zones: 120 },
+    { user_id: '33333333-3333-3333-3333-333333333333', display_name: 'Dani', city: 'Madrid', total_points: 30200, total_zones: 90 },
+    { user_id: '44444444-4444-4444-4444-444444444444', display_name: 'Nerea', city: 'A Coruña', total_points: 12000, total_zones: 40 },
+    { user_id: '55555555-5555-5555-5555-555555555555', display_name: 'Pau', city: 'València', total_points: 9000, total_zones: 31 },
+    { user_id: '66666666-6666-6666-6666-666666666666', display_name: 'Marc', city: 'Valencia', total_points: 800, total_zones: 4 },
+    { user_id: '77777777-7777-7777-7777-777777777777', display_name: 'Leire', city: 'Donostia', total_points: 7400, total_zones: 25 },
+    { user_id: '88888888-8888-8888-8888-888888888888', display_name: 'Rocío', city: 'Sevilla', total_points: 6100, total_zones: 19 },
+    { user_id: '99999999-9999-9999-9999-999999999999', display_name: 'Jon', city: 'Vigo', total_points: 2200, total_zones: 8 }],
   'GET /ranking/city': () => vacio ? [] : [
     { user_id: RIVAL, display_name: 'Lucía M.', city: 'Bilbao', total_points: 28480, total_zones: 87 },
     { user_id: YO, display_name: 'Auditor', city: 'Bilbao', total_points: 18540, total_zones: 41 }],
@@ -91,9 +101,15 @@ const RUTAS = {
     texto: 'Del *23 de octubre* al *1 de noviembre* salen calabazas por toda la ciudad.',
     imagen: null, boton: 'Ver el mapa', enlace: null, etiqueta: 'Evento', sello: 'Nuevo', nota: '50 puntos\ncada una' } }),
   'GET /app/notificaciones': () => vacio ? { notificaciones: [], sinVer: 0 } : ({ sinVer: notasVistas ? 0 : 2, notificaciones: [
-    { id: 1, titulo: 'Te han robado', texto: 'Lucía M. se ha quedado *1.240 celdas* tuyas.', creado_at: haceDias(0), vista: false },
-    { id: 2, titulo: 'Te han cercado', texto: 'Han rodeado tu zona y perdiste *800 celdas*.', creado_at: haceDias(1), vista: false },
-    { id: 3, titulo: 'Cerco cobrado', texto: 'Cobraste *4.100 celdas*.', creado_at: haceDias(4), vista: true }] }),
+    { id: 1, titulo: 'Te han robado', nota: '\u22121240\nCELDAS', sello: 'Robo',
+      texto: 'Lucía M. se ha quedado *1.240 celdas* tuyas. Lo que queda dentro de un cerco cambia de dueño: ve a recuperarlo.', creado_at: haceDias(0), vista: false },
+    { id: 2, titulo: 'Te han cercado', nota: '\u2212800\nCELDAS', sello: 'Cercado',
+      texto: 'Lucía M. ha rodeado tu zona y se ha quedado *800 celdas* tuyas. Lo que queda dentro de un cerco cambia de dueño: ve a recuperarlo.', creado_at: haceDias(1), vista: false },
+    { id: 3, titulo: 'Cerco cobrado', nota: '+4100\nCELDAS', sello: 'Territorio',
+      texto: 'Ya vale cerrar una zona *entre varios días*: lo que rodea tu territorio es tuyo. Acabas de cobrar *4.100 celdas* y *6.200 puntos*.', creado_at: haceDias(4), vista: true },
+    // Una vieja, de antes de que se guardara el sello: tiene que verse igual
+    // de bien, solo que sin el número grande.
+    { id: 4, titulo: 'Territorio devuelto', texto: 'Se te ha devuelto el territorio que te quitó una carrera mal registrada.', creado_at: haceDias(9), vista: true }] }),
   'GET /robos': () => vacio ? [] : [
     { id: 'r1', run_id: 'run-1', created_at: haceDias(0), ladron_id: RIVAL, ladron: 'Lucía M.', contestado: false },
     { id: 'r2', run_id: null, created_at: haceDias(5), ladron_id: RIVAL, ladron: 'Lucía M.', contestado: true }],
@@ -104,6 +120,13 @@ const RUTAS = {
   'GET /friends/pending': () => vacio ? [] : [{ id: 'fr1', sender_id: RIVAL, sender_name: 'Lucía M.', created_at: haceDias(1) }],
   'GET /admin/resumen': () => ({ accesosDesde: haceDias(4),
     hoy: { carreras: 6, corredores: 5, han_abierto: 11, altas: 1 },
+    quienes: {
+      corrieron: [{ nombre: 'Lucía M.', carreras: 2, km: '12.4' }, { nombre: 'Dani', carreras: 1, km: '8.0' },
+                  { nombre: 'Auditor', carreras: 1, km: '5.1' }, { nombre: 'Nerea', carreras: 1, km: '0.9' }],
+      robos: [{ ladron: 'Lucía M.', victima: 'Auditor', veces: 3 }, { ladron: 'Dani', victima: 'Lucía M.', veces: 1 }],
+      altas: [{ nombre: 'Jon', ciudad: 'Vigo' }],
+      abrieron: ['Lucía M.', 'Dani', 'Auditor', 'Nerea', 'Pau', 'Leire', 'Rocío', 'Jon'],
+    },
     semana: { altas: 3, carreras: 41, km: '312.4', celdas: 128400 },
     gente: { total: 46, sin_estrenar: 7, dormidos: 9, activos_semana: 18 },
     avisosActivos: 1, correos: [{ campana: 'reactivacion', enviados: 12, salieron: 11 }],

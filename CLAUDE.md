@@ -6,7 +6,7 @@ Instrucciones para Claude trabajando en este repo. Léelo entero antes de tocar 
 
 ## 0. Dónde estamos (leer esto primero)
 
-*Al día a 5-oct-2026, tarde. Si algo de aquí abajo contradice a este apartado, manda este.*
+*Al día a 6-oct-2026, mañana. Si algo de aquí abajo contradice a este apartado, manda este.*
 
 **En las tiendas**: 1.11.10 (Android vc67, iPhone build 17). 46 corredores.
 
@@ -16,12 +16,10 @@ El evento de Halloween va del **viernes 23 de octubre al domingo 1 de noviembre*
 
 ### Lo siguiente que hay que hacer
 
-1. **Que Iban suba la 1.11.11 (28) / vc81**:
-   `apps/mobile/builds/corrr-v1.11.11-vc81.aab` y el archivo
-   `CORRR-1.11.11-build28.xcarchive` en Organizer. **Las builds las lanzo YO; él
-   las recoge y las sube.** Lleva los fantasmas, la calabaza nueva, la carrera
-   que se guarda en el móvil antes de mandarla y las calabazas y fantasmas que
-   se esconden al alejar el mapa.
+1. **Que Iban suba la 1.11.11 (29) / vc82**:
+   `apps/mobile/builds/corrr-v1.11.11-vc82.aab` y el archivo
+   `CORRR-1.11.11-build29.xcarchive` en Organizer. **Las builds las lanzo YO; él
+   las recoge y las sube.** Las vc80/81 y las build 26/27/28 están DESCARTADAS.
    Las dos pasadas por `node apps/mobile/scripts/comprobar-paquete.mjs`.
 2. **Que la pruebe**: pisar un fantasma y ver qué le toca, que el resumen los
    enseñe uno por línea, y una carrera larga cerrando el círculo (a ver si el
@@ -42,8 +40,11 @@ de Retos con el cartel del evento · detector automático de carrera en Android 
 ficha del corredor (ranking y mapa, la misma) · resumen de administración ·
 el cartel de robo dice quién fue · historial "te han robado" en Stats · colores
 que no se repiten · territorio que deja ver las calles · calabazas y fantasmas
-que se esconden al alejar el mapa, igual que el territorio · y los arreglos de
-puntos partidos, vueltas grandes sin rellenar y calabazas que tardaban 18 s.
+que se esconden al alejar el mapa, igual que el territorio · **buscador de
+ciudad** en el mapa · el resumen de administración con NOMBRES (quién ha
+corrido, quién ha robado a quién, altas, quién ha abierto) · la bandeja con el
+número delante en vez de un párrafo · y los arreglos de puntos partidos, vueltas
+grandes sin rellenar, calabazas que tardaban 18 s y el botón de centrar el mapa.
 
 ### Para DESPUÉS de Halloween
 
@@ -388,6 +389,20 @@ verdad, compilar en **Release** (lleva el código dentro y no necesita nada):
 - **El servidor NO tenía ningún límite de peticiones, y el código decía que sí** (hasta el 3-oct-2026): los topes estaban escritos —500/min general, 10 en el login, 3 en "he olvidado mi contraseña", 20 carreras/hora— y **no se aplicaba ninguno**. Se podían probar contraseñas sin parar. La causa: `app.register(...)` **sin `await`**. Fastify no carga el plugin ahí, lo apunta para el arranque; las rutas se declaran justo debajo, o sea ANTES, y el limitador se engancha ruta por ruta al cargarse → no cogió ninguna. No daba error, no se veía en los registros, y el código parecía correcto. **Lección: un límite declarado no es un límite. Hay que medirlo.** Se midió a pelo contra producción —540 peticiones a un endpoint con tope de 500, las 540 contestadas— y se reprodujo en local con las mismas versiones. Arreglado poniendo `await` a los tres plugins. **Si se añade otro plugin de Fastify, va con `await` y se comprueba que hace algo.** Debajo había un segundo fallo: `errorResponseBuilder` no devolvía `statusCode`, así que al pasarse del tope contestaba 500 en vez de 429. Comprobado en producción el 3-oct: corta en el intento 21 de 20, con 429, y el contador baja uno por petición **de cada IP por separado** (o sea, el tope no se comparte entre toda la gente: `trustProxy: true` está haciendo su trabajo).
 - **La app anunciaba las fechas viejas de Halloween** (3-oct-2026, 1.11.11 build 22 / vc76, retiradas): la pantalla de Retos decía *"DEL 29 AL 31 DE OCTUBRE"* y *"HASTA EL 31 DE OCTUBRE"*, de cuando el evento iba a ser el fin de semana de Halloween. El evento es **del 23 de octubre al 1 de noviembre**, y el cartel que se escribe desde el panel sí lo decía bien: la app iba a contradecir al cartel durante los diez días del evento. Esas fechas van ESCRITAS DENTRO de la app, así que no había forma de corregirlas sin otra versión en las tiendas. Salió recorriendo la app contra datos de mentira (§3), no leyendo el código. **Al mover una fecha del juego, buscarla también dentro de la app** — `RetosScreen.tsx` — y no solo en el panel. Lo mismo con los 200 puntos por calabaza: están escritos en esa pantalla y en el panel al sembrarlas; si se cambia en uno hay que cambiarlo en el otro.
 - **La app se cerraba sola al abrirla, en iPhone y en Android** (3-oct-2026, 1.11.11 build 21 / vc75, retiradas): un `useEffect` nuevo —el de las notas sin ver— quedó escrito DEBAJO de los `return` de `App.tsx` (versión caducada, pantalla de carga, pantalla de bienvenida). React cuenta los hooks que ejecuta en cada pintada y exige que siempre sean los mismos: mientras cargaba se ejecutaban 14 y, en cuanto restauraba la sesión guardada, 15 → `Error: Rendered more hooks than during the previous render` y la app abajo, en las dos plataformas. Lo peor es cómo se esconde: **recién instalada funcionaba** —nunca pasaba del `return` de bienvenida—, así que en el emulador parecía sana; solo se cae a quien ya tiene sesión, o sea a todo el mundo menos a quien la acaba de instalar. Ni TypeScript ni el compilador dicen nada. Arreglado subiendo el hook con los demás, y con `npm run test:hooks` (`scripts/hooks-check.mjs`, ya dentro de `npm run test:gps`), que busca hooks detrás de un `return`. **Regla: TODOS los hooks van arriba del todo, antes del primer `return` — sin excepciones.** Y antes de dar una build por buena, probar el arranque CON SESIÓN, no solo recién instalada (§3).
+- **Un `catch {}` vacío convirtió un fallo en silencio durante meses** (botón de
+  centrar el mapa, arreglado el 6-oct-2026): el botón hacía
+  `getCurrentPositionAsync({ accuracy: High })` dentro de un `try` con el `catch`
+  vacío. Tres caminos acababan igual —sin permiso, GPS frío bajo techo, o la
+  lectura que no llega nunca— y en los tres **no pasaba nada y nadie lo decía**:
+  ni error, ni aviso, ni señal de que estuviera trabajando. Desde fuera se veía
+  como "a veces no funciona". Arreglado con cuatro cosas, y las cuatro hacen
+  falta: pedir primero `getLastKnownPositionAsync` (instantáneo, el mapa se mueve
+  ya), `Balanced` en vez de `High` (para centrar un mapa de 1,3 km sobran 100 m
+  de precisión y llega mucho antes), un reloj de 10 s con `conTiempo` para que un
+  `await` que no vuelve no deje la app esperando para siempre, y un aviso cuando
+  de verdad no se puede. **Regla: un `catch {}` vacío en algo que el usuario ha
+  PULSADO es un fallo**; si no se puede hacer, hay que decirlo, y mientras se
+  intenta hay que verse.
 - **MapView con `display:'none'`**: en versiones < 1.10.0 ocultaba el mapa durante el run pero al volver visible RN-Maps no refrescaba los polígonos. Solución: Modal absoluto encima, no `display:'none'`.
 - **`pathSegments` no limpiado en stopRun**: dejaba dashes naranjas sobre las celdas tras la carrera. Limpiar siempre.
 - **JWT_ACCESS_SECRET vacío**: `TextEncoder().encode(undefined)` produce secret literal "undefined" → cualquiera firma tokens. Fail-fast SIEMPRE si missing.
