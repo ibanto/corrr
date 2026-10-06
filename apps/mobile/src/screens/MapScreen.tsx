@@ -37,6 +37,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { colors, spacing, radius } from '../theme';
 import { api, RemoteZone, MapTerritory, ObjetoMapa, TauntInbox, CellRunPayload } from '../services/api';
 import ZonePopup, { PopupType } from '../components/ZonePopup';
+import BuscadorCiudad from '../components/BuscadorCiudad';
 import ShareRunCard, { ShareRunData, ShareSteal } from '../components/ShareRunCard';
 import { randomSharePhrase } from '../data/sharePhrases';
 import TauntSelector, { getTauntFullImage } from '../components/TauntSelector';
@@ -222,6 +223,20 @@ const MAX_DELTA_FOR_ZONES = 0.15;
 const MAX_DELTA_FOR_CELLS = 0.05;
 
 const TERRITORIO_VACIO: MapTerritory = { duenos: [], tiras: [] };
+
+/** Espera a una promesa, pero no para siempre.
+ *
+ *  `getCurrentPositionAsync` puede quedarse colgado sin resolver ni fallar —
+ *  dentro de un edificio, con el GPS frío o con el ahorro de batería a tope—,
+ *  y entonces el `await` no vuelve nunca y quien ha pulsado no ve NADA.
+ *  Devuelve null al agotarse el tiempo, que es un resultado como otro
+ *  cualquiera y se puede contar. */
+function conTiempo<T>(promesa: Promise<T>, ms: number): Promise<T | null> {
+  return Promise.race([
+    promesa.catch(() => null),
+    new Promise<null>(resolver => setTimeout(() => resolver(null), ms)),
+  ]);
+}
 
 /** Ray-casting point-in-polygon. */
 function pointInPolygonLatLng(lat: number, lng: number, poly: { latitude: number; longitude: number }[]): boolean {
@@ -786,6 +801,14 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
   // la respuesta a decenas de MB.
   const ownerAvatarsRef = useRef<Record<string, string | null>>({});
   const [zoomedOutTooMuch, setZoomedOutTooMuch] = useState(false);
+  /** El botón de centrar está buscándote. Sin esto no se distingue "no ha
+      funcionado" de "está tardando", que es justo lo que pasaba. */
+  const [centrando, setCentrando] = useState(false);
+  const [buscadorAbierto, setBuscadorAbierto] = useState(false);
+  /** La ciudad que estás MIRANDO, si no es la tuya. Solo para el cartelito:
+      `cityName` no se toca porque es la que se guarda con la carrera, y mirar
+      Madrid un momento no puede hacer que tu carrera salga en Madrid. */
+  const [ciudadMirando, setCiudadMirando] = useState<string | null>(null);
   const [speedWarning, setSpeedWarning] = useState(false);
   // Aviso de señal: si durante la carrera no entra ningún punto válido, el
   // cronómetro corre pero no se registra NADA, y el usuario no se entera hasta
@@ -946,6 +969,69 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       latitudeDelta: 0.012,
       longitudeDelta: 0.012,
     };
+    setMapRegion(region);
+    mapRef.current?.animateToRegion(region, 800);
+  };
+
+  /** El botón de "llévame a mi sitio".
+   *
+   *  Antes era `getCurrentPositionAsync({ High })` dentro de un `try/catch {}`
+   *  vacío: si el GPS tardaba, si no había permiso o si la lectura no llegaba
+   *  nunca, el botón se quedaba mudo. Eso es lo que se veía como "a veces no
+   *  funciona" — no fallaba, es que no contestaba y nadie lo decía.
+   *
+   *  Ahora: se mueve YA con lo último que sabe el móvil, afina después, y si
+   *  no hay forma, lo dice. `Balanced` en vez de `High` porque para centrar un
+   *  mapa de 1,3 km de ancho sobran 100 m de precisión y llega mucho antes. */
+  const irAMiUbicacion = async () => {
+    if (centrando) return;          // doble toque: el segundo no hace nada
+    setCentrando(true);
+    setCiudadMirando(null);         // vuelves a lo tuyo: fuera el cartelito
+    try {
+      if (!(await ensureForegroundPermission())) {
+        Alert.alert(
+          'CORRR no sabe dónde estás',
+          'Para llevarte a tu sitio del mapa necesita el permiso de ubicación. '
+          + 'Se le da en los ajustes del móvil, en los permisos de CORRR.',
+        );
+        return;
+      }
+
+      // Lo último que sabe el móvil es instantáneo y casi siempre vale: el
+      // mapa se mueve en el acto en vez de dejarte mirando una pantalla
+      // quieta mientras el GPS despierta.
+      const ultima = await conTiempo(Location.getLastKnownPositionAsync(), 2000);
+      if (ultima) centerOnUser(ultima.coords.latitude, ultima.coords.longitude);
+
+      const precisa = await conTiempo(
+        Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }),
+        10000,
+      );
+      if (precisa) {
+        centerOnUser(precisa.coords.latitude, precisa.coords.longitude);
+        reverseGeocode(precisa.coords.latitude, precisa.coords.longitude);
+      } else if (!ultima) {
+        Alert.alert(
+          'No se encuentra tu ubicación',
+          'El GPS no contesta. Suele pasar bajo techo: sal a cielo abierto o '
+          + 'inténtalo otra vez en un momento.',
+        );
+      }
+      // Si la precisa no llegó pero la última sí, el mapa ya se ha movido:
+      // no se avisa de nada, porque desde fuera ha funcionado.
+    } finally {
+      setCentrando(false);
+    }
+  };
+
+  /** Llevar el mapa a otra ciudad desde el buscador.
+   *
+   *  0,03 de ancho (unos 3 km) a propósito: por debajo del tope que esconde el
+   *  territorio (MAX_DELTA_FOR_CELLS), así se llega viendo las celdas y no un
+   *  mapa gris con el cartel de "acércate". */
+  const irACiudad = (ciudad: string, lat: number, lng: number) => {
+    const region = { latitude: lat, longitude: lng, latitudeDelta: 0.03, longitudeDelta: 0.03 };
+    setCiudadMirando(ciudad);
     setMapRegion(region);
     mapRef.current?.animateToRegion(region, 800);
   };
@@ -2722,6 +2808,12 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         conAmigo
       />
 
+      <BuscadorCiudad
+        visible={buscadorAbierto}
+        onClose={() => setBuscadorAbierto(false)}
+        onIr={irACiudad}
+      />
+
       <View style={styles.header}>
         {/* numberOfLines + el flex del contenedor son lo que impide que un
             nombre largo ("Sant Cugat del Vallès") empuje el botón de refrescar
@@ -2965,16 +3057,36 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
 
         {/* Botón centrar en mi ubicación (oculto mientras corres, el mapa ya te sigue) */}
         {!isRunning && (
+          <>
+            <TouchableOpacity
+              style={[styles.centerBtn, styles.buscarBtn]}
+              onPress={() => setBuscadorAbierto(true)}
+            >
+              <Ionicons name="search" size={20} color={colors.orange} />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.centerBtn}
+              onPress={irAMiUbicacion}
+              disabled={centrando}
+            >
+              {centrando
+                ? <ActivityIndicator size="small" color={colors.orange} />
+                : <Ionicons name="locate" size={22} color={colors.orange} />}
+            </TouchableOpacity>
+          </>
+        )}
+
+        {/* Estás mirando otra ciudad. Sin esto, el mapa enseña un sitio que no
+            es el tuyo y no hay forma de saber cuál ni cómo volver. */}
+        {ciudadMirando && !isRunning && (
           <TouchableOpacity
-            style={styles.centerBtn}
-            onPress={async () => {
-              try {
-                const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
-                centerOnUser(loc.coords.latitude, loc.coords.longitude);
-              } catch {}
-            }}
+            style={styles.mirandoBanner}
+            onPress={() => { setCiudadMirando(null); irAMiUbicacion(); }}
+            activeOpacity={0.85}
           >
-            <Ionicons name="locate" size={22} color={colors.orange} />
+            <Ionicons name="eye-outline" size={15} color={colors.orange} />
+            <Text style={styles.mirandoTexto} numberOfLines={1}>{ciudadMirando}</Text>
+            <Text style={styles.mirandoVolver}>VOLVER A LO MÍO</Text>
           </TouchableOpacity>
         )}
 
@@ -3413,6 +3525,18 @@ const styles = StyleSheet.create({
     shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 4,
     elevation: 4,
   },
+  // El de buscar va justo encima del de centrar, mismo tamaño y misma columna.
+  buscarBtn: { bottom: spacing.md + 44 + spacing.sm },
+  mirandoBanner: {
+    position: 'absolute', top: spacing.md, alignSelf: 'center',
+    flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
+    paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
+    backgroundColor: colors.bgCard, borderRadius: radius.full,
+    borderWidth: 1, borderColor: colors.orange,
+    maxWidth: '92%',
+  },
+  mirandoTexto: { color: colors.textPrimary, fontSize: 13, fontWeight: '800', flexShrink: 1 },
+  mirandoVolver: { color: colors.orange, fontSize: 10, fontWeight: '900', letterSpacing: 0.5 },
   loopBanner: {
     position: 'absolute', top: spacing.md, left: spacing.md, right: spacing.md,
     backgroundColor: 'rgba(34,197,94,0.15)', borderRadius: radius.full,
