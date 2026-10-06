@@ -126,6 +126,9 @@ export type Notificacion = {
   texto: string;
   creado_at: string;
   vista: boolean;
+  /** El sello grande del cartel: "−28\nCELDAS". Puede faltar en notas viejas. */
+  nota?: string | null;
+  sello?: string | null;
 };
 
 /** Un robo que me han hecho: quién, cuándo y si ya le he contestado. */
@@ -179,6 +182,13 @@ interface ResumenAdmin {
   /** Desde cuándo se guardan los accesos (empezó el 29-sep-2026). */
   accesosDesde: string | null;
   hoy: { carreras: number; corredores: number; han_abierto: number; altas: number };
+  /** Lo mismo que `hoy`, pero con nombres: los números solos no dejan hacer nada. */
+  quienes?: {
+    corrieron: { nombre: string; carreras: number; km: string | number }[];
+    robos: { ladron: string; victima: string; veces: number }[];
+    altas: { nombre: string; ciudad: string | null }[];
+    abrieron: string[];
+  };
   semana: { altas: number; carreras: number; km: string | number; celdas: number };
   gente: { total: number; sin_estrenar: number; dormidos: number; activos_semana: number };
   avisosActivos: number;

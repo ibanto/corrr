@@ -15,6 +15,9 @@ import { api, ResumenAdmin as Resumen } from '../services/api';
  */
 
 const numero = (n: number | string) => Math.round(Number(n)).toLocaleString('es-ES');
+/** Los kilómetros con un decimal: redondearlos a entero deja "0 km" en una
+ *  carrera de 900 m, que parece un fallo. */
+const km = (n: number | string) => Number(n).toLocaleString('es-ES', { maximumFractionDigits: 1 });
 
 /** "hace 3 días", "hoy", "nunca". */
 function desde(iso: string | null): string {
@@ -65,6 +68,58 @@ export default function ResumenAdminPanel() {
             <Cifra valor={numero(datos.hoy.han_abierto)} etiqueta="HAN ABIERTO" />
             <Cifra valor={numero(datos.hoy.altas)} etiqueta="ALTAS" />
           </View>
+
+          {/* Los cuatro números de arriba dicen CUÁNTOS y ahí se acaban. Con el
+              nombre se puede hacer algo: escribirle, picarle, o simplemente
+              saber quién está jugando hoy. Es lo que pidió Iban. */}
+          {datos.quienes && datos.quienes.corrieron.length > 0 && (
+            <>
+              <Text style={styles.seccion}>QUIÉN HA CORRIDO HOY</Text>
+              {datos.quienes.corrieron.map(c => (
+                <View key={c.nombre} style={styles.flojo}>
+                  <Text style={styles.flojoNombre} numberOfLines={1}>{c.nombre}</Text>
+                  <Text style={styles.flojoDato}>
+                    {c.carreras} carrera{c.carreras === 1 ? '' : 's'} · {km(c.km)} km
+                  </Text>
+                </View>
+              ))}
+            </>
+          )}
+
+          {datos.quienes && datos.quienes.robos.length > 0 && (
+            <>
+              <Text style={styles.seccion}>QUIÉN HA ROBADO HOY</Text>
+              {datos.quienes.robos.map((r, i) => (
+                <View key={i} style={styles.flojo}>
+                  <Text style={styles.flojoNombre} numberOfLines={1}>
+                    {r.ladron} <Text style={styles.flecha}>→</Text> {r.victima}
+                  </Text>
+                  <Text style={styles.flojoDato}>
+                    {r.veces} {r.veces === 1 ? 'vez' : 'veces'}
+                  </Text>
+                </View>
+              ))}
+            </>
+          )}
+
+          {datos.quienes && datos.quienes.altas.length > 0 && (
+            <>
+              <Text style={styles.seccion}>SE HAN DADO DE ALTA HOY</Text>
+              {datos.quienes.altas.map((a, i) => (
+                <View key={i} style={styles.flojo}>
+                  <Text style={styles.flojoNombre} numberOfLines={1}>{a.nombre}</Text>
+                  <Text style={styles.flojoDato}>{a.ciudad || 'sin ciudad'}</Text>
+                </View>
+              ))}
+            </>
+          )}
+
+          {datos.quienes && datos.quienes.abrieron.length > 0 && (
+            <>
+              <Text style={styles.seccion}>HAN ABIERTO LA APP HOY</Text>
+              <Text style={styles.suelto}>{datos.quienes.abrieron.join(' · ')}</Text>
+            </>
+          )}
 
           <Text style={styles.seccion}>ESTA SEMANA</Text>
           <View style={styles.fila}>
@@ -153,6 +208,7 @@ const styles = StyleSheet.create({
   },
   flojoNombre: { color: colors.textPrimary, fontSize: 14, fontWeight: '700', flexShrink: 1 },
   flojoDato: { color: colors.textSecondary, fontSize: 12 },
+  flecha: { color: colors.orange, fontWeight: '900' },
 
   suelto: { color: colors.textSecondary, fontSize: 12, marginTop: 4 },
 

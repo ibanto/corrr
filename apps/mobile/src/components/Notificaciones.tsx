@@ -17,6 +17,16 @@ import { api, Notificacion } from '../services/api';
 
 const CORTE = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
 
+/** El sello del cartel viene como "−28\nCELDAS": número arriba, unidad abajo.
+ *  El signo decide el color, que es lo que se ve antes de leer nada: rojo si
+ *  pierdes, verde si ganas. El menos es el de verdad (U+2212), no el guion. */
+function sello(nota?: string | null): { cifra: string; unidad: string; malo: boolean } | null {
+  if (!nota) return null;
+  const [cifra, ...resto] = nota.split('\n');
+  if (!cifra) return null;
+  return { cifra: cifra.trim(), unidad: resto.join(' ').trim(), malo: /^[−-]/.test(cifra.trim()) };
+}
+
 /** "hace 2 horas", "ayer", "el 28 de sep". */
 function cuando(iso: string): string {
   const min = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
@@ -45,6 +55,9 @@ interface Props {
 export default function Notificaciones({ visible, onClose }: Props) {
   const [lista, setLista] = useState<Notificacion[]>([]);
   const [cargando, setCargando] = useState(false);
+  /** Cuáles están desplegadas. El texto entero sigue estando: se toca la nota
+      y se abre. Lo que cambia es que ya no hay que leerlo para enterarse. */
+  const [abiertas, setAbiertas] = useState<Set<number>>(new Set());
 
   useEffect(() => {
     if (!visible) return;
@@ -76,15 +89,45 @@ export default function Notificaciones({ visible, onClose }: Props) {
           </View>
         ) : (
           <ScrollView contentContainerStyle={styles.lista}>
-            {lista.map(n => (
-              <View key={n.id} style={[styles.nota, !n.vista && styles.notaNueva]}>
-                <View style={styles.notaCabecera}>
-                  <Text style={styles.notaTitulo}>{n.titulo}</Text>
-                  <Text style={styles.notaCuando}>{cuando(n.creado_at)}</Text>
-                </View>
-                <Text style={styles.notaTexto}>{conResaltes(n.texto)}</Text>
-              </View>
-            ))}
+            {lista.map(n => {
+              const s = sello(n.nota);
+              const abierta = abiertas.has(n.id);
+              return (
+                <TouchableOpacity
+                  key={n.id}
+                  style={[styles.nota, !n.vista && styles.notaNueva]}
+                  activeOpacity={0.85}
+                  onPress={() => setAbiertas(prev => {
+                    const c = new Set(prev);
+                    c.has(n.id) ? c.delete(n.id) : c.add(n.id);
+                    return c;
+                  })}
+                >
+                  {/* El número primero y grande. Antes esto era un párrafo de
+                      tres líneas por nota y con diez notas no se veía nada:
+                      había que leerlas todas para saber si te habían quitado
+                      veinte celdas o seis mil. */}
+                  {s && (
+                    <View style={[styles.sello, s.malo ? styles.selloMalo : styles.selloBueno]}>
+                      <Text
+                        style={[styles.selloCifra, s.malo ? styles.textoMalo : styles.textoBueno]}
+                        numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.4}
+                      >{s.cifra}</Text>
+                      <Text style={styles.selloUnidad}>{s.unidad}</Text>
+                    </View>
+                  )}
+                  <View style={styles.notaCuerpo}>
+                    <View style={styles.notaCabecera}>
+                      <Text style={styles.notaTitulo} numberOfLines={1}>{n.titulo}</Text>
+                      <Text style={styles.notaCuando}>{cuando(n.creado_at)}</Text>
+                    </View>
+                    <Text style={styles.notaTexto} numberOfLines={abierta ? undefined : 2}>
+                      {conResaltes(n.texto)}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
           </ScrollView>
         )}
       </View>
@@ -105,9 +148,21 @@ const styles = StyleSheet.create({
   vacio: { color: colors.textSecondary, fontSize: 14, textAlign: 'center', lineHeight: 21 },
   lista: { padding: spacing.md, gap: spacing.sm },
   nota: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.md,
     backgroundColor: colors.bgCard, borderRadius: radius.lg,
     borderWidth: 1, borderColor: colors.border, padding: spacing.md,
   },
+  notaCuerpo: { flex: 1 },
+  sello: {
+    width: 74, paddingVertical: spacing.sm, paddingHorizontal: 4,
+    borderRadius: radius.md, borderWidth: 1, alignItems: 'center',
+  },
+  selloMalo: { backgroundColor: 'rgba(239, 68, 68, 0.10)', borderColor: 'rgba(239, 68, 68, 0.35)' },
+  selloBueno: { backgroundColor: 'rgba(34, 197, 94, 0.10)', borderColor: 'rgba(34, 197, 94, 0.35)' },
+  selloCifra: { fontSize: 20, fontWeight: '900' },
+  textoMalo: { color: colors.danger },
+  textoBueno: { color: colors.success },
+  selloUnidad: { color: colors.textSecondary, fontSize: 8, letterSpacing: 1, marginTop: 2 },
   // Un filo naranja a la izquierda en las que aún no has visto. Sin globos ni
   // "NUEVO": se nota de un vistazo y no grita.
   notaNueva: { borderLeftWidth: 3, borderLeftColor: colors.orange },

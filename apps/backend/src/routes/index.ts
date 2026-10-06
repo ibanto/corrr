@@ -5583,6 +5583,52 @@ app.get('/admin/resumen', { preHandler: [requireAuth, requireAdminApp] }, async 
     db.query(`SELECT COUNT(*)::int AS n FROM runs WHERE flagged_reason IS NOT NULL AND created_at >= NOW() - INTERVAL '30 days'`),
   ]);
 
+  // Los números de arriba dicen CUÁNTOS, y eso no sirve para hacer nada. Con
+  // el nombre sí: se le puede escribir, picar o simplemente saber quién está
+  // jugando hoy. El ejército y las cuentas de prueba quedan fuera, igual que
+  // en los contadores: aquí se mira a la gente.
+  const NO_PRUEBA = `NOT u.es_bot AND u.email NOT ILIKE '%@corrr.es' AND u.email NOT ILIKE '%+googletest@%'`;
+
+  const [corrieron, robos, altasHoy, abrieron] = await Promise.all([
+    db.query(
+      `SELECT u.display_name AS nombre, COUNT(*)::int AS carreras,
+              COALESCE(ROUND(SUM(r.distance_km)::numeric, 1), 0) AS km
+         FROM runs r JOIN users u ON u.id = r.user_id
+        WHERE (r.created_at AT TIME ZONE 'Europe/Madrid')::date = (NOW() AT TIME ZONE 'Europe/Madrid')::date
+          AND ${NO_PRUEBA}
+        GROUP BY u.display_name
+        ORDER BY SUM(r.distance_km) DESC NULLS LAST
+        LIMIT 20`),
+    // Un robo es una fila de 'robo_notif': ladrón, víctima y la carrera en la
+    // que pasó. Se agrupa por pareja porque "KarolK le ha robado 3 veces a
+    // Ibanto" se lee mejor que tres líneas iguales.
+    //
+    // Aquí NO se filtra el ejército, al revés que arriba: si algún día empieza
+    // a robar, es precisamente lo que hay que ver.
+    db.query(
+      `SELECT l.display_name AS ladron, v.display_name AS victima, COUNT(*)::int AS veces
+         FROM taunts t
+         JOIN users l ON l.id = t.from_user_id
+         JOIN users v ON v.id = t.to_user_id
+        WHERE t.mode = 'robo_notif'
+          AND (t.created_at AT TIME ZONE 'Europe/Madrid')::date = (NOW() AT TIME ZONE 'Europe/Madrid')::date
+        GROUP BY 1, 2
+        ORDER BY veces DESC
+        LIMIT 20`),
+    db.query(
+      `SELECT u.display_name AS nombre, u.city AS ciudad
+         FROM users u
+        WHERE (u.created_at AT TIME ZONE 'Europe/Madrid')::date = (NOW() AT TIME ZONE 'Europe/Madrid')::date
+          AND ${NO_PRUEBA}
+        ORDER BY u.created_at DESC LIMIT 20`),
+    db.query(
+      `SELECT u.display_name AS nombre
+         FROM users u
+        WHERE (u.ultimo_acceso_at AT TIME ZONE 'Europe/Madrid')::date = (NOW() AT TIME ZONE 'Europe/Madrid')::date
+          AND ${NO_PRUEBA}
+        ORDER BY u.ultimo_acceso_at DESC LIMIT 30`),
+  ]);
+
   // Quién se está descolgando: entró pero lleva sin correr. Con nombre, para
   // poder escribirle o picarle; sin email ni ubicación.
   const { rows: flojos } = await db.query(
@@ -5615,6 +5661,13 @@ app.get('/admin/resumen', { preHandler: [requireAuth, requireAdminApp] }, async 
     // semana, "cuántos entran" se queda corto y hay que decirlo.
     accesosDesde: desdeCuando[0]?.desde ? new Date(desdeCuando[0].desde).toISOString() : null,
     hoy: hoy.rows[0],
+    // Los mismos datos de "hoy", pero con nombre y apellidos.
+    quienes: {
+      corrieron: corrieron.rows,
+      robos: robos.rows,
+      altas: altasHoy.rows,
+      abrieron: abrieron.rows.map((r: any) => r.nombre),
+    },
     semana: semana.rows[0],
     gente: gente.rows[0],
     avisosActivos: avisos.rows[0].activos,
@@ -5974,7 +6027,10 @@ app.get('/app/aviso', { preHandler: requireAuth }, async (req: any, reply) => {
  *  verdad, que son los que escribe Iban para todo el mundo. */
 app.get('/app/notificaciones', { preHandler: requireAuth }, async (req: any, reply) => {
   const { rows } = await db.query(
-    `SELECT a.id, a.titulo, a.texto, a.creado_at,
+    // `nota` es el sello grande del cartel ("−28\nCELDAS"): ya se guardaba y
+    // la bandeja no lo pedía, así que cada nota era un párrafo y nada más.
+    // Con el número delante se lee de un vistazo quién y cuánto.
+    `SELECT a.id, a.titulo, a.texto, a.creado_at, a.nota, a.sello,
             EXISTS (SELECT 1 FROM aviso_vistas v WHERE v.aviso_id = a.id AND v.user_id = $1) AS vista
        FROM avisos a, users u
       WHERE u.id = $1 AND a.automatico
