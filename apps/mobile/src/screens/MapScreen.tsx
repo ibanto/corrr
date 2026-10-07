@@ -224,6 +224,108 @@ const MAX_DELTA_FOR_CELLS = 0.05;
 
 const TERRITORIO_VACIO: MapTerritory = { duenos: [], tiras: [] };
 
+/** Lo que se pinta en el mapa: una calabaza suelta, o un montón con cuántas
+ *  lleva dentro. */
+type GrupoObjetos = {
+  clave: string;
+  lat: number;
+  lng: number;
+  tipo: string;
+  cuantos: number;
+  /** El objeto, solo cuando el grupo es de uno: es el que se puede señalar. */
+  solo: ObjetoMapa | null;
+};
+
+/** Ancho de la chincheta en píxeles, con aire. El dibujo mide 38 y el número
+ *  le saca otros 7 por la derecha; el resto es el margen para que dos montones
+ *  de casillas vecinas no se rocen. La cuenta se hace en PÍXELES y no en
+ *  metros porque lo que se tapa se tapa en pantalla, no en el mundo. */
+const ANCHO_CHINCHETA = 56;
+
+/** Cuánto se arrastra un montón hacia el centro de su casilla.
+ *
+ *  Sin esto, dos montones de casillas vecinas pueden caer pegados al borde que
+ *  comparten y salir uno encima del otro — justo lo que se venía a arreglar.
+ *  Con 0,7 la distancia mínima entre dos montones es el 70% de la casilla
+ *  (unos 39 px, el ancho del dibujo) y aun así cada uno se queda cerca de
+ *  donde están de verdad sus calabazas. A 1 no se tocarían nunca, pero
+ *  quedarían clavados en una cuadrícula y se notaría. */
+const ARRASTRE_AL_CENTRO = 0.7;
+
+/** Junta en uno los objetos que se taparían unos a otros.
+ *
+ *  Al alejar el mapa, veinte calabazas del mismo barrio caen en el mismo
+ *  puñado de píxeles y salen amontonadas: no se ve ninguna entera y no hay
+ *  forma de saber cuántas son ("quedan apelotonadas", Iban, 7-oct). Se parte
+ *  el mapa en casillas del tamaño de una chincheta y lo que cae en la misma
+ *  casilla sale como un montón con el número.
+ *
+ *  La casilla se mide en PANTALLA, así que al acercarte se encoge y los grupos
+ *  se deshacen solos. De cerca no agrupa nada, que es como tiene que ser: ahí
+ *  la calabaza es un sitio al que ir, no una estadística. */
+function agruparObjetos(
+  objetos: ObjetoMapa[],
+  lngDelta: number,
+  anchoPantalla: number,
+): GrupoObjetos[] {
+  if (objetos.length === 0) return [];
+  // Cuántas celdas de 10 m ocupa una chincheta a este zoom.
+  const celdasPorChincheta = (ANCHO_CHINCHETA / anchoPantalla) * (lngDelta / CELL_LNG_DEG);
+  // Por debajo de una celda no hay nada que agrupar: dos objetos nunca
+  // comparten celda, así que el bucle solo daría trabajo para nada.
+  if (celdasPorChincheta <= 1) {
+    return objetos.map(o => ({
+      clave: `o${o.id}`,
+      lat: (o.y + 0.5) * CELL_LAT_DEG,
+      lng: (o.x + 0.5) * CELL_LNG_DEG,
+      tipo: o.tipo,
+      cuantos: 1,
+      solo: o,
+    }));
+  }
+  const paso = Math.ceil(celdasPorChincheta);
+  const cajas = new Map<string, ObjetoMapa[]>();
+  for (const o of objetos) {
+    const k = `${Math.floor(o.x / paso)},${Math.floor(o.y / paso)}`;
+    const v = cajas.get(k);
+    if (v) v.push(o); else cajas.set(k, [o]);
+  }
+  const grupos: GrupoObjetos[] = [];
+  for (const [k, v] of cajas) {
+    if (v.length === 1) {
+      const o = v[0];
+      grupos.push({
+        clave: `o${o.id}`,
+        lat: (o.y + 0.5) * CELL_LAT_DEG,
+        lng: (o.x + 0.5) * CELL_LNG_DEG,
+        tipo: o.tipo,
+        cuantos: 1,
+        solo: o,
+      });
+      continue;
+    }
+    // El montón se pone en el medio de lo que lleva dentro —arrastrado hacia el
+    // centro de su casilla— y enseña el dibujo de lo que más hay: un montón de
+    // calabazas con cara de fantasma engaña.
+    let sx = 0, sy = 0, calabazas = 0;
+    for (const o of v) { sx += o.x; sy += o.y; if (o.tipo === 'calabaza') calabazas++; }
+    const [cx, cy] = k.split(',').map(Number);
+    const centroX = (cx + 0.5) * paso;
+    const centroY = (cy + 0.5) * paso;
+    const mezcla = (medio: number, centro: number) =>
+      medio + (centro - medio) * ARRASTRE_AL_CENTRO;
+    grupos.push({
+      clave: `g${k}`,
+      lat: (mezcla(sy / v.length, centroY) + 0.5) * CELL_LAT_DEG,
+      lng: (mezcla(sx / v.length, centroX) + 0.5) * CELL_LNG_DEG,
+      tipo: calabazas >= v.length - calabazas ? 'calabaza' : 'fantasma',
+      cuantos: v.length,
+      solo: null,
+    });
+  }
+  return grupos;
+}
+
 /** Espera a una promesa, pero no para siempre.
  *
  *  `getCurrentPositionAsync` puede quedarse colgado sin resolver ni fallar —
@@ -804,6 +906,10 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
   /** El botón de centrar está buscándote. Sin esto no se distingue "no ha
       funcionado" de "está tardando", que es justo lo que pasaba. */
   const [centrando, setCentrando] = useState(false);
+  /** El zoom, redondeado a escalones, para agrupar las calabazas al pintar.
+   *  Redondeado a propósito: `currentDelta` es una referencia y no repinta, y
+   *  guardar el valor exacto repintaría el mapa en cada fotograma del gesto. */
+  const [escalonZoom, setEscalonZoom] = useState(0);
   const [buscadorAbierto, setBuscadorAbierto] = useState(false);
   /** La ciudad que estás MIRANDO, si no es la tuya. Solo para el cartelito:
       `cityName` no se toca porque es la que se guarda con la carrera, y mirar
@@ -1118,12 +1224,23 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
   // se puede dar en cualquier momento desde el panel, y nadie cierra la app del
   // todo para enterarse: si solo se mirara al arrancar, quien la tuviera en
   // segundo plano no vería las calabazas aparecer.
+  /** Las calabazas y los fantasmas ya agrupados, listos para pintar. Depende
+   *  del escalón de zoom, no del zoom exacto: así no se rehace mientras mueves
+   *  el dedo. */
+  const gruposObjetos = useMemo(
+    () => agruparObjetos(objetos, Math.pow(1.4, escalonZoom), Dimensions.get('window').width),
+    [objetos, escalonZoom],
+  );
+
+  // Va por `gruposObjetos` y no por `objetos`: al cambiar el zoom se rehacen
+  // los montones, nacen chinchetas nuevas, y en Android una chincheta con una
+  // imagen dentro necesita ese margen o se queda en blanco (§9 del CLAUDE.md).
   useEffect(() => {
-    if (objetos.length === 0) return;
+    if (gruposObjetos.length === 0) return;
     setObjetosEnDirecto(true);
     const t = setTimeout(() => setObjetosEnDirecto(false), 1500);
     return () => clearTimeout(t);
-  }, [objetos]);
+  }, [gruposObjetos]);
 
   useEffect(() => {
     loadUserXP();
@@ -2895,6 +3012,9 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
             // desaparecía del mapa sin que se mostrase ningún mensaje, y el
             // usuario solo veía esfumarse lo que había conquistado.
             setZoomedOutTooMuch(region.latitudeDelta > MAX_DELTA_FOR_CELLS);
+            // Escalones de 1,4×: el agrupado solo se rehace cuando el zoom
+            // cambia de verdad, no en cada pellizco.
+            setEscalonZoom(Math.round(Math.log(region.longitudeDelta) / Math.log(1.4)));
 
             // Recargar el territorio de la zona a la que te has movido. Antes
             // esto no se hacía: las celdas eran las de tu posición inicial y
@@ -3018,17 +3138,21 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
           {/* `!zoomedOutTooMuch` además de vaciarlos al cargar: entre que se
               aleja el mapa y termina la recarga hay unos fotogramas en los que
               el territorio ya no está y ellos todavía sí. */}
-          {halloweenActivo && !zoomedOutTooMuch && objetos.map(o => (
+          {halloweenActivo && !zoomedOutTooMuch && gruposObjetos.map(g => (
             <Marker
-              key={`objeto-${o.id}`}
-              coordinate={{
-                latitude: (o.y + 0.5) * CELL_LAT_DEG,
-                longitude: (o.x + 0.5) * CELL_LNG_DEG,
-              }}
+              key={`objeto-${g.clave}`}
+              coordinate={{ latitude: g.lat, longitude: g.lng }}
               anchor={{ x: 0.5, y: 0.5 }}
               tracksViewChanges={objetosEnDirecto}
             >
-              <Image source={dibujoDe(o.tipo)} style={styles.objeto} resizeMode="contain" />
+              <View>
+                <Image source={dibujoDe(g.tipo)} style={styles.objeto} resizeMode="contain" />
+                {g.cuantos > 1 && (
+                  <View style={styles.montonChapa}>
+                    <Text style={styles.montonTexto}>{g.cuantos}</Text>
+                  </View>
+                )}
+              </View>
             </Marker>
           ))}
 
@@ -3889,6 +4013,15 @@ const styles = StyleSheet.create({
   // La calabaza del mapa. Es un emoji y no una imagen: no pesa, se ve igual en
   // Android y en iPhone, y no hay que mantener otro archivo.
   objeto: { width: 38, height: 38 },
+  // El número del montón, colgado de la esquina. Con borde del color del mapa
+  // para que se despegue de lo que tenga detrás.
+  montonChapa: {
+    position: 'absolute', right: -7, bottom: -4,
+    minWidth: 20, height: 20, paddingHorizontal: 5, borderRadius: 10,
+    backgroundColor: colors.orange, borderWidth: 2, borderColor: colors.bg,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  montonTexto: { color: colors.bg, fontSize: 11, fontWeight: '900' },
   // El cartel de "has pisado algo" es naranja de celebración. Si lo pisado
   // resta, en rojo: el color tiene que decir lo mismo que el número.
   pisadoMalo: { backgroundColor: colors.danger },
