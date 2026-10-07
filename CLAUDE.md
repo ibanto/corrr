@@ -6,7 +6,7 @@ Instrucciones para Claude trabajando en este repo. Léelo entero antes de tocar 
 
 ## 0. Dónde estamos (leer esto primero)
 
-*Al día a 6-oct-2026, mañana. Si algo de aquí abajo contradice a este apartado, manda este.*
+*Al día a 7-oct-2026, noche. Si algo de aquí abajo contradice a este apartado, manda este.*
 
 **En las tiendas**: 1.11.10 (Android vc67, iPhone build 17). 46 corredores.
 
@@ -16,10 +16,10 @@ El evento de Halloween va del **viernes 23 de octubre al domingo 1 de noviembre*
 
 ### Lo siguiente que hay que hacer
 
-1. **Que Iban suba la 1.11.11 (29) / vc82**:
-   `apps/mobile/builds/corrr-v1.11.11-vc82.aab` y el archivo
-   `CORRR-1.11.11-build29.xcarchive` en Organizer. **Las builds las lanzo YO; él
-   las recoge y las sube.** Las vc80/81 y las build 26/27/28 están DESCARTADAS.
+1. **Que Iban suba la 1.11.11 (30) / vc83**:
+   `apps/mobile/builds/corrr-v1.11.11-vc83.aab` y el archivo
+   `CORRR-1.11.11-build30.xcarchive` en Organizer. **Las builds las lanzo YO; él
+   las recoge y las sube.** Todo lo anterior (vc80-82, build 26-29) está DESCARTADO.
    Las dos pasadas por `node apps/mobile/scripts/comprobar-paquete.mjs`.
 2. **Que la pruebe**: pisar un fantasma y ver qué le toca, que el resumen los
    enseñe uno por línea, y una carrera larga cerrando el círculo (a ver si el
@@ -43,8 +43,10 @@ que no se repiten · territorio que deja ver las calles · calabazas y fantasmas
 que se esconden al alejar el mapa, igual que el territorio · **buscador de
 ciudad** en el mapa · el resumen de administración con NOMBRES (quién ha
 corrido, quién ha robado a quién, altas, quién ha abierto) · la bandeja con el
-número delante en vez de un párrafo · y los arreglos de puntos partidos, vueltas
-grandes sin rellenar, calabazas que tardaban 18 s y el botón de centrar el mapa.
+número delante en vez de un párrafo · **calabazas y fantasmas que se agrupan**
+al alejar el mapa, con cuántas lleva cada montón · y los arreglos de puntos
+partidos, vueltas grandes sin rellenar, calabazas que tardaban 18 s y el botón
+de centrar el mapa.
 
 ### Para DESPUÉS de Halloween
 
@@ -447,6 +449,18 @@ Sin tope por carrera: si pisas diez, te llevas las diez (2.000 puntos y los diez
 mensajes). El desbloqueo de mensajes sí tiene techo de 10; el ranking no — gana
 quien más coja. Las que renacen salen del mismo mapa de calles, así que el
 evento va llevando a la gente por sitios nuevos.
+
+**Al alejar el mapa se agrupan** (`agruparObjetos` en `MapScreen.tsx`, 7-oct):
+veinte calabazas del mismo barrio caían en un puñado de píxeles y salían
+amontonadas, sin poder verse ninguna ni saber cuántas había. Se parte el mapa en
+casillas del ancho de una chincheta —**medido en PÍXELES, no en metros**, porque
+lo que se tapa se tapa en pantalla— y lo que cae en la misma casilla sale como un
+montón con el número. Al acercarte la casilla se encoge y los montones se
+deshacen solos. Dos detalles que hacen falta: el montón se arrastra hacia el
+CENTRO de su casilla (`ARRASTRE_AL_CENTRO`, 0,7) porque si no dos montones
+vecinos pueden caer pegados al borde que comparten y volver a taparse; y el
+`tracksViewChanges` va por los GRUPOS y no por los objetos, porque al cambiar el
+zoom nacen chinchetas nuevas y en Android se quedarían en blanco (§9).
 
 **Mapa de calles** (`calles`, `scripts/bajar-calles.mjs`): celdas sacadas de
 OpenStreetMap para poder sembrar por CUALQUIER calle, no solo por donde ya ha

@@ -85,8 +85,16 @@ const RUTAS = {
     formato: 'tiras', duenos: [{ id: YO, name: 'Auditor', warCry: 'A por todas', mine: true, color: '#FF5500' },
              { id: RIVAL, name: 'Lucía M.', warCry: 'Nadie me pilla', mine: false, color: '#2E86DE' }],
     tiras, owners: { [YO]: { avatar: null }, [RIVAL]: { avatar: null } } }),
+  // Muchas y repartidas por un barrio entero: pocas y separadas nunca llegan a
+  // taparse, así que no sirven para probar que se agrupan al alejar el mapa.
   'GET /objetos/viewport': () => vacio ? { objetos: [] } : ({ objetos: [
-    ...[0,1,2,3,4,5,6,7].map(i => ({ id: 100 + i, x: CX + 10 + i * 6, y: CY + 12 + (i % 4) * 7, puntos: 200, tipo: 'calabaza' })),
+    ...Array.from({ length: 46 }, (_, i) => ({
+      id: 100 + i,
+      x: CX - 60 + ((i * 37) % 130),
+      y: CY - 50 + ((i * 53) % 120),
+      puntos: 200,
+      tipo: 'calabaza',
+    })),
     // Fantasmas pegados a las calabazas, uno de cada premio, para ver que los
     // tres se dibujan EXACTAMENTE igual: si se distinguieran, adiós al juego.
     { id: 200, x: CX + 13, y: CY + 14, puntos: 500, tipo: 'fantasma' },
@@ -101,9 +109,9 @@ const RUTAS = {
     texto: 'Del *23 de octubre* al *1 de noviembre* salen calabazas por toda la ciudad.',
     imagen: null, boton: 'Ver el mapa', enlace: null, etiqueta: 'Evento', sello: 'Nuevo', nota: '50 puntos\ncada una' } }),
   'GET /app/notificaciones': () => vacio ? { notificaciones: [], sinVer: 0 } : ({ sinVer: notasVistas ? 0 : 2, notificaciones: [
-    { id: 1, titulo: 'Te han robado', nota: '\u22121240\nCELDAS', sello: 'Robo',
+    { id: 1, titulo: 'Te han robado', quien: 'Lucía M.', nota: '\u22121240\nCELDAS', sello: 'Robo',
       texto: 'Lucía M. se ha quedado *1.240 celdas* tuyas. Lo que queda dentro de un cerco cambia de dueño: ve a recuperarlo.', creado_at: haceDias(0), vista: false },
-    { id: 2, titulo: 'Te han cercado', nota: '\u2212800\nCELDAS', sello: 'Cercado',
+    { id: 2, titulo: 'Te han cercado', quien: 'Lucía M.', nota: '\u2212800\nCELDAS', sello: 'Cercado',
       texto: 'Lucía M. ha rodeado tu zona y se ha quedado *800 celdas* tuyas. Lo que queda dentro de un cerco cambia de dueño: ve a recuperarlo.', creado_at: haceDias(1), vista: false },
     { id: 3, titulo: 'Cerco cobrado', nota: '+4100\nCELDAS', sello: 'Territorio',
       texto: 'Ya vale cerrar una zona *entre varios días*: lo que rodea tu territorio es tuyo. Acabas de cobrar *4.100 celdas* y *6.200 puntos*.', creado_at: haceDias(4), vista: true },
@@ -120,6 +128,12 @@ const RUTAS = {
   'GET /friends/pending': () => vacio ? [] : [{ id: 'fr1', sender_id: RIVAL, sender_name: 'Lucía M.', created_at: haceDias(1) }],
   'GET /admin/resumen': () => ({ accesosDesde: haceDias(4),
     hoy: { carreras: 6, corredores: 5, han_abierto: 11, altas: 1 },
+    // Siete días con uno a cero en medio: si el día vacío se cayera de la lista,
+    // las barras mentirían y no se notaría.
+    dias: [['-6',4],['-5',7],['-4',0],['-3',9],['-2',5],['-1',11],['0',6]].map(([d, n]) => ({
+      dia: new Date(Date.now() + Number(d) * 86400000).toISOString().slice(0, 10),
+      carreras: n, gente: Math.max(1, Math.round(n / 2)),
+    })),
     quienes: {
       corrieron: [{ nombre: 'Lucía M.', carreras: 2, km: '12.4' }, { nombre: 'Dani', carreras: 1, km: '8.0' },
                   { nombre: 'Auditor', carreras: 1, km: '5.1' }, { nombre: 'Nerea', carreras: 1, km: '0.9' }],
