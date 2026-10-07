@@ -777,3 +777,35 @@ marca `es_bot` y sacarlos de:
   poder atarla a la app.
 - **Cambiar la clave de subida de Android** (§12).
 - **Pasar a Fastify 5** (§12): la rama 4 está fuera de soporte.
+- **Repartir los colores de corredor con una paleta, no con el ángulo áureo**
+  (medido el 7-oct-2026, y APARCADO a propósito: Iban prefirió tocar solo la
+  pareja que cantaba). El ángulo áureo reparte bien los N PRIMEROS números, pero
+  dos índices separados por un número de **Fibonacci** caen pegados — y los
+  `color_idx` que se usan tienen huecos (cuentas borradas, el ejército), así que
+  esa coincidencia sale. Medido sobre los 24 corredores con territorio, **vistos
+  al 50% sobre el mapa**, que es como se ven de verdad:
+
+  | | |
+  |---|---|
+  | fausrunner (idx 24) y Oriol15 (idx 3) | dE **3,1** — el mismo verde, y vecinos en Barcelona |
+  | parejas por debajo de dE 15 | 8 |
+  | …y de esas, vecinas en el mapa | 4 (La Liebre/MisuraMano, fausrunner/Oriol15, Ibanto/Olga, El Zorro/afarbis) |
+
+  24−3 = **21**, Fibonacci, y además múltiplo de 3 — así que la alternancia de
+  luminosidad (`idx % 3`) les daba también la misma luz. Doble coincidencia.
+
+  **El arreglo probado**: una lista fija de 96 colores construida eligiendo cada
+  vez el más lejano de los ya elegidos (muestreo del punto más lejano en espacio
+  Lab), dejando fuera lo que se parezca al naranja propio o al azul del mapa.
+  Tiene la propiedad que hace falta — **los N primeros están bien repartidos
+  para cualquier N, y por tanto cualquier subconjunto también** —, así que NO
+  hace falta tocar los `color_idx` que ya tiene cada uno. Medido con los índices
+  reales: la peor pareja pasa de dE 4,4 a **19,0** y las parejas confundibles de
+  8 a **0**. Es cambio de SERVIDOR: no necesita build (la app solo se inventa un
+  color si el servidor no le manda ninguno).
+
+  **Mientras tanto** (7-oct): a Oriol15 se le puso a mano `color_idx = 327`
+  (fucsia `#ca2175`), que lo deja a dE 91,5 de fausrunner y a dE 50 del naranja
+  propio. Los números de color se reparten por orden de alta, así que el 327 no
+  se lo va a llevar nadie hasta que haya 328 corredores. **Las otras tres
+  parejas siguen igual.**
