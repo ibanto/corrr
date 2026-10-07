@@ -477,6 +477,10 @@ async function initDB() {
   await db.query(`ALTER TABLE avisos ADD COLUMN IF NOT EXISTS etiqueta TEXT`).catch(() => {});
   await db.query(`ALTER TABLE avisos ADD COLUMN IF NOT EXISTS sello TEXT`).catch(() => {});
   await db.query(`ALTER TABLE avisos ADD COLUMN IF NOT EXISTS nota TEXT`).catch(() => {});
+  // QUIÉN te lo ha hecho, aparte y no solo metido dentro del texto. La bandeja
+  // lo enseña en un círculo con su inicial; sacarlo del párrafo con una
+  // expresión regular funcionaba hasta el día que alguien se llame "Ha".
+  await db.query(`ALTER TABLE avisos ADD COLUMN IF NOT EXISTS quien TEXT`).catch(() => {});
   // Para probar un aviso en tu propio móvil antes de soltarlo a todo el mundo.
   await db.query(`ALTER TABLE avisos ADD COLUMN IF NOT EXISTS corredor TEXT`).catch(() => {});
   // Qué teléfono usa cada corredor. Se apunta cuando la app pide su aviso, y
@@ -5445,8 +5449,8 @@ async function avisarCercados(
     const nombre = rows[0]?.display_name;
     if (!nombre) continue;
     await cliente.query(
-      `INSERT INTO avisos (titulo, texto, boton, etiqueta, sello, nota, publico, corredor, automatico)
-       VALUES ($1, $2, $3, $4, $5, $6, 'corredor', $7, TRUE)`,
+      `INSERT INTO avisos (titulo, texto, boton, etiqueta, sello, nota, publico, corredor, automatico, quien)
+       VALUES ($1, $2, $3, $4, $5, $6, 'corredor', $7, TRUE, $8)`,
       [
         'Te han cercado',
         `${quienCerca} ha rodeado tu zona y se ha quedado *${n.toLocaleString('es-ES')} celdas* tuyas. Lo que queda dentro de un cerco cambia de dueño: ve a recuperarlo.`,
@@ -5455,6 +5459,7 @@ async function avisarCercados(
         'Cercado',
         `−${n.toLocaleString('es-ES')}\nCELDAS`,
         nombre,
+        quienCerca,
       ],
     ).catch(() => {});
   }
@@ -5589,7 +5594,7 @@ app.get('/admin/resumen', { preHandler: [requireAuth, requireAdminApp] }, async 
   // en los contadores: aquí se mira a la gente.
   const NO_PRUEBA = `NOT u.es_bot AND u.email NOT ILIKE '%@corrr.es' AND u.email NOT ILIKE '%+googletest@%'`;
 
-  const [corrieron, robos, altasHoy, abrieron] = await Promise.all([
+  const [corrieron, robos, altasHoy, abrieron, dias] = await Promise.all([
     db.query(
       `SELECT u.display_name AS nombre, COUNT(*)::int AS carreras,
               COALESCE(ROUND(SUM(r.distance_km)::numeric, 1), 0) AS km
@@ -5627,6 +5632,20 @@ app.get('/admin/resumen', { preHandler: [requireAuth, requireAdminApp] }, async 
         WHERE (u.ultimo_acceso_at AT TIME ZONE 'Europe/Madrid')::date = (NOW() AT TIME ZONE 'Europe/Madrid')::date
           AND ${NO_PRUEBA}
         ORDER BY u.ultimo_acceso_at DESC LIMIT 30`),
+    // Los últimos 7 días, para las barras. generate_series y no un GROUP BY a
+    // secas: un día sin carreras TIENE que salir, con su barra a cero. Si se
+    // cae de la lista, siete días flojos y siete días seguidos se dibujan
+    // exactamente igual, que es justo lo que no puede pasar.
+    db.query(
+      `SELECT d::date AS dia,
+              COUNT(r.id)::int AS carreras,
+              COUNT(DISTINCT r.user_id)::int AS gente
+         FROM generate_series(
+                (NOW() AT TIME ZONE 'Europe/Madrid')::date - INTERVAL '6 days',
+                (NOW() AT TIME ZONE 'Europe/Madrid')::date, INTERVAL '1 day') AS d
+         LEFT JOIN runs r
+           ON (r.created_at AT TIME ZONE 'Europe/Madrid')::date = d::date
+        GROUP BY 1 ORDER BY 1`),
   ]);
 
   // Quién se está descolgando: entró pero lleva sin correr. Con nombre, para
@@ -5668,6 +5687,11 @@ app.get('/admin/resumen', { preHandler: [requireAuth, requireAdminApp] }, async 
       altas: altasHoy.rows,
       abrieron: abrieron.rows.map((r: any) => r.nombre),
     },
+    dias: dias.rows.map((r: any) => ({
+      dia: new Date(r.dia).toISOString().slice(0, 10),
+      carreras: r.carreras,
+      gente: r.gente,
+    })),
     semana: semana.rows[0],
     gente: gente.rows[0],
     avisosActivos: avisos.rows[0].activos,
@@ -6030,7 +6054,14 @@ app.get('/app/notificaciones', { preHandler: requireAuth }, async (req: any, rep
     // `nota` es el sello grande del cartel ("−28\nCELDAS"): ya se guardaba y
     // la bandeja no lo pedía, así que cada nota era un párrafo y nada más.
     // Con el número delante se lee de un vistazo quién y cuánto.
+    // Las notas de antes de que existiera la columna llevan el nombre dentro
+    // del texto, que SIEMPRE empieza por "NOMBRE ha ...". Se saca de ahí, con
+    // dos redes: si no aparece " ha ", split_part devuelve el texto entero y
+    // NULLIF lo convierte en nada; y si lo que sale es largo, no es un nombre.
     `SELECT a.id, a.titulo, a.texto, a.creado_at, a.nota, a.sello,
+            COALESCE(a.quien, NULLIF(
+              CASE WHEN LENGTH(split_part(a.texto, ' ha ', 1)) <= 32
+                   THEN split_part(a.texto, ' ha ', 1) END, a.texto)) AS quien,
             EXISTS (SELECT 1 FROM aviso_vistas v WHERE v.aviso_id = a.id AND v.user_id = $1) AS vista
        FROM avisos a, users u
       WHERE u.id = $1 AND a.automatico

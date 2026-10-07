@@ -129,6 +129,8 @@ export type Notificacion = {
   /** El sello grande del cartel: "−28\nCELDAS". Puede faltar en notas viejas. */
   nota?: string | null;
   sello?: string | null;
+  /** Quién te lo ha hecho. Nada en las que te has hecho tú (un cerco cobrado). */
+  quien?: string | null;
 };
 
 /** Un robo que me han hecho: quién, cuándo y si ya le he contestado. */
@@ -189,6 +191,8 @@ interface ResumenAdmin {
     altas: { nombre: string; ciudad: string | null }[];
     abrieron: string[];
   };
+  /** Los últimos 7 días, para las barras. Los días a cero vienen incluidos. */
+  dias?: { dia: string; carreras: number; gente: number }[];
   semana: { altas: number; carreras: number; km: string | number; celdas: number };
   gente: { total: number; sin_estrenar: number; dormidos: number; activos_semana: number };
   avisosActivos: number;

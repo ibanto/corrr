@@ -39,6 +39,25 @@ function cuando(iso: string): string {
   return new Date(iso).toLocaleDateString('es-ES', { day: 'numeric', month: 'short' });
 }
 
+/** Cada tipo de nota con su dibujo y su frase de tres palabras. Lo que se lee
+ *  de un vistazo es el icono, el nombre y el número: el párrafo sigue estando
+ *  debajo, pero ya no hace falta leerlo para enterarse de lo que ha pasado. */
+const TIPOS: Record<string, { icono: any; frase: string }> = {
+  'Te han robado':           { icono: 'flash',        frase: 'te ha robado' },
+  'Te han cercado':          { icono: 'lock-closed',  frase: 'te ha cercado' },
+  'Cerco cobrado':           { icono: 'flag',         frase: 'cerco cobrado' },
+  'Territorio devuelto':     { icono: 'arrow-undo',   frase: 'te lo han devuelto' },
+  'Cerco demasiado grande':  { icono: 'hourglass',    frase: 'cerco pendiente' },
+};
+const tipoDe = (titulo: string) => TIPOS[titulo] ?? { icono: 'notifications', frase: titulo.toLowerCase() };
+
+/** La inicial para el círculo. Si el nombre empieza por algo que no es una
+ *  letra (un emoji, un número), mejor no poner círculo que poner un cuadro. */
+const inicial = (n?: string | null) => {
+  const c = (n ?? '').trim().charAt(0).toUpperCase();
+  return CORTE.includes(c) ? c : null;
+};
+
 /** Los *asteriscos* del texto salen en naranja, como en los carteles. */
 function conResaltes(texto: string) {
   return texto.split('*').map((trozo, i) =>
@@ -91,6 +110,8 @@ export default function Notificaciones({ visible, onClose }: Props) {
           <ScrollView contentContainerStyle={styles.lista}>
             {lista.map(n => {
               const s = sello(n.nota);
+              const t = tipoDe(n.titulo);
+              const ini = inicial(n.quien);
               const abierta = abiertas.has(n.id);
               return (
                 <TouchableOpacity
@@ -103,28 +124,42 @@ export default function Notificaciones({ visible, onClose }: Props) {
                     return c;
                   })}
                 >
-                  {/* El número primero y grande. Antes esto era un párrafo de
-                      tres líneas por nota y con diez notas no se veía nada:
-                      había que leerlas todas para saber si te habían quitado
-                      veinte celdas o seis mil. */}
-                  {s && (
-                    <View style={[styles.sello, s.malo ? styles.selloMalo : styles.selloBueno]}>
-                      <Text
-                        style={[styles.selloCifra, s.malo ? styles.textoMalo : styles.textoBueno]}
-                        numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.4}
-                      >{s.cifra}</Text>
-                      <Text style={styles.selloUnidad}>{s.unidad}</Text>
+                  <View style={styles.linea}>
+                    {/* El dibujo dice QUÉ ha pasado y el color si es bueno o
+                        malo, antes de leer una sola palabra. */}
+                    <View style={[styles.icono,
+                      !s ? styles.fondoSuelto : s.malo ? styles.fondoMalo : styles.fondoBueno]}>
+                      <Ionicons
+                        name={t.icono}
+                        size={20}
+                        color={!s ? colors.textSecondary : s.malo ? colors.danger : colors.success}
+                      />
+                      {ini && <View style={styles.inicial}><Text style={styles.inicialTexto}>{ini}</Text></View>}
                     </View>
-                  )}
-                  <View style={styles.notaCuerpo}>
-                    <View style={styles.notaCabecera}>
-                      <Text style={styles.notaTitulo} numberOfLines={1}>{n.titulo}</Text>
-                      <Text style={styles.notaCuando}>{cuando(n.creado_at)}</Text>
+
+                    <View style={styles.medio}>
+                      <Text style={styles.quien} numberOfLines={1}>{n.quien ?? n.titulo}</Text>
+                      <Text style={styles.frase} numberOfLines={1}>
+                        {n.quien ? `${t.frase} · ${cuando(n.creado_at)}` : cuando(n.creado_at)}
+                      </Text>
                     </View>
-                    <Text style={styles.notaTexto} numberOfLines={abierta ? undefined : 2}>
-                      {conResaltes(n.texto)}
-                    </Text>
+
+                    {s && (
+                      <View style={styles.cifras}>
+                        <Text
+                          style={[styles.cifra, s.malo ? styles.textoMalo : styles.textoBueno]}
+                          numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.5}
+                        >{s.cifra}</Text>
+                        <Text style={styles.unidad}>{s.unidad}</Text>
+                      </View>
+                    )}
+                    <Ionicons
+                      name={abierta ? 'chevron-up' : 'chevron-down'}
+                      size={14} color={colors.textMuted}
+                    />
                   </View>
+
+                  {abierta && <Text style={styles.notaTexto}>{conResaltes(n.texto)}</Text>}
                 </TouchableOpacity>
               );
             })}
@@ -148,21 +183,35 @@ const styles = StyleSheet.create({
   vacio: { color: colors.textSecondary, fontSize: 14, textAlign: 'center', lineHeight: 21 },
   lista: { padding: spacing.md, gap: spacing.sm },
   nota: {
-    flexDirection: 'row', alignItems: 'center', gap: spacing.md,
     backgroundColor: colors.bgCard, borderRadius: radius.lg,
-    borderWidth: 1, borderColor: colors.border, padding: spacing.md,
+    borderWidth: 1, borderColor: colors.border,
+    paddingVertical: spacing.sm + 2, paddingHorizontal: spacing.md,
   },
-  notaCuerpo: { flex: 1 },
-  sello: {
-    width: 74, paddingVertical: spacing.sm, paddingHorizontal: 4,
-    borderRadius: radius.md, borderWidth: 1, alignItems: 'center',
+  linea: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  icono: {
+    width: 42, height: 42, borderRadius: 21,
+    alignItems: 'center', justifyContent: 'center', borderWidth: 1,
   },
-  selloMalo: { backgroundColor: 'rgba(239, 68, 68, 0.10)', borderColor: 'rgba(239, 68, 68, 0.35)' },
-  selloBueno: { backgroundColor: 'rgba(34, 197, 94, 0.10)', borderColor: 'rgba(34, 197, 94, 0.35)' },
-  selloCifra: { fontSize: 20, fontWeight: '900' },
+  fondoMalo: { backgroundColor: 'rgba(239, 68, 68, 0.10)', borderColor: 'rgba(239, 68, 68, 0.35)' },
+  fondoBueno: { backgroundColor: 'rgba(34, 197, 94, 0.10)', borderColor: 'rgba(34, 197, 94, 0.35)' },
+  fondoSuelto: { backgroundColor: colors.bgCardAlt, borderColor: colors.border },
+  // La inicial de quien te lo ha hecho, colgada del icono. Pequeña: lo que
+  // manda es el dibujo; esto solo dice de quién.
+  inicial: {
+    position: 'absolute', right: -3, bottom: -3,
+    width: 19, height: 19, borderRadius: 10,
+    backgroundColor: colors.bgCardAlt, borderWidth: 1, borderColor: colors.border,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  inicialTexto: { color: colors.textPrimary, fontSize: 10, fontWeight: '900' },
+  medio: { flex: 1 },
+  quien: { color: colors.textPrimary, fontSize: 16, fontWeight: '800' },
+  frase: { color: colors.textSecondary, fontSize: 12, marginTop: 1 },
+  cifras: { alignItems: 'flex-end', minWidth: 68 },
+  cifra: { fontSize: 20, fontWeight: '900' },
+  unidad: { color: colors.textSecondary, fontSize: 8, letterSpacing: 1 },
   textoMalo: { color: colors.danger },
   textoBueno: { color: colors.success },
-  selloUnidad: { color: colors.textSecondary, fontSize: 8, letterSpacing: 1, marginTop: 2 },
   // Un filo naranja a la izquierda en las que aún no has visto. Sin globos ni
   // "NUEVO": se nota de un vistazo y no grita.
   notaNueva: { borderLeftWidth: 3, borderLeftColor: colors.orange },
@@ -172,6 +221,6 @@ const styles = StyleSheet.create({
   },
   notaTitulo: { color: colors.textPrimary, fontSize: 15, fontWeight: '800', flexShrink: 1 },
   notaCuando: { color: colors.textMuted, fontSize: 12 },
-  notaTexto: { color: colors.textSecondary, fontSize: 14, lineHeight: 20 },
+  notaTexto: { color: colors.textSecondary, fontSize: 14, lineHeight: 20, marginTop: spacing.sm },
   resalte: { color: colors.orange, fontWeight: '700' },
 });
