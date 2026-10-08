@@ -515,17 +515,22 @@ export default function App() {
                     style={styles.tabIcon}
                     resizeMode="contain"
                   />
-                  {tab.key === 'Ranking' && pendingFriends > 0 && (
-                    <View style={styles.badge}>
-                      <Text style={styles.badgeText}>{pendingFriends}</Text>
-                    </View>
-                  )}
-                  {tab.key === 'Perfil' && notasSinVer > 0 && (
-                    <View style={styles.badge}>
-                      <Text style={styles.badgeText}>{notasSinVer > 9 ? '9+' : notasSinVer}</Text>
-                    </View>
-                  )}
                 </View>
+                {/* La chapa cuelga de la CELDA, no del icono: el icono mide 88
+                    y la celda 72 en un móvil normal, así que se sale por los
+                    lados — y en la última pestaña la chapa se salía de la
+                    PANTALLA y aparecía cortada (Iban, 8-oct, en iPhone y en
+                    Android). Colgando de la celda no puede pasar. */}
+                {tab.key === 'Ranking' && pendingFriends > 0 && (
+                  <View style={styles.badge}>
+                    <Text style={styles.badgeText}>{pendingFriends}</Text>
+                  </View>
+                )}
+                {tab.key === 'Perfil' && notasSinVer > 0 && (
+                  <View style={styles.badge}>
+                    <Text style={styles.badgeText}>{notasSinVer > 9 ? '9+' : notasSinVer}</Text>
+                  </View>
+                )}
                 {/* <Text style={[styles.tabLabel, isActive && styles.tabLabelActive]}>{tab.label}</Text> */}
               </TouchableOpacity>
             );
@@ -570,13 +575,13 @@ const styles = StyleSheet.create({
     borderTopWidth: 1, borderTopColor: colors.border,
     paddingTop: 8, paddingBottom: Platform.OS === 'ios' ? 0 : 48,
   },
-  tabItem: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 2 },
+  tabItem: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 2, position: 'relative' },
   tabItemInner: { position: 'relative' },
   tabIcon: { width: 88, height: 88 },
   tabLabel: { fontSize: 10, fontWeight: '600', color: colors.textMuted, marginTop: 2 },
   tabLabelActive: { color: colors.orange, fontWeight: '700' },
   badge: {
-    position: 'absolute', top: 2, right: -4,
+    position: 'absolute', top: 2, right: 6,
     backgroundColor: '#FB0E01', borderRadius: 10,
     minWidth: 20, height: 20, alignItems: 'center', justifyContent: 'center',
     paddingHorizontal: 5, borderWidth: 2, borderColor: colors.bgCard,

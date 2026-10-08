@@ -42,8 +42,11 @@ const RUTAS = {
   'GET /users/me': () => ({ id: YO, email: 'audit@local.invalid', display_name: 'Auditor',
     city: sx(null, 'Bilbao'), avatar_url: null, first_name: sx(null, 'Ana'), surname: sx(null, 'Ruiz'),
     war_cry: sx(null, 'A por todas'), shoe_brand: sx(null, 'Asics'), shoe_brand_other: null,
-    birth_year: sx(null, 1987), gender: sx(null, 'mujer'), usual_distance: sx(null, 10),
-    weekly_frequency: sx(null, 3), profile_bonus_claimed: !vacio, es_admin: true }),
+    // Tres campos a medio rellenar A PROPÓSITO (5 de 8 = 63%): con el perfil
+    // entero la tarjeta enseña otra cosa y no se prueba lo que se quiere ver.
+    // Con MODO=vacio salen los ocho sin rellenar, que es el 0%.
+    birth_year: null, gender: null, usual_distance: null,
+    weekly_frequency: sx(null, 3), profile_bonus_claimed: false, es_admin: true }),
   'GET /stats/me': () => ({
     stats: { total_zones: sx(0, 412), total_points: sx(0, 18540), total_km: sx(0, 182.4),
              total_runs: sx(0, 37), bonus_xp: sx(0, 120), total_xp: sx(0, 305), total_steals: sx(0, 46) },

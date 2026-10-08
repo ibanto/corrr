@@ -6,7 +6,7 @@ Instrucciones para Claude trabajando en este repo. Léelo entero antes de tocar 
 
 ## 0. Dónde estamos (leer esto primero)
 
-*Al día a 7-oct-2026, noche. Si algo de aquí abajo contradice a este apartado, manda este.*
+*Al día a 8-oct-2026, mañana. Si algo de aquí abajo contradice a este apartado, manda este.*
 
 **En las tiendas**: 1.11.10 (Android vc67, iPhone build 17). 46 corredores.
 
@@ -16,10 +16,10 @@ El evento de Halloween va del **viernes 23 de octubre al domingo 1 de noviembre*
 
 ### Lo siguiente que hay que hacer
 
-1. **Que Iban suba la 1.11.11 (30) / vc83**:
-   `apps/mobile/builds/corrr-v1.11.11-vc83.aab` y el archivo
-   `CORRR-1.11.11-build30.xcarchive` en Organizer. **Las builds las lanzo YO; él
-   las recoge y las sube.** Todo lo anterior (vc80-82, build 26-29) está DESCARTADO.
+1. **Que Iban suba la 1.11.11 (31) / vc84**:
+   `apps/mobile/builds/corrr-v1.11.11-vc84.aab` y el archivo
+   `CORRR-1.11.11-build31.xcarchive` en Organizer. **Las builds las lanzo YO; él
+   las recoge y las sube.** Todo lo anterior (vc80-83, build 26-30) está DESCARTADO.
    Las dos pasadas por `node apps/mobile/scripts/comprobar-paquete.mjs`.
 2. **Que la pruebe**: pisar un fantasma y ver qué le toca, que el resumen los
    enseñe uno por línea, y una carrera larga cerrando el círculo (a ver si el
@@ -44,9 +44,11 @@ que se esconden al alejar el mapa, igual que el territorio · **buscador de
 ciudad** en el mapa · el resumen de administración con NOMBRES (quién ha
 corrido, quién ha robado a quién, altas, quién ha abierto) · la bandeja con el
 número delante en vez de un párrafo · **calabazas y fantasmas que se agrupan**
-al alejar el mapa, con cuántas lleva cada montón · y los arreglos de puntos
-partidos, vueltas grandes sin rellenar, calabazas que tardaban 18 s y el botón
-de centrar el mapa.
+al alejar el mapa, con cuántas lleva cada montón · la tarjeta del perfil dice
+cuánto llevas y QUÉ te falta para los +50 puntos · y los arreglos de puntos
+partidos, vueltas grandes sin rellenar, calabazas que tardaban 18 s, el botón
+de centrar el mapa, el número del montón cortado en Android y la chapa de la
+pestaña que se salía de la pantalla.
 
 ### Para DESPUÉS de Halloween
 
@@ -405,6 +407,24 @@ verdad, compilar en **Release** (lleva el código dentro y no necesita nada):
   de verdad no se puede. **Regla: un `catch {}` vacío en algo que el usuario ha
   PULSADO es un fallo**; si no se puede hacer, hay que decirlo, y mientras se
   intenta hay que verse.
+- **react-native-maps le hace la foto al marcador CON EL TAMAÑO DEL DIBUJO**
+  (Android, 8-oct-2026): el número del montón de calabazas colgaba de la esquina
+  con `right: -7` y en el Xiaomi de Iban salía cortado. Parece el recorte normal
+  de Android —que no deja pintar fuera de la vista madre— pero no lo es, y por
+  eso las dos soluciones obvias EMPEORAN la cosa: dejando hueco con relleno, y
+  también dando medidas explícitas a la caja, lo que salía cortado era **la
+  propia calabaza**, por la derecha y por abajo. Las dos se probaron en el
+  emulador y se vieron. Lo que pasa es que la foto se toma del tamaño de la
+  imagen, así que todo lo que sobresalga se pierde, mida lo que mida la caja.
+  **Regla: lo que tenga que verse en un `<Marker>` va DENTRO del dibujo.**
+  Y ojo: en el emulador el fallo ORIGINAL no se reproducía — hizo falta su
+  captura para saber que existía.
+- **La chapa de aviso de una pestaña se salía de la pantalla** (8-oct-2026, en
+  iPhone y en Android): los iconos de la barra miden 88 y cada celda mide
+  pantalla/5 (72 en un móvil de 360), así que el icono se sale por los lados. La
+  chapa colgaba del ICONO, y en la última pestaña acababa fuera de la pantalla y
+  salía cortada. Arreglado colgándola de la CELDA. **Si un adorno va pegado a
+  algo más ancho que su hueco, cuélgalo del hueco.**
 - **MapView con `display:'none'`**: en versiones < 1.10.0 ocultaba el mapa durante el run pero al volver visible RN-Maps no refrescaba los polígonos. Solución: Modal absoluto encima, no `display:'none'`.
 - **`pathSegments` no limpiado en stopRun**: dejaba dashes naranjas sobre las celdas tras la carrera. Limpiar siempre.
 - **JWT_ACCESS_SECRET vacío**: `TextEncoder().encode(undefined)` produce secret literal "undefined" → cualquiera firma tokens. Fail-fast SIEMPRE si missing.

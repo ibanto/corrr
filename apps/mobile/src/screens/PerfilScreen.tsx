@@ -117,16 +117,25 @@ export default function PerfilScreen({ user, onLogout }: Props) {
   }, []);
   useEffect(() => { loadProfileData(); }, [loadProfileData]);
 
-  const profileCompletion = (() => {
-    if (!profileData) return 0;
-    const fields = [
-      profileData.first_name, profileData.surname, profileData.war_cry,
-      profileData.shoe_brand, profileData.birth_year, profileData.gender,
-      profileData.usual_distance, profileData.weekly_frequency,
-    ];
-    const filled = fields.filter(f => f != null && f !== '').length;
-    return Math.round((filled / fields.length) * 100);
-  })();
+  /** Los OCHO campos que pide el bonus, con su nombre. Son exactamente los que
+   *  mira el servidor para dar los +50 puntos (`PUT /users/me`): si aquí
+   *  sobrara o faltara uno, el porcentaje diría 100% y el bonus no llegaría. */
+  const CAMPOS_PERFIL: { etiqueta: string; valor: any }[] = [
+    { etiqueta: 'Nombre',              valor: profileData?.first_name },
+    { etiqueta: 'Apellido',            valor: profileData?.surname },
+    { etiqueta: 'Grito de guerra',     valor: profileData?.war_cry },
+    { etiqueta: 'Zapatillas',          valor: profileData?.shoe_brand },
+    { etiqueta: 'Año de nacimiento',   valor: profileData?.birth_year },
+    { etiqueta: 'Sexo',                valor: profileData?.gender },
+    { etiqueta: 'Distancia habitual',  valor: profileData?.usual_distance },
+    { etiqueta: 'Veces por semana',    valor: profileData?.weekly_frequency },
+  ];
+  const faltan = profileData
+    ? CAMPOS_PERFIL.filter(c => c.valor == null || c.valor === '').map(c => c.etiqueta)
+    : [];
+  const profileCompletion = profileData
+    ? Math.round(((CAMPOS_PERFIL.length - faltan.length) / CAMPOS_PERFIL.length) * 100)
+    : 0;
 
   const detectCity = useCallback(async () => {
     try {
@@ -419,9 +428,10 @@ export default function PerfilScreen({ user, onLogout }: Props) {
             EditProfileScreen con todos los campos). Eliminado. */}
       </View>
 
-      {/* Tarjeta "Editar perfil" — banner que invita a completar el perfil.
-          Va ANTES de las stats por petición del usuario. Si está al 100% se
-          muestra como CTA discreto; si falta algo, se enfatiza el bonus. */}
+      {/* Tarjeta "Editar perfil". Si falta algo, enseña CUÁNTO llevas y QUÉ te
+          queda: "63%" solo no mueve a nadie, pero "te falta el año de
+          nacimiento" se arregla en diez segundos. Son los mismos ocho campos
+          que mira el servidor para dar los +50 puntos. */}
       <TouchableOpacity
         style={[
           styles.editProfileCard,
@@ -438,16 +448,38 @@ export default function PerfilScreen({ user, onLogout }: Props) {
             />
           </View>
           <View style={{ flex: 1 }}>
-            <Text style={styles.editProfileTitle}>
-              {profileCompletion === 100 ? 'Editar perfil' : 'Completa tu perfil'}
-            </Text>
-            <Text style={styles.editProfileSub}>
-              {profileData && !profileData.profile_bonus_claimed
-                ? `${profileCompletion}% completado · +50 pts al completarlo`
-                : profileCompletion === 100
-                  ? 'Tu información, grito de guerra, zapatillas y más'
-                  : `${profileCompletion}% completado`}
-            </Text>
+            <View style={styles.perfilCabecera}>
+              <Text style={styles.editProfileTitle}>
+                {profileCompletion === 100 ? 'Editar perfil' : 'Completa tu perfil'}
+              </Text>
+              {profileCompletion < 100 && (
+                <Text style={styles.perfilPorcentaje}>{profileCompletion}%</Text>
+              )}
+            </View>
+
+            {profileCompletion < 100 ? (
+              <>
+                <View style={styles.perfilPistaHueco}>
+                  <View style={[styles.perfilPista, { width: `${Math.max(2, profileCompletion)}%` }]} />
+                </View>
+                <Text style={styles.editProfileSub}>
+                  {faltan.length === 1
+                    ? (profileData?.profile_bonus_claimed ? 'Te falta una cosa' : 'Te falta una cosa para llevarte 50 puntos')
+                    : (profileData?.profile_bonus_claimed
+                        ? `Te faltan ${faltan.length} cosas`
+                        : `Te faltan ${faltan.length} cosas para llevarte 50 puntos`)}
+                </Text>
+                {faltan.length > 0 && (
+                  <Text style={styles.perfilFaltan} numberOfLines={2}>
+                    {faltan.join(' · ')}
+                  </Text>
+                )}
+              </>
+            ) : (
+              <Text style={styles.editProfileSub}>
+                Tu información, grito de guerra, zapatillas y más
+              </Text>
+            )}
           </View>
         </View>
         <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
@@ -1073,6 +1105,14 @@ const styles = StyleSheet.create({
   },
   editProfileTitle: { fontSize: 15, fontWeight: '800', color: colors.textPrimary },
   editProfileSub: { fontSize: 12, color: colors.textSecondary, marginTop: 2 },
+  perfilCabecera: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: spacing.sm },
+  perfilPorcentaje: { fontSize: 15, fontWeight: '900', color: colors.orange },
+  perfilPistaHueco: {
+    height: 6, borderRadius: 3, backgroundColor: colors.border,
+    overflow: 'hidden', marginTop: 6, marginBottom: 5,
+  },
+  perfilPista: { height: 6, borderRadius: 3, backgroundColor: colors.orange },
+  perfilFaltan: { fontSize: 11, color: colors.textMuted, marginTop: 2 },
   viewAllBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
     gap: spacing.xs,

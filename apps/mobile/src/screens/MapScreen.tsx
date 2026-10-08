@@ -3145,7 +3145,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
               anchor={{ x: 0.5, y: 0.5 }}
               tracksViewChanges={objetosEnDirecto}
             >
-              <View>
+              <View style={styles.chincheta}>
                 <Image source={dibujoDe(g.tipo)} style={styles.objeto} resizeMode="contain" />
                 {g.cuantos > 1 && (
                   <View style={styles.montonChapa}>
@@ -4013,15 +4013,26 @@ const styles = StyleSheet.create({
   // La calabaza del mapa. Es un emoji y no una imagen: no pesa, se ve igual en
   // Android y en iPhone, y no hay que mantener otro archivo.
   objeto: { width: 38, height: 38 },
-  // El número del montón, colgado de la esquina. Con borde del color del mapa
-  // para que se despegue de lo que tenga detrás.
+  // El número del montón va DENTRO del dibujo, pisándole la esquina.
+  //
+  // En Android salía cortado (Iban, 8-oct, en su Xiaomi). No es que la vista
+  // madre recorte: es que **react-native-maps le hace la foto al marcador con
+  // el tamaño del DIBUJO**, así que todo lo que sobresalga se pierde. Probado
+  // en el emulador: ni dejando hueco con relleno ni dando medidas explícitas a
+  // la caja se arregla — las dos veces salía la calabaza cortada por la derecha
+  // y por abajo, que es justo la parte que se sale de esos 38 píxeles.
+  //
+  // Metido dentro no puede pasar, mida lo que mida la foto. Y por eso también
+  // es más pequeño (18 en vez de 20) y se apoya en la esquina de abajo a la
+  // derecha, donde la calabaza casi no tiene dibujo.
+  chincheta: { width: 38, height: 38 },
   montonChapa: {
-    position: 'absolute', right: -7, bottom: -4,
-    minWidth: 20, height: 20, paddingHorizontal: 5, borderRadius: 10,
-    backgroundColor: colors.orange, borderWidth: 2, borderColor: colors.bg,
+    position: 'absolute', right: 0, bottom: 0,
+    minWidth: 18, height: 18, paddingHorizontal: 4, borderRadius: 9,
+    backgroundColor: colors.orange, borderWidth: 1.5, borderColor: colors.bg,
     alignItems: 'center', justifyContent: 'center',
   },
-  montonTexto: { color: colors.bg, fontSize: 11, fontWeight: '900' },
+  montonTexto: { color: colors.bg, fontSize: 10, fontWeight: '900' },
   // El cartel de "has pisado algo" es naranja de celebración. Si lo pisado
   // resta, en rojo: el color tiene que decir lo mismo que el número.
   pisadoMalo: { backgroundColor: colors.danger },
