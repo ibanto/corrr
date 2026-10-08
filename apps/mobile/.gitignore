@@ -39,3 +39,8 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+# Lo que Gradle escupe al compilar los módulos propios. OJO con la barra final:
+# `build/` es la carpeta de resultados, `build.gradle` es un fichero de verdad y
+# tiene que seguir guardándose. Se colaron 306 de estos el 2-oct-2026 (commit
+# 181a8b0) y casi vuelve a pasar el 8-oct.
+modules/*/android/build/
