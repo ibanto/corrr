@@ -6,7 +6,7 @@ Instrucciones para Claude trabajando en este repo. Léelo entero antes de tocar 
 
 ## 0. Dónde estamos (leer esto primero)
 
-*Al día a 8-oct-2026, mañana. Si algo de aquí abajo contradice a este apartado, manda este.*
+*Al día a 13-oct-2026, tarde. Si algo de aquí abajo contradice a este apartado, manda este.*
 
 **En las tiendas**: 1.11.10 (Android vc67, iPhone build 17). 46 corredores.
 
@@ -16,10 +16,10 @@ El evento de Halloween va del **viernes 23 de octubre al domingo 1 de noviembre*
 
 ### Lo siguiente que hay que hacer
 
-1. **Que Iban suba la 1.11.11 (31) / vc84**:
-   `apps/mobile/builds/corrr-v1.11.11-vc84.aab` y el archivo
-   `CORRR-1.11.11-build31.xcarchive` en Organizer. **Las builds las lanzo YO; él
-   las recoge y las sube.** Todo lo anterior (vc80-83, build 26-30) está DESCARTADO.
+1. **Que Iban suba la 1.11.11 (32) / vc85**:
+   `apps/mobile/builds/corrr-v1.11.11-vc85.aab` y el archivo
+   `CORRR-1.11.11-build32.xcarchive` en Organizer. **Las builds las lanzo YO; él
+   las recoge y las sube.** Todo lo anterior (vc80-84, build 26-31) está DESCARTADO.
    Las dos pasadas por `node apps/mobile/scripts/comprobar-paquete.mjs`.
 2. **Que la pruebe**: pisar un fantasma y ver qué le toca, que el resumen los
    enseñe uno por línea, y una carrera larga cerrando el círculo (a ver si el
@@ -47,8 +47,9 @@ número delante en vez de un párrafo · **calabazas y fantasmas que se agrupan*
 al alejar el mapa, con cuántas lleva cada montón · la tarjeta del perfil dice
 cuánto llevas y QUÉ te falta para los +50 puntos · y los arreglos de puntos
 partidos, vueltas grandes sin rellenar, calabazas que tardaban 18 s, el botón
-de centrar el mapa, el número del montón cortado en Android y la chapa de la
-pestaña que se salía de la pantalla.
+de centrar el mapa, el número del montón cortado en Android, la chapa de la
+pestaña que se salía de la pantalla y **la carrera que se reescribía entera en
+el disco cada tres segundos** con la pantalla apagada (§9).
 
 ### Para DESPUÉS de Halloween
 
@@ -425,6 +426,23 @@ verdad, compilar en **Release** (lleva el código dentro y no necesita nada):
   chapa colgaba del ICONO, y en la última pestaña acababa fuera de la pantalla y
   salía cortada. Arreglado colgándola de la CELDA. **Si un adorno va pegado a
   algo más ancho que su hueco, cuélgalo del hueco.**
+- **La app se moría "a los 60 minutos" corriendo con la pantalla apagada**
+  (13-oct-2026): la tarea de fondo guardaba cada tanda de puntos GPS haciendo
+  `getItem` + `JSON.parse` + `JSON.stringify` + `setItem` de **TODA la carrera**,
+  cada tres segundos. Coste cuadrático: medido, **una hora escribe 69,7 MB en
+  disco para guardar 125 KB de puntos**, y la última guardada cuesta seis veces
+  más que la primera. Arreglado guardando CADA TANDA EN SU PROPIA CLAVE
+  (`corrr:bg-loc-buffer:<hora>:<n>`) y juntándolas una sola vez al volver a la
+  app, ordenadas por hora: 69,7 MB → 120 KB, 594 veces menos.
+  **Lo encontró un corredor, no el emulador**: dijo "me parece que se cierra a
+  los 60 minutos" y que le quedaba "la zona marcada pero sin cerrar el círculo".
+  El camino del disco solo se usa cuando Android ha tirado la app de memoria
+  pero mantiene el servicio, y eso no se sabe forzar en el emulador.
+  **Antes de dar esto por bueno se descartaron MIDIENDO dos sospechas que
+  parecían obvias y eran falsas**: fusionar el territorio (11-34 ms, y NO crece
+  con la carrera) y buscar el círculo cerrado (también barato). **Regla: en un
+  bucle que corre cada pocos segundos, nunca leer-modificar-escribir una
+  estructura que crece.**
 - **MapView con `display:'none'`**: en versiones < 1.10.0 ocultaba el mapa durante el run pero al volver visible RN-Maps no refrescaba los polígonos. Solución: Modal absoluto encima, no `display:'none'`.
 - **`pathSegments` no limpiado en stopRun**: dejaba dashes naranjas sobre las celdas tras la carrera. Limpiar siempre.
 - **JWT_ACCESS_SECRET vacío**: `TextEncoder().encode(undefined)` produce secret literal "undefined" → cualquiera firma tokens. Fail-fast SIEMPRE si missing.

@@ -167,18 +167,56 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
   }
   // Nadie escuchando (la tarea corre en un contexto JS aparte): a disco, y se
   // repasa al volver a la app. Los repetidos los descarta el registro.
+  //
+  // CADA TANDA EN SU PROPIA CLAVE, nunca una sola que se relee y se reescribe.
+  // Antes esto hacía leer-interpretar-reescribir TODA la carrera cada tres
+  // segundos, y el coste crecía con los minutos. Medido el 13-oct-2026: en una
+  // hora son **73 MB escritos en disco** para guardar 125 KB de puntos, y la
+  // última guardada cuesta seis veces más que la primera. Con la pantalla
+  // apagada —o sea, corriendo— es cuando pasa. Un corredor avisó de que la app
+  // se le cerraba "a los 60 minutos" y perdía el cierre del círculo.
+  //
+  // Así cada escritura cuesta lo mismo el minuto 1 que el 60, y juntarlas se
+  // hace UNA vez al volver a la app.
   try {
-    const raw = await AsyncStorage.getItem(BG_BUFFER_KEY);
-    const existing: GpsReading[] = raw ? JSON.parse(raw) : [];
-    await AsyncStorage.setItem(BG_BUFFER_KEY, JSON.stringify([...existing, ...readings]));
+    const clave = `${BG_BUFFER_KEY}:${Date.now()}:${contador++}`;
+    await AsyncStorage.setItem(clave, JSON.stringify(readings));
   } catch {}
 });
 
+/** Para que dos tandas del mismo milisegundo no compartan clave. */
+let contador = 0;
+
+/** Recoge las tandas sueltas que dejó la tarea de fondo, en orden, y las borra.
+ *
+ *  Lee también la clave ANTIGUA (la de una sola bolsa): quien actualice la app
+ *  con una carrera a medias tendría puntos guardados del modo viejo, y
+ *  perderlos sería justo lo que se viene a evitar. */
 async function loadAndClearPersistedBgBuffer(): Promise<GpsReading[]> {
   try {
-    const raw = await AsyncStorage.getItem(BG_BUFFER_KEY);
-    await AsyncStorage.removeItem(BG_BUFFER_KEY);
-    return raw ? (JSON.parse(raw) as GpsReading[]) : [];
+    const todas = await AsyncStorage.getAllKeys();
+    const mias = todas.filter(k => k.startsWith(`${BG_BUFFER_KEY}:`));
+    const viejo = todas.includes(BG_BUFFER_KEY) ? [BG_BUFFER_KEY] : [];
+    if (mias.length === 0 && viejo.length === 0) return [];
+
+    // Por el número de la clave, que es la hora: AsyncStorage no promete orden.
+    const orden = (k: string) => {
+      const t = Number(k.split(':')[2]);
+      return Number.isFinite(t) ? t : 0;
+    };
+    mias.sort((a, b) => orden(a) - orden(b) || a.localeCompare(b));
+
+    const pares = await AsyncStorage.multiGet([...viejo, ...mias]);
+    const puntos: GpsReading[] = [];
+    for (const [, raw] of pares) {
+      if (!raw) continue;
+      try { puntos.push(...(JSON.parse(raw) as GpsReading[])); } catch {}
+    }
+    await AsyncStorage.multiRemove([...viejo, ...mias]);
+    // Por si una tanda vieja se coló fuera de orden: el registro descarta los
+    // repetidos, pero un punto con hora anterior le parecería un salto atrás.
+    puntos.sort((a, b) => a.timestamp - b.timestamp);
+    return puntos;
   } catch {
     return [];
   }
