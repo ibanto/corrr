@@ -339,7 +339,7 @@ export default function PerfilScreen({ user, onLogout }: Props) {
       // denegado parece simplemente "sin datos"), así que se explica dónde mirar.
       Alert.alert(
         'Listo',
-        'Lo que grabes con Strava, con el reloj o con otra app entrará solo al abrir CORRR, y te dará territorio igual.\n\nSi usas Strava, actívalo también allí: Ajustes → Gestionar apps y dispositivos → Salud → Enviar a Salud.\n\nY si no aparece ninguna carrera, mira en Ajustes → Salud → Acceso a datos y dispositivos → CORRR que pueda leer Entrenamientos y Rutas de entrenamiento.',
+        'Lo que grabes con el reloj o con otra app que escriba en Salud entrará solo al abrir CORRR, y te dará territorio igual.\n\nSi la app con la que grabas tiene un ajuste de "Enviar a Salud", actívalo también allí.\n\nY si no aparece ninguna carrera, mira en Ajustes → Salud → Acceso a datos y dispositivos → CORRR que pueda leer Entrenamientos y Rutas de entrenamiento.',
       );
     } catch {
       Alert.alert('No se pudo conectar', 'Inténtalo de nuevo en un momento.');
@@ -574,12 +574,16 @@ export default function PerfilScreen({ user, onLogout }: Props) {
           pide: el servidor responde 403 y aquí no se monta nada. */}
       {profileData?.es_admin && <ResumenAdminPanel />}
 
-      {/* "Tus otras carreras" (vía Salud), solo iPhone: lo que se graba con
-          Strava, con el Apple Watch o con cualquier app que escriba en Salud
-          entra solo al abrir CORRR. Se llamaba "Apple Watch" y eso lo hundía:
-          quien no tiene reloj —la mayoría— ni lo miraba, aunque es justo el
-          que más lo necesita, porque graba con Strava. Ver
-          services/healthkit.ts. */}
+      {/* "Tus otras carreras" (vía Salud), solo iPhone: lo que se graba con el
+          Apple Watch o con cualquier app que escriba en Salud entra solo al
+          abrir CORRR. Se llamaba "Apple Watch" y eso lo hundía: quien no tiene
+          reloj —la mayoría— ni lo miraba, aunque es justo el que más lo
+          necesita. Ver services/healthkit.ts.
+
+          NO SE NOMBRA A STRAVA en ningún texto que vea el usuario (Iban,
+          13-oct-2026): CORRR no se sincroniza con Strava y decirlo promete
+          algo que no existe. Lo que hace es leer SALUD, y da igual qué app
+          haya escrito ahí. */}
       {appleWatchSupported() && (
         <View style={styles.watchSection}>
           <View style={styles.watchHeader}>
@@ -588,8 +592,8 @@ export default function PerfilScreen({ user, onLogout }: Props) {
           </View>
           <Text style={styles.watchSub}>
             {watchConnected
-              ? 'Activado. Lo que grabes con Strava, con el reloj o con otra app entra solo al abrir CORRR.'
-              : '¿Corres con Strava o con el reloj? Que esas carreras también te den territorio, sin repetirlas.'}
+              ? 'Activado. Lo que grabes con el reloj o con otra app que escriba en Salud entra solo al abrir CORRR.'
+              : '¿Grabas con el reloj o con otra app? Que esas carreras también te den territorio, sin repetirlas.'}
           </Text>
           <TouchableOpacity
             style={[styles.watchButton, watchConnected && styles.watchButtonSecondary]}
@@ -605,24 +609,6 @@ export default function PerfilScreen({ user, onLogout }: Props) {
               </Text>
             )}
           </TouchableOpacity>
-        </View>
-      )}
-
-      {/* En Android no hay forma gratis de traer las carreras de Strava: a
-          Health Connect solo les manda tiempo, distancia y calorías, sin el
-          recorrido, y su API está cerrada a las cuentas sin suscripción. Lo
-          único que funciona hoy es llevar las dos apps a la vez, así que al
-          menos que se sepa. (El detector automático va en la siguiente.) */}
-      {!appleWatchSupported() && (
-        <View style={styles.watchSection}>
-          <View style={styles.watchHeader}>
-            <Ionicons name="layers-outline" size={20} color={colors.orange} />
-            <Text style={styles.watchTitle}>¿Corres con Strava?</Text>
-          </View>
-          <Text style={styles.watchSub}>
-            Llévalas a la vez: Strava te guarda la carrera y CORRR te da el territorio.
-            Estamos en que CORRR se entere solo, sin abrir nada.
-          </Text>
         </View>
       )}
 

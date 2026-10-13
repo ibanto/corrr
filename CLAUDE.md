@@ -16,10 +16,10 @@ El evento de Halloween va del **viernes 23 de octubre al domingo 1 de noviembre*
 
 ### Lo siguiente que hay que hacer
 
-1. **Que Iban suba la 1.11.11 (32) / vc85**:
-   `apps/mobile/builds/corrr-v1.11.11-vc85.aab` y el archivo
-   `CORRR-1.11.11-build32.xcarchive` en Organizer. **Las builds las lanzo YO; él
-   las recoge y las sube.** Todo lo anterior (vc80-84, build 26-31) está DESCARTADO.
+1. **Que Iban suba la 1.11.11 (33) / vc86**:
+   `apps/mobile/builds/corrr-v1.11.11-vc86.aab` y el archivo
+   `CORRR-1.11.11-build33.xcarchive` en Organizer. **Las builds las lanzo YO; él
+   las recoge y las sube.** Todo lo anterior (vc80-85, build 26-32) está DESCARTADO.
    Las dos pasadas por `node apps/mobile/scripts/comprobar-paquete.mjs`.
 2. **Que la pruebe**: pisar un fantasma y ver qué le toca, que el resumen los
    enseñe uno por línea, y una carrera larga cerrando el círculo (a ver si el
@@ -49,7 +49,8 @@ cuánto llevas y QUÉ te falta para los +50 puntos · y los arreglos de puntos
 partidos, vueltas grandes sin rellenar, calabazas que tardaban 18 s, el botón
 de centrar el mapa, el número del montón cortado en Android, la chapa de la
 pestaña que se salía de la pantalla y **la carrera que se reescribía entera en
-el disco cada tres segundos** con la pantalla apagada (§9).
+el disco cada tres segundos** con la pantalla apagada (§9) · y **fuera todo
+lo que nombraba a Strava** en el perfil.
 
 ### Para DESPUÉS de Halloween
 
@@ -464,6 +465,15 @@ verdad, compilar en **Release** (lleva el código dentro y no necesita nada):
 - **Un `versionCode` se gasta en cuanto EMPIEZA a subirse** (2-oct-2026): Play Console lo reserva al iniciar la subida, aunque se cancele o quede en borrador, y luego contesta *"El código de versión 69 ya se ha usado"*. Pasó al empezar a subir el vc69 a prueba abierta por error y cambiar a prueba interna. **Si pasa: subir el número, reconstruir el AAB y listo** — no hay forma de liberar el gastado. Por eso conviene no subir "a ver qué pasa".
 - **Pedir ACTIVITY_RECOGNITION dejó fuera a 18.713 modelos de móvil** (2-oct-2026): Google Play da por hecho que si pides el permiso de actividad física necesitas **sensor de pasos**, y excluye de la tienda a los que no lo llevan. Lo avisa al subir el AAB ("esta versión ya no admite N dispositivos que sí admitía la anterior"), no al compilar. Arreglado declarando los sensores como OPCIONALES en el manifiesto del módulo (`uses-feature ... required="false"`). **Al añadir un permiso nuevo, mirar siempre esa advertencia de Play antes de publicar**: no es un error, es un aviso fácil de pasar por alto, y te deja la app invisible para miles de móviles.
 - **Las calabazas no se veían en ANDROID, y en iPhone sí** (3-oct-2026): los marcadores del mapa llevaban `tracksViewChanges={false}` con una `<Image>` dentro. Con eso, react-native-maps dibuja el marcador UNA vez al crearlo y no lo vuelve a mirar; en Android eso ocurre **antes de que la imagen haya cargado**, así que captura un cuadro vacío y se queda así. Síntomas: calabazas invisibles al abrir, que aparecen al mover el mapa (se crean marcadores nuevos) y vuelven a desaparecer. En iOS no pasa. **Arreglado dejando `tracksViewChanges` en true durante 1,5 s cada vez que cambia la lista** y apagándolo después — dejarlo siempre encendido redibuja cada marcador en cada fotograma y hunde el mapa. **Regla: un `<Marker>` con imagen dentro necesita ese margen al nacer.** Confirmado en el Xiaomi con la vc74: las calabazas salen a la primera.
+- **NO SE NOMBRA A STRAVA en nada que vea el usuario** (Iban, 13-oct-2026).
+  En Perfil había una tarjeta solo de Android —"¿Corres con Strava? Llévalas a
+  la vez… Estamos en que CORRR se entere solo"— que prometía una integración
+  que no existe; borrada. Y "Tus otras carreras" (iPhone) la nombraba como
+  gancho; ahora dice lo que de verdad hace: **leer SALUD**, le dé igual qué app
+  haya escrito ahí. Lo único que queda con la palabra en el código es el botón
+  de conectar, oculto desde septiembre tras `STRAVA_ENABLED = false`. Ojo: en
+  iPhone, quien tenga "Enviar a Salud" activado en Strava SÍ sigue trayendo sus
+  carreras — lo que ya no se hace es anunciarlo.
 - **La app de Strava está INACTIVA** (comprobado el 23-sep-2026 con el botón "Comprobar Strava" del panel): `403 {"resource":"Application","field":"Status","code":"Inactive"}`. Strava exige suscripción de pago al dueño de la app y limita las nuevas a 10 atletas. `STRAVA_ENABLED = false` se queda así: reactivarlo sin resolver esto deja a la gente con un botón que no lleva a ninguna parte. **La vía gratis para las carreras de Strava es el iPhone: Strava escribe la ruta en Salud y CORRR ya la importa** (ver "Tus otras carreras" en Perfil). En Android, Strava solo manda a Health Connect tiempo/distancia/calorías, sin ruta: no hay camino gratis hoy.
 - **⚠️ `apps/mobile/ios/` NO está en git** (sí `android/`): el `Podfile` con el arreglo de Xcode 27, el permiso de HealthKit en `CORRR.entitlements` y el `Info.plist` solo existen en este Mac. Si se pierde, hay que rehacerlos. Pendiente decidir si se versiona.
 
