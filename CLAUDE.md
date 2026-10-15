@@ -6,7 +6,7 @@ Instrucciones para Claude trabajando en este repo. Léelo entero antes de tocar 
 
 ## 0. Dónde estamos (leer esto primero)
 
-*Al día a 15-oct-2026, mañana. Si algo de aquí abajo contradice a este apartado, manda este.*
+*Al día a 15-oct-2026, tarde. Si algo de aquí abajo contradice a este apartado, manda este.*
 
 **En las tiendas**: 1.11.10 (Android vc67, iPhone build 17). 46 corredores.
 
@@ -16,14 +16,12 @@ El evento de Halloween va del **viernes 23 de octubre al domingo 1 de noviembre*
 
 ### Lo siguiente que hay que hacer
 
-1. **Que Iban suba la 1.11.11 (34) / vc87**:
-   `apps/mobile/builds/corrr-v1.11.11-vc87.aab` y el archivo
-   `CORRR-1.11.11-build34.xcarchive` en Organizer. **Las builds las lanzo YO; él
-   las recoge y las sube.** Todo lo anterior (vc80-86, build 26-33) está
-   DESCARTADO — **la vc86 llegó a subirse a las dos tiendas y hay que
-   sustituirla**: lleva el fallo del borrado del buffer (§9). En Play el vc86 ya
-   está gastado; en Apple la build 33 simplemente se queda sin usar.
-   Las dos pasadas por `node apps/mobile/scripts/comprobar-paquete.mjs`.
+1. **ESPERAR a que las tiendas publiquen la 1.11.11 (34) / vc87.** Subidas las
+   dos el 15-oct: Apple en "Pendiente de revisión", Google en revisión. Todo lo
+   anterior (vc80-86, build 26-33) está DESCARTADO — la vc86 llegó a subirse y
+   hubo que sustituirla porque llevaba el fallo del borrado del buffer (§9).
+   **En cuanto publique CADA una, anunciarla (§4 punto 5) — una cada vez**: si
+   se anuncia antes, a la gente le sale el aviso y en la tienda no hay nada.
 2. **Que la pruebe**: pisar un fantasma y ver qué le toca, que el resumen los
    enseñe uno por línea, y una carrera larga cerrando el círculo (a ver si el
    cuelgue de Oriol15 ha desaparecido).
@@ -70,9 +68,11 @@ Cercos repartidos a todos menos a **KarolK** — 34.644 celdas, 4.553 de otros,
 39.197 puntos. Sin cobrar **a propósito**: lo decide él. `npm run cercos` para
 ver los pendientes (solo lee).
 
-Quedan **139 calabazas de prueba** sembradas, que **caducan el 5 de octubre**.
-El interruptor está en `prueba:Ibanto`. Al terminar de probar: apagarlo y
-"Quitar las que queden sin coger".
+**Calabazas**: no queda ninguna en el mapa, las de prueba ya se quitaron. En la
+tabla siguen las **8 cogidas probando** (7 de Ibanto, 1 de fausrunner el 2-oct)
+y no se borran: desde el 15-oct **el contador es por evento** y lo de antes no
+suma (§9-bis). El interruptor de Halloween sigue en `prueba:Ibanto`; el 22 por
+la noche pasa a `todos`.
 
 ### Cómo trabajar con Iban
 
@@ -560,6 +560,21 @@ día que tiene que empezar):
 calabazas hay que poder usarlos. Arrancando el viernes 23 entran el fin de
 semana del 24-25, la semana entera y el fin de semana de Halloween. Con los
 días 29-31 (jueves a sábado) se desbloqueaban casi sin tiempo de mandarlos.
+
+**El contador es POR EVENTO** (15-oct). Las filas de `objetos` no se borran
+nunca, así que al empezar Halloween el ranking arrancaba con las 8 calabazas de
+las pruebas de octubre y con sus mensajes ya desbloqueados. Un evento se
+reconoce por su **fecha de fin**: todo lo sembrado de una vez la comparte y la
+que nace al comerse una la hereda (`objetoHasta`), así que "este evento" es la
+fecha de fin más alta que haya (`DE_ESTE_EVENTO`, en `routes/index.ts`). En
+cuanto se siembre con fin el 1 de noviembre, lo anterior deja de contar solo:
+no hay nada que reiniciar a mano, ni este año ni el que viene. Afecta a
+`/objetos/ranking` (el ranking y "las mías", que son las que desbloquean los
+mensajes) y a `/admin/objetos`; el panel enseña aparte cuántas hay guardadas de
+antes, para que se vea que no se ha borrado nada. **Los PUNTOS que dieron
+aquellas pruebas siguen en el marcador de cada uno** (Ibanto −2.600 netos entre
+calabazas, fantasmas y zombis; fausrunner +200): quitarlos sería escribir en la
+base de datos y eso lo decide Iban.
 
 **Mensajes de Halloween** (`TauntSelector.tsx`): 10 + 10 respuestas, ids **101-110**
 (los clásicos son 1-10; si se repitieran, a quien lo recibe le saldría el

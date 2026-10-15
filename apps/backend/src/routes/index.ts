@@ -2398,11 +2398,18 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
     var top = (o.top || []).map(function (t, i) {
       return (i + 1) + '. ' + esc(t.display_name) + ' — ' + t.cuantos;
     }).join('<br>') || 'Todavía no las ha cogido nadie.';
+    // Los números son los de ESTE evento: lo de las pruebas sigue guardado,
+    // pero no cuenta ni aquí ni en el ranking de la app. Se enseña el total
+    // de siempre al lado para que se vea que no se ha borrado nada.
+    var antes = (o.comidas_siempre || 0) - (o.comidas || 0);
     document.getElementById('objetos_estado').innerHTML =
       '<div class="aviso"><h3>Calabazas</h3>'
-      + '<p>En el mapa ahora: <b>' + o.libres + '</b> · cogidas: <b>' + o.comidas + '</b>'
+      + '<p>En el mapa ahora: <b>' + o.libres + '</b> · cogidas en este evento: <b>' + o.comidas + '</b>'
       + ' · por <b>' + (o.corredores || 0) + '</b> corredores</p>'
-      + '<div class="meta">' + top + '</div></div>';
+      + '<div class="meta">' + top + '</div>'
+      + (antes > 0 ? '<p class="meta">De antes de este evento hay ' + antes
+          + ' guardadas, que no cuentan para el ranking.</p>' : '')
+      + '</div>';
   }
   function cargarObjetos() { api('/admin/objetos?tipo=calabaza').then(pintarObjetos).catch(function () {}); }
   function msgObjetos(texto, ok) {
@@ -5822,12 +5829,31 @@ app.post('/admin/ajustes', { preHandler: requireAdmin }, async (req: any, reply)
   });
 });
 
+/** Lo cogido en ESTE evento y no en todos los que ha habido nunca.
+ *
+ *  El contador sale de contar filas de `objetos`, y esas filas no se borran
+ *  jamás: las de las pruebas de octubre se quedan ahí para siempre. Sin este
+ *  filtro, el ranking de Halloween arrancaba con las siete calabazas que se
+ *  comió Ibanto probando y la que pilló fausrunner el 2 de octubre, y con los
+ *  mensajes ya desbloqueados antes de empezar.
+ *
+ *  Un evento se reconoce por su FECHA DE FIN: todo lo que se siembra de una vez
+ *  lleva la misma, y la que nace al comerse una la hereda (`objetoHasta`). Así
+ *  que "este evento" es la fecha de fin más alta que haya, y en cuanto se
+ *  siembre el 22 de octubre con fin el 1 de noviembre, todo lo anterior deja de
+ *  contar solo. No hay nada que reiniciar a mano ni el año que viene tampoco.
+ *
+ *  `IS NOT DISTINCT FROM` en vez de `=` porque un objeto sin fecha de fin tiene
+ *  `hasta` a NULL, y con `=` NULL no se iguala ni a sí mismo. */
+const DE_ESTE_EVENTO = (alias: string) =>
+  `${alias}hasta IS NOT DISTINCT FROM (SELECT MAX(hasta) FROM objetos WHERE tipo = $1)`;
+
 app.get('/objetos/ranking', { preHandler: requireAuth }, async (req: any, reply) => {
   const tipo = String(req.query?.tipo ?? 'calabaza');
   const { rows } = await db.query(
     `SELECT u.id, u.display_name, COUNT(*)::int AS cuantos, SUM(o.puntos)::int AS puntos
        FROM objetos o JOIN users u ON u.id = o.tomado_por
-      WHERE o.tipo = $1 AND o.tomado_por IS NOT NULL
+      WHERE o.tipo = $1 AND o.tomado_por IS NOT NULL AND ${DE_ESTE_EVENTO('o.')}
       GROUP BY u.id, u.display_name
       ORDER BY cuantos DESC, puntos DESC
       LIMIT 20`,
@@ -5837,7 +5863,8 @@ app.get('/objetos/ranking', { preHandler: requireAuth }, async (req: any, reply)
   // va el 25.º también necesita saber cuántas lleva — con ellas se desbloquean
   // los mensajes de Halloween.
   const { rows: mias } = await db.query(
-    `SELECT COUNT(*)::int AS n FROM objetos WHERE tipo = $1 AND tomado_por = $2`,
+    `SELECT COUNT(*)::int AS n FROM objetos
+      WHERE tipo = $1 AND tomado_por = $2 AND ${DE_ESTE_EVENTO('')}`,
     [tipo, req.userId],
   );
   return reply.send({
@@ -5855,17 +5882,22 @@ app.get('/admin/objetos', { preHandler: requireAdmin }, async (req: any, reply) 
   const tipo = String(req.query?.tipo ?? 'calabaza');
   const { rows } = await db.query(
     `SELECT
-       COUNT(*) FILTER (WHERE tomado_por IS NULL AND (hasta IS NULL OR hasta > NOW()))::int AS libres,
-       COUNT(*) FILTER (WHERE tomado_por IS NOT NULL)::int AS comidas,
-       COUNT(DISTINCT tomado_por)::int AS corredores,
-       MIN(desde) AS desde, MAX(hasta) AS hasta
+       COUNT(*) FILTER (WHERE tomado_por IS NULL AND (hasta IS NULL OR hasta > NOW())
+                          AND ${DE_ESTE_EVENTO('')})::int AS libres,
+       COUNT(*) FILTER (WHERE tomado_por IS NOT NULL
+                          AND ${DE_ESTE_EVENTO('')})::int AS comidas,
+       COUNT(DISTINCT tomado_por) FILTER (WHERE ${DE_ESTE_EVENTO('')})::int AS corredores,
+       COUNT(*) FILTER (WHERE tomado_por IS NOT NULL)::int AS comidas_siempre,
+       MIN(desde) FILTER (WHERE ${DE_ESTE_EVENTO('')}) AS desde,
+       MAX(hasta) AS hasta
      FROM objetos WHERE tipo = $1`,
     [tipo],
   );
   const { rows: top } = await db.query(
     `SELECT u.display_name, COUNT(*)::int AS cuantos
        FROM objetos o JOIN users u ON u.id = o.tomado_por
-      WHERE o.tipo = $1 GROUP BY u.display_name ORDER BY cuantos DESC LIMIT 5`,
+      WHERE o.tipo = $1 AND ${DE_ESTE_EVENTO('o.')}
+      GROUP BY u.display_name ORDER BY cuantos DESC LIMIT 5`,
     [tipo],
   );
   return reply.send({ tipo, ...rows[0], top });
