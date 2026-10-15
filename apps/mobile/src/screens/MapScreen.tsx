@@ -187,6 +187,19 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
 /** Para que dos tandas del mismo milisegundo no compartan clave. */
 let contador = 0;
 
+/** Tira TODO lo que haya dejado la tarea de fondo.
+ *
+ *  OJO: al pasar a una clave por tanda (13-oct-2026) el `removeItem` de
+ *  siempre dejó de valer — solo borraba la clave vieja, y las nuevas se
+ *  quedaban ahí para colarse en la carrera SIGUIENTE. Se limpia por prefijo. */
+async function borrarBufferDeFondo(): Promise<void> {
+  try {
+    const todas = await AsyncStorage.getAllKeys();
+    const mias = todas.filter(k => k === BG_BUFFER_KEY || k.startsWith(`${BG_BUFFER_KEY}:`));
+    if (mias.length > 0) await AsyncStorage.multiRemove(mias);
+  } catch {}
+}
+
 /** Recoge las tandas sueltas que dejó la tarea de fondo, en orden, y las borra.
  *
  *  Lee también la clave ANTIGUA (la de una sola bolsa): quien actualice la app
@@ -1057,7 +1070,14 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
 
       const persisted = await loadAndClearPersistedBgBuffer();
       persisted.sort((a, b) => a.timestamp - b.timestamp);
-      for (const r of persisted) handleReadingRef.current(r, false);
+      // Solo lo de ESTA carrera. Si quedaran puntos de una anterior —porque la
+      // app murió sin poder limpiarlos— meterlos aquí le sumaría a la de ahora
+      // un trozo que nadie ha corrido hoy.
+      const arranque = runStartTimeRef.current ?? 0;
+      for (const r of persisted) {
+        if (r.timestamp < arranque) continue;
+        handleReadingRef.current(r, false);
+      }
 
       // Reanudar el vigilante de primer plano si se perdió
       if (isRunningRef.current && !locationRef.current) {
@@ -1070,6 +1090,30 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
 
     const sub = AppState.addEventListener('change', handleAppState);
     return () => { sub.remove(); bgReadingsListener = null; };
+  }, []);
+
+  /** Al abrir la app: si quedó un seguimiento de ubicación en marcha, matarlo.
+   *
+   *  Si Android tumba la app a mitad de carrera, `stopRun` nunca llega a
+   *  ejecutarse y el servicio de ubicación SIGUE VIVO: el corredor se queda con
+   *  "CORRR — Carrera en curso · Registrando tu recorrido" en la barra para
+   *  siempre, gastando batería, con la app cerrada y sin forma de pararlo más
+   *  que desinstalando. Lo contó un corredor el 14-oct-2026 con una foto.
+   *
+   *  Aquí no hay carrera posible: si este componente se está montando es que el
+   *  JavaScript ha arrancado de cero, así que lo que haya registrado es de una
+   *  carrera muerta. El buffer NO se toca: esos puntos son lo único que queda
+   *  de lo que corrió, y tirarlos cierra la puerta a devolvérselo. */
+  useEffect(() => {
+    (async () => {
+      try {
+        const vivo = await TaskManager.isTaskRegisteredAsync(BACKGROUND_LOCATION_TASK);
+        if (vivo) {
+          await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
+          console.warn('[BG Location] había un seguimiento huérfano de una carrera anterior; parado');
+        }
+      } catch {}
+    })();
   }, []);
 
   // Las animaciones del antiguo loading screen (pulseAnim + rotateAnim)
@@ -1955,7 +1999,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
   // que iOS ni ofrece a la primera: para la mayoría, apagar la pantalla dejaba
   // de registrar. El contador se paraba y ese tramo se perdía.
   const startBackgroundUpdates = async () => {
-    try { await AsyncStorage.removeItem(BG_BUFFER_KEY); } catch {}
+    await borrarBufferDeFondo();
     try {
       await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, BG_LOCATION_OPTIONS);
     } catch (e) {
@@ -2199,7 +2243,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       const isTask = await TaskManager.isTaskRegisteredAsync(BACKGROUND_LOCATION_TASK);
       if (isTask) await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
     } catch {}
-    try { await AsyncStorage.removeItem(BG_BUFFER_KEY); } catch {}
+    await borrarBufferDeFondo();
   };
 
   const resumeRun = async () => {
@@ -2271,7 +2315,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       const isTask = await TaskManager.isTaskRegisteredAsync(BACKGROUND_LOCATION_TASK);
       if (isTask) await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
     } catch {}
-    try { await AsyncStorage.removeItem(BG_BUFFER_KEY); } catch {}
+    await borrarBufferDeFondo();
 
     // Si no cerró loop durante la carrera, comprobar si está cerca del inicio al parar
     let cerroCirculoAlParar = false;

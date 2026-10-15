@@ -444,6 +444,30 @@ verdad, compilar en **Release** (lleva el código dentro y no necesita nada):
   con la carrera) y buscar el círculo cerrado (también barato). **Regla: en un
   bucle que corre cada pocos segundos, nunca leer-modificar-escribir una
   estructura que crece.**
+- **La notificación "Carrera en curso" se quedaba para siempre** (14-oct-2026,
+  foto de un corredor): si Android tumba la app a mitad de carrera, `stopRun`
+  nunca se ejecuta y el servicio de ubicación de expo **sigue vivo**. El
+  corredor se queda con "CORRR — Carrera en curso · Registrando tu recorrido" en
+  la barra, con la app cerrada, gastando batería y sin forma de pararlo salvo
+  desinstalando. No había NADA que limpiara al arrancar. Arreglado con un
+  `useEffect` de montaje que, si encuentra la tarea registrada, la para: si el
+  componente se está montando es que el JavaScript arrancó de cero, así que lo
+  que haya registrado es de una carrera muerta. El buffer NO se toca ahí —esos
+  puntos son lo único que queda de lo corrido (§14). Comprobado en el emulador:
+  carrera → servicio y aviso vivos → `am force-stop` → al reabrir, el servicio
+  muere y la barra queda limpia. **La marca de la tarea sobrevive al reinicio de
+  la app; el servicio, no siempre. Por eso hay que mirarlo SIEMPRE al arrancar.**
+- **Cambiar el formato del buffer y no cambiar el borrado** (13-oct-2026,
+  metido y corregido sin llegar a publicarse): al pasar a una clave por tanda,
+  los tres `AsyncStorage.removeItem(BG_BUFFER_KEY)` se quedaron buscando la
+  clave VIEJA, así que al parar una carrera las tandas nuevas seguían en disco y
+  se habrían colado en la SIGUIENTE. Medido: la distancia no se inflaría (el
+  tope de 30 km/h descarta el salto entre carreras) pero sí se volvería a
+  reclamar el territorio de la anterior, con avisos de robo a gente a la que no
+  se le quitó nada ese día. Arreglado con `borrarBufferDeFondo()`, que limpia
+  por prefijo, y con una segunda red: al recoger el buffer se descarta todo
+  punto ANTERIOR al arranque de la carrera en curso. **Al cambiar cómo se
+  GUARDA algo, buscar todos los sitios donde se BORRA.**
 - **MapView con `display:'none'`**: en versiones < 1.10.0 ocultaba el mapa durante el run pero al volver visible RN-Maps no refrescaba los polígonos. Solución: Modal absoluto encima, no `display:'none'`.
 - **`pathSegments` no limpiado en stopRun**: dejaba dashes naranjas sobre las celdas tras la carrera. Limpiar siempre.
 - **JWT_ACCESS_SECRET vacío**: `TextEncoder().encode(undefined)` produce secret literal "undefined" → cualquiera firma tokens. Fail-fast SIEMPRE si missing.
@@ -808,6 +832,20 @@ marca `es_bot` y sacarlos de:
 
 ## 14. Para DESPUÉS de Halloween
 
+- **🔴 LO PRIMERO DESPUÉS DEL EVENTO: devolver la carrera que se pierde cuando
+  Android mata la app.** Van **TRES** corredores: Oriol15 (4-oct), el que
+  escribió en catalán (13-oct) y el del audio (14-oct), que apagó la pantalla a
+  los 7 segundos, corrió entero, y al volver se encontró la app congelada en
+  "0,0 km · 7 s", luego cerrada, y la carrera perdida.
+  **Y lo que más duele: los puntos SÍ estaban guardados en su móvil.** La tarea
+  de fondo los deja en disco; lo que falta es que al arrancar la app se dé
+  cuenta de que quedó una carrera a medias y se la devuelva. No hay que cambiar
+  cómo se graba — solo rescatar lo que ya hay.
+  Ya existe la pieza que lo hace: `src/tracking/importWorkout.ts` repasa una
+  ruta entera por el mismo `RunTracker` (es lo que hace con las del reloj).
+  **Decisión de Iban (14-oct): se hace DESPUÉS de Halloween.** "Si hacemos este
+  arreglo y reventamos el mapa, la gente se desmotiva." Toca la pieza más
+  delicada a ocho días de subir, y el evento manda.
 - **Guardar la carrera en el móvil MIENTRAS se corre.** Hoy solo se guarda al
   pulsar PARAR (que es lo que mató la carrera de Oriol15 el 4-oct y ya está
   arreglado), y en segundo plano. Con la app abierta en pantalla, los puntos
