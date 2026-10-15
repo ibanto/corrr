@@ -97,7 +97,7 @@ Y ADEMÁS
 - **En App Store Connect, escribe exactamente `1.11.11`** al crear la versión.
   Si pones otro número, en la ficha sale uno y dentro de la app hay otro — que
   es lo que pasó con la "1.11.7".
-- **En Play**, sube `corrr-v1.11.11-vc86.aab` y comprueba que el código de
-  versión sea **86**.
+- **En Play**, sube `corrr-v1.11.11-vc87.aab` y comprueba que el código de
+  versión sea **87**.
 - Las notas de arriba **mencionan el 23 de octubre**. Si el calendario se mueve,
   hay que cambiar el texto, o quitar la fecha y dejar solo "llega Halloween".

@@ -6,7 +6,7 @@ Instrucciones para Claude trabajando en este repo. Léelo entero antes de tocar 
 
 ## 0. Dónde estamos (leer esto primero)
 
-*Al día a 13-oct-2026, tarde. Si algo de aquí abajo contradice a este apartado, manda este.*
+*Al día a 15-oct-2026, mañana. Si algo de aquí abajo contradice a este apartado, manda este.*
 
 **En las tiendas**: 1.11.10 (Android vc67, iPhone build 17). 46 corredores.
 
@@ -16,10 +16,13 @@ El evento de Halloween va del **viernes 23 de octubre al domingo 1 de noviembre*
 
 ### Lo siguiente que hay que hacer
 
-1. **Que Iban suba la 1.11.11 (33) / vc86**:
-   `apps/mobile/builds/corrr-v1.11.11-vc86.aab` y el archivo
-   `CORRR-1.11.11-build33.xcarchive` en Organizer. **Las builds las lanzo YO; él
-   las recoge y las sube.** Todo lo anterior (vc80-85, build 26-32) está DESCARTADO.
+1. **Que Iban suba la 1.11.11 (34) / vc87**:
+   `apps/mobile/builds/corrr-v1.11.11-vc87.aab` y el archivo
+   `CORRR-1.11.11-build34.xcarchive` en Organizer. **Las builds las lanzo YO; él
+   las recoge y las sube.** Todo lo anterior (vc80-86, build 26-33) está
+   DESCARTADO — **la vc86 llegó a subirse a las dos tiendas y hay que
+   sustituirla**: lleva el fallo del borrado del buffer (§9). En Play el vc86 ya
+   está gastado; en Apple la build 33 simplemente se queda sin usar.
    Las dos pasadas por `node apps/mobile/scripts/comprobar-paquete.mjs`.
 2. **Que la pruebe**: pisar un fantasma y ver qué le toca, que el resumen los
    enseñe uno por línea, y una carrera larga cerrando el círculo (a ver si el
