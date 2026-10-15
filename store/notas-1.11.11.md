@@ -1,4 +1,4 @@
-# Notas de la versión 1.11.11 (Android vc81 · iPhone build 28)
+# Notas de la versión 1.11.11 (Android vc87 · iPhone build 34)
 
 Las de Apple y las de Google **no se sincronizan solas**: hay que pegarlas en
 los dos sitios, y si cambias una, acordarse de la otra.
@@ -86,11 +86,27 @@ Y ADEMÁS
 · El resumen de la carrera explica de dónde sale cada punto.
 · Los puntos por carrera ahora dependen de los kilómetros que hagas.
 · Tu territorio y el de tus rivales, con colores que no se repiten.
-· En Android, el móvil te avisa si detecta que has salido a correr.
+· Buscador de ciudad en el mapa.
 · Si la app falla al guardar una carrera, ya no se pierde.
 ```
 
+> **OJO, y es lo que tumbó el envío del 15 de octubre**: aquí NO se nombra a
+> Android, ni a Google Play, ni a Strava, ni a ninguna otra plataforma. Apple lo
+> rechaza por la directriz **2.3.10** ("metadatos precisos"), y rechaza la
+> versión ENTERA, no solo el texto. La línea que cayó era *"En Android, el móvil
+> te avisa si detecta que has salido a correr"*. Las notas de Google Play sí
+> pueden decir lo que quieran: son dos textos distintos y no se copian.
+
 ---
+
+## Antes de darle a "Enviar para revisión" en Apple
+
+1. **Comprobar la cuenta de revisión**: panel → Herramientas → *Cuenta para la
+   revisión de Apple* → **"¿Está viva?"**. Si dice que no existe, el botón de al
+   lado la crea. El 15-oct tumbaron la versión por esto (directriz **2.1**): las
+   notas decían que `applereview@corrr.es` estaba creada y **nunca lo estuvo**.
+2. **Releer el texto de "Novedades"** buscando la palabra Android, Google o
+   Strava. Si aparece alguna, fuera (directriz **2.3.10**).
 
 ## Avisos para el día 19
 

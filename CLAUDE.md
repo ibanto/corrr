@@ -16,10 +16,15 @@ El evento de Halloween va del **viernes 23 de octubre al domingo 1 de noviembre*
 
 ### Lo siguiente que hay que hacer
 
-1. **ESPERAR a que las tiendas publiquen la 1.11.11 (34) / vc87.** Subidas las
-   dos el 15-oct: Apple en "Pendiente de revisión", Google en revisión. Todo lo
-   anterior (vc80-86, build 26-33) está DESCARTADO — la vc86 llegó a subirse y
-   hubo que sustituirla porque llevaba el fallo del borrado del buffer (§9).
+1. **APPLE RECHAZÓ la 1.11.11 (34) el 15-oct**, por dos cosas de METADATOS —
+   el paquete está bien y **no hace falta build nueva** (§15):
+   · **2.3.10**: la línea *"En Android, el móvil te avisa…"* en "Novedades".
+     Ya está fuera de `store/notas-1.11.11.md`; hay que pegarlo en la ficha.
+   · **2.1**: no pudieron entrar con `applereview@corrr.es` — **esa cuenta no
+     existía**. Ahora se crea desde el panel (Herramientas → *Cuenta para la
+     revisión de Apple*). **Que Iban le dé al botón** y luego reenvíe.
+   Google sigue en revisión, sin novedad. Todo lo anterior (vc80-86, build
+   26-33) está DESCARTADO.
    **En cuanto publique CADA una, anunciarla (§4 punto 5) — una cada vez**: si
    se anuncia antes, a la gente le sale el aviso y en la tienda no hay nada.
 2. **Que la pruebe**: pisar un fantasma y ver qué le toca, que el resumen los
@@ -711,6 +716,44 @@ podrían no estar puestas sin que nadie se entere. Son dos `SELECT` de nada.
   alguien se cambia de nombre, sus avisos viejos se quedan huérfanos y podría
   heredarlos quien coja ese nombre después. Arreglarlo de verdad es guardar el
   identificador en `avisos`; no corre prisa con 46 corredores que se conocen.
+
+---
+
+## 15. El rechazo de Apple del 15-oct-2026 (y cómo no repetirlo)
+
+Dos motivos, los dos de **metadatos**: el paquete (build 34) estaba bien y no
+hizo falta compilar nada.
+
+**2.3.10 — nombrar a otra plataforma.** En "Novedades de esta versión" había
+*"En Android, el móvil te avisa si detecta que has salido a correr"*. Apple no
+admite referencias a Android, Google Play ni a apps de la competencia en los
+textos de la ficha, y rechaza la VERSIÓN entera, no solo el texto. Las notas de
+Google Play sí pueden decirlo: son dos textos distintos y **no se copian solos**
+—que es justo por lo que se coló—. El texto bueno está en
+`store/notas-1.11.11.md`, con el aviso al lado.
+
+**2.1 — la cuenta de prueba no existía.** `store/apple-review-notes.md` decía
+desde hacía meses que `applereview@corrr.es` estaba *"already created, verified
+and ready"*, y **en la base de datos no había ninguna cuenta con ese correo**.
+Lo más probable es que se completara el borrado al grabar el vídeo del flujo de
+"Eliminar cuenta" — el propio documento avisaba de no hacerlo.
+
+Lo peligroso es que **es la única cuenta de CORRR que no usa nadie**: si se cae,
+no hay ningún corredor que se queje, no sale en ningún contador (el resumen y
+las campañas ya dejan fuera cualquier `@corrr.es`), y el único que se entera es
+Apple, rechazando. Por eso ahora se crea y se comprueba desde el panel
+(Herramientas → *Cuenta para la revisión de Apple*, endpoints
+`POST`/`GET /admin/cuenta-revision`), la contraseña se escribe ahí y no está en
+el código, y `panel-check.mjs` vigila que los dos botones sigan enganchados.
+
+**Regla: antes de enviar a Apple, el botón "¿Está viva?" y una lectura del
+texto de "Novedades" buscando Android, Google o Strava.** Las dos cosas están
+escritas como paso 1 y 2 en `store/notas-1.11.11.md`.
+
+De paso se limpió lo que quedaba de Strava en los textos de Apple: la ficha
+prometía *"IMPORTA DESDE STRAVA"* y *"Integración con Strava"*, y esa conexión
+está apagada desde septiembre (§9). Lo que de verdad hace el iPhone es leer
+**Salud**, y así se cuenta ahora en las notas de revisión.
 
 ---
 

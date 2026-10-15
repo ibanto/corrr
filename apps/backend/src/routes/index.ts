@@ -2181,6 +2181,28 @@ robo (+2 para él, −1 para el dueño, que recibe un aviso). Las libres valen +
 </form>
 </div>
 <div class="caja">
+<h2>Cuenta para la revisión de Apple</h2>
+<p class="nota">Apple exige una cuenta que funcione <b>con cada envío</b>, y si no pueden entrar
+rechazan la versión entera. <b>Comprueba que está viva antes de darle a enviar</b>: el 15 de octubre
+de 2026 tumbaron la 1.11.11 porque esta cuenta no existía.</p>
+<p class="nota">Nace verificada (detrás de ese correo no hay buzón) y <b>sin</b> marca de
+administrador, para que vean la app igual que cualquiera. No cuenta en el resumen ni recibe correos.
+Si ya existe, este botón le pone la contraseña nueva y la deja lista.</p>
+<form class="form" id="fcr">
+  <label class="campo">Correo
+    <input id="cr_email" value="applereview@corrr.es"></label>
+  <label class="campo">Contraseña (la misma que pongas en App Store Connect)
+    <input id="cr_pass" placeholder="ocho letras o más"></label>
+  <label class="campo">Nombre que se ve
+    <input id="cr_nombre" value="AppleReview"></label>
+  <label class="campo">Ciudad
+    <input id="cr_ciudad" value="Bilbao"></label>
+  <button class="btn" id="cr_crear" type="button">Crear o reparar la cuenta</button>
+  <button class="mini" id="cr_ver" type="button">¿Está viva?</button>
+  <div id="cr_msg" class="resultado" style="display:none"></div>
+</form>
+</div>
+<div class="caja">
 <h2>Strava</h2>
 <p class="nota">Comprueba si nuestra app de Strava sigue funcionando con las claves de siempre.
 La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es anterior.</p>
@@ -2492,6 +2514,40 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
       msgObjetos('Quitadas ' + rs[0].quitadas + ' calabazas y ' + (rs[1].quitadas + rs[2].quitadas) + ' fantasmas.', true);
       cargarObjetos();
     }).catch(function (e) { msgObjetos(e.message, false); });
+  });
+  function msgRevision(texto, ok) {
+    var m = document.getElementById('cr_msg');
+    m.style.display = 'block';
+    m.style.color = ok ? '#4caf50' : '#f44336';
+    m.style.borderLeftColor = ok ? '#4caf50' : '#f44336';
+    m.textContent = (ok ? '\u2713 ' : '\u2717 ') + texto;
+  }
+  document.getElementById('cr_crear').addEventListener('click', function () {
+    var correo = val('cr_email');
+    if (!confirm('Se va a crear (o reparar) la cuenta ' + correo + ' con la contrasena escrita. Seguimos?')) return;
+    msgRevision('Un momento...', true);
+    api('/admin/cuenta-revision', { method: 'POST', body: JSON.stringify({
+      email: correo, password: document.getElementById('cr_pass').value,
+      nombre: val('cr_nombre'), ciudad: val('cr_ciudad'),
+    }) }).then(function (r) {
+      msgRevision(r.creada
+        ? 'Cuenta creada y verificada. Ya puede entrar quien revise.'
+        : 'Ya existia: le he puesto la contrasena nueva y la he dejado verificada.', true);
+    }).catch(function (e) { msgRevision(e.message, false); });
+  });
+  document.getElementById('cr_ver').addEventListener('click', function () {
+    msgRevision('Mirando...', true);
+    api('/admin/cuenta-revision?email=' + encodeURIComponent(val('cr_email'))).then(function (r) {
+      if (!r.existe) { msgRevision('NO EXISTE. Apple no podria entrar: dale al boton de arriba.', false); return; }
+      if (!r.puedeEntrar) {
+        msgRevision('Existe pero NO puede entrar'
+          + (r.tieneClave ? '' : ' (no tiene contrasena)')
+          + (r.verificada ? '' : ' (sin verificar)') + '. Dale al boton de arriba.', false);
+        return;
+      }
+      msgRevision('Viva y lista: entra como "' + r.nombre + '"'
+        + (r.esAdmin ? ' OJO: tiene marca de administrador, veria el resumen' : '') + '.', !r.esAdmin);
+    }).catch(function (e) { msgRevision(e.message, false); });
   });
   function administrador(dar) {
     var m = document.getElementById('ad_msg');
@@ -5726,6 +5782,87 @@ app.post('/admin/administrador', { preHandler: requireAdmin }, async (req: any, 
   );
   if (rows.length === 0) return reply.status(404).send({ error: `No hay nadie con nombre o email "${quien}"` });
   return reply.send({ ok: true, quienes: rows.map((r: any) => r.display_name), dar });
+});
+
+/** La cuenta con la que entra quien revisa la app en Apple.
+ *
+ *  Apple EXIGE una cuenta que funcione con cada envío, y en el de octubre de
+ *  2026 tumbaron la versión por esto (directriz 2.1): las notas de revisión
+ *  decían que `applereview@corrr.es` estaba "creada y verificada" y **nunca se
+ *  llegó a crear**. Nadie lo notó porque es la única cuenta de CORRR que no usa
+ *  ninguna persona: solo se entera Apple, y se entera rechazando.
+ *
+ *  Por eso se crea desde aquí y no a mano en la base de datos: así se puede
+ *  rehacer en un minuto cada vez que haga falta, y comprobar que sigue viva
+ *  antes de enviar. La contraseña se escribe en el panel y no está en el
+ *  código — este repositorio es público.
+ *
+ *  Nace VERIFICADA porque no hay buzón detrás de ese correo: el `@corrr.es` es
+ *  solo un nombre, y el correo de verificación no llegaría a ninguna parte.
+ *  Y nace normal y corriente, SIN la marca de administrador: quien revisa tiene
+ *  que ver exactamente la misma app que cualquiera.
+ *
+ *  No ensucia nada: los contadores del resumen y las campañas de correo ya
+ *  dejan fuera cualquier dirección `@corrr.es`. */
+app.post('/admin/cuenta-revision', { preHandler: requireAdmin }, async (req: any, reply) => {
+  const email = String(req.body?.email ?? '').trim().toLowerCase();
+  const password = String(req.body?.password ?? '');
+  const nombre = String(req.body?.nombre ?? 'AppleReview').trim();
+  const ciudad = String(req.body?.ciudad ?? 'Bilbao').trim();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return reply.status(400).send({ error: 'Ese correo no vale' });
+  }
+  if (password.length < 8) {
+    return reply.status(400).send({ error: 'La contraseña tiene que tener 8 letras o más' });
+  }
+  const ph = await hash(password);
+
+  const { rows: ya } = await db.query('SELECT id FROM users WHERE LOWER(email) = $1', [email]);
+  if (ya.length) {
+    // Ya estaba: se le pone la contraseña nueva y se deja verificada. Sirve
+    // igual para arreglarla si alguien la tocó, sin tener que borrarla.
+    await db.query(
+      `UPDATE users SET password_hash = $2, email_verified = TRUE, verify_token = NULL,
+                        es_admin = FALSE
+        WHERE id = $1`, [ya[0].id, ph]);
+    return reply.send({ ok: true, creada: false, email, nombre: null });
+  }
+
+  // El nombre visible es único en toda la app, así que si estuviera cogido se
+  // dice en vez de reventar con un error de base de datos.
+  const { rows: choca } = await db.query(
+    'SELECT id FROM users WHERE LOWER(display_name) = LOWER($1)', [nombre]);
+  if (choca.length) {
+    return reply.status(400).send({ error: `El nombre "${nombre}" ya lo tiene otro corredor` });
+  }
+
+  const { rows } = await db.query(
+    `INSERT INTO users (email, password_hash, display_name, city, email_verified, age_confirmed_at)
+     VALUES ($1,$2,$3,$4,TRUE,NOW()) RETURNING id`,
+    [email, ph, nombre, ciudad]);
+  await db.query('INSERT INTO user_stats (user_id) VALUES ($1)', [rows[0].id]).catch(() => {});
+  return reply.send({ ok: true, creada: true, email, nombre });
+});
+
+/** ¿Está viva la cuenta de revisión? Se mira ANTES de enviar a Apple. No
+ *  devuelve la contraseña —no se puede, se guarda cifrada— pero sí lo que hace
+ *  que el acceso falle: que no exista, que no tenga contraseña o que esté sin
+ *  verificar. */
+app.get('/admin/cuenta-revision', { preHandler: requireAdmin }, async (req: any, reply) => {
+  const email = String((req.query as any)?.email ?? '').trim().toLowerCase();
+  if (!email) return reply.status(400).send({ error: 'Falta el correo' });
+  const { rows } = await db.query(
+    `SELECT display_name, city, email_verified, password_hash IS NOT NULL AS tiene_clave,
+            es_admin, created_at
+       FROM users WHERE LOWER(email) = $1`, [email]);
+  if (!rows.length) return reply.send({ existe: false });
+  const u = rows[0];
+  return reply.send({
+    existe: true, nombre: u.display_name, ciudad: u.city,
+    verificada: u.email_verified, tieneClave: u.tiene_clave, esAdmin: u.es_admin,
+    desde: u.created_at,
+    puedeEntrar: u.email_verified === true && u.tiene_clave === true,
+  });
 });
 
 // ── Objetos del mapa (calabazas de Halloween y lo que venga) ────────────────

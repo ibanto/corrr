@@ -80,7 +80,10 @@ scripts.forEach((codigo, i) => {
 
 // Los botones tienen que seguir enganchados a algo: si alguien quita un id, el
 // código sigue siendo válido pero el panel deja de responder.
-const necesarios = ['fa', 'lista_avisos', 'bstrava', 'strava_msg', 'fb', 'b_quien'];
+const necesarios = ['fa', 'lista_avisos', 'bstrava', 'strava_msg', 'fb', 'b_quien',
+  // La cuenta de revisión de Apple: si este botón se cae, no hay forma de
+  // crearla y el siguiente envío a Apple se rechaza (pasó el 15-oct-2026).
+  'cr_crear', 'cr_ver'];
 for (const id of necesarios) {
   if (!html.includes(`id="${id}"`)) { console.error(`✘ Falta en el panel el elemento "${id}"`); fallos++; }
   if (!scripts.some(s => s.includes(`'${id}'`))) { console.error(`✘ Nadie usa "${id}" en el código del panel`); fallos++; }
