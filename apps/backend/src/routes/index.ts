@@ -5315,8 +5315,8 @@ app.post('/strava/webhook', async (req: any, reply) => {
 // MIN_APP_VERSION) para no tener que hacer redeploy del backend en cada
 // release. Si las env vars no están, se usan los fallbacks hardcodeados —
 // que SÍ hay que mantener sincronizados manualmente con cada subida a Play.
-const LATEST_APP_VERSION = process.env.LATEST_APP_VERSION ?? '1.11.10';
-const LATEST_APP_VC = parseInt(process.env.LATEST_APP_VC ?? '67', 10);
+const LATEST_APP_VERSION = process.env.LATEST_APP_VERSION ?? '1.11.11';
+const LATEST_APP_VC = parseInt(process.env.LATEST_APP_VC ?? '87', 10);
 const MIN_APP_VERSION = process.env.MIN_APP_VERSION ?? '1.0.0';
 
 // iOS va por su cuenta: sube a App Store cuando Apple aprueba, no cuando
