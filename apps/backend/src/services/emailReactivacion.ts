@@ -93,22 +93,22 @@ const TEXTOS: Record<Variante, {
     cierre: ['Nada de maratones.', 'Solo salir. Cerrar el círculo.', 'Te está esperando.'],
   },
   halloween: {
-    preheader: 'El 23 de octubre empieza. Actualiza la app y que no te pille dormido. 🎃',
-    intro: 'el 23 de octubre tu ciudad se va a llenar de calabazas. 🎃 Y de fantasmas, que esos muerden.',
-    circuito: 'Las pillas corriendo. Y si cierras un círculo, las que queden dentro también son tuyas.',
-    misiones: '// TRUCO O TRATO: LO QUE TE VAS A ENCONTRAR',
+    preheader: 'El 23 de octubre empieza. Actualiza la app y prepárate. 🎃',
+    intro: 'el 23 de octubre tu ciudad se llena de calabazas 🎃 y de fantasmas.',
+    circuito: 'Las pillas corriendo. Cierra un círculo y las de dentro también son tuyas.',
+    misiones: '// TRUCO O TRATO',
     boton: 'Actualizo y me apunto 🎃',
     bloque: '200 puntos<br>cada calabaza',
     hero: 'https://ibanto.github.io/corrr/email/halloween.jpg',
     asunto: ASUNTO_HALLOWEEN,
     lista: [
-      'Calabaza 🎃 — 200 puntos y un mensaje nuevo',
-      'Fantasma 👻 — o +500, o −1.000, o nada',
-      'Cierra un círculo ⭕ — las de dentro, tuyas',
+      'Calabaza 🎃 — 200 puntos',
+      'Fantasma 👻 — +500, −1.000 o nada',
+      'Círculo cerrado ⭕ — las de dentro, tuyas',
     ],
     cierre: [
-      'Del 23 de octubre al 1 de noviembre.',
-      'Actualiza la app: sin la versión nueva no las vas a ver.',
+      '23 de octubre — 1 de noviembre.',
+      'Actualiza la app o no las verás.',
       'Tu barrio no se va a defender solo. 🎃',
     ],
   },
@@ -116,6 +116,16 @@ const TEXTOS: Record<Variante, {
 
 export const PRIVACIDAD_URL = 'https://ibanto.github.io/corrr/privacy.html';
 
+/** TAMAÑOS PENSADOS PARA CUANDO NO HAY TIPOGRAFÍA CONDENSADA, que es casi
+ *  siempre. Gmail —el cliente de más de la mitad de la gente— **borra el
+ *  <link> de Google Fonts y el <style>**, así que Oswald no llega nunca y el
+ *  navegador cae en Helvetica, que es mucho más ancha. Con los tamaños de
+ *  antes, en un iPhone cada frase ocupaba cuatro líneas y el correo parecía
+ *  un scroll sin fin (lo vio Iban el 16-oct en su móvil).
+ *
+ *  Así que los tamaños se eligen para que quepa CON LA ANCHA, no con la
+ *  condensada: donde sí carga Oswald se ve más pequeño de lo que podría, y
+ *  eso es preferible a que no quepa donde lo lee la mayoría. */
 const NARANJA = '#FF5500';
 const CONDENSADA = "'Oswald','Arial Narrow','Roboto Condensed','sans-serif-condensed','Helvetica Neue',Arial,sans-serif";
 const MONO = "'IBM Plex Mono','Courier New',Courier,monospace";
@@ -135,8 +145,8 @@ const linea = `<tr><td style="padding:10px 0 14px;"><div style="height:1px;line-
 
 function mision(num: string, texto: string): string {
   return `<tr>
-    <td width="44" style="font-family:${CONDENSADA};font-weight:600;font-size:22px;line-height:28px;color:${NARANJA};padding:3px 0;">${num}</td>
-    <td bgcolor="${NARANJA}" style="background:${NARANJA};font-family:${CONDENSADA};font-weight:600;font-size:19px;line-height:26px;color:#000000;text-transform:uppercase;padding:4px 12px;">${texto}</td>
+    <td width="44" style="font-family:${CONDENSADA};font-weight:600;font-size:17px;line-height:24px;color:${NARANJA};padding:3px 0;">${num}</td>
+    <td bgcolor="${NARANJA}" style="background:${NARANJA};font-family:${CONDENSADA};font-weight:600;font-size:15px;line-height:21px;color:#000000;text-transform:uppercase;padding:5px 10px;">${texto}</td>
   </tr>
   <tr><td colspan="2" style="height:6px;line-height:6px;font-size:6px;">&nbsp;</td></tr>`;
 }
@@ -175,19 +185,19 @@ export function htmlReactivacion({ nombre, urlAbrir, urlBaja, variante }: DatosE
         <tr><td style="font-family:${MONO};font-size:12px;letter-spacing:1px;color:${NARANJA};">// TRANSMISIÓN CORRR</td></tr>
         ${linea}
 
-        <tr><td style="font-family:${CONDENSADA};font-weight:600;font-size:20px;line-height:26px;color:#FFFFFF;text-transform:uppercase;padding-bottom:16px;">
+        <tr><td style="font-family:${CONDENSADA};font-weight:600;font-size:17px;line-height:23px;color:#FFFFFF;text-transform:uppercase;padding-bottom:16px;">
           Hola, ${n},<br>
           ${t.intro}
         </td></tr>
 
         <tr><td bgcolor="${NARANJA}" style="background:${NARANJA};padding:14px 16px;">
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
-            <td style="font-family:${CONDENSADA};font-weight:600;font-size:28px;line-height:32px;color:#000000;text-transform:uppercase;">${t.bloque}</td>
-            <td width="36" align="right" style="font-family:${CONDENSADA};font-weight:600;font-size:34px;color:#000000;">//</td>
+            <td style="font-family:${CONDENSADA};font-weight:600;font-size:22px;line-height:27px;color:#000000;text-transform:uppercase;">${t.bloque}</td>
+            <td width="36" align="right" style="font-family:${CONDENSADA};font-weight:600;font-size:26px;color:#000000;">//</td>
           </tr></table>
         </td></tr>
 
-        <tr><td style="font-family:${CONDENSADA};font-weight:600;font-size:20px;line-height:26px;color:#FFFFFF;text-transform:uppercase;padding-top:18px;">
+        <tr><td style="font-family:${CONDENSADA};font-weight:600;font-size:17px;line-height:23px;color:#FFFFFF;text-transform:uppercase;padding-top:18px;">
           ${t.circuito}
         </td></tr>
 
@@ -204,13 +214,13 @@ export function htmlReactivacion({ nombre, urlAbrir, urlBaja, variante }: DatosE
         ${linea}
 
         <tr><td style="font-family:${CONDENSADA};text-transform:uppercase;padding-bottom:22px;">
-          <div style="font-weight:600;font-size:31px;line-height:37px;color:${NARANJA};">${t.cierre[0]}</div>
-          <div style="font-weight:600;font-size:24px;line-height:30px;color:#FFFFFF;">${t.cierre[1]}</div>
-          <div style="font-weight:600;font-size:20px;line-height:28px;color:${NARANJA};">${t.cierre[2]}</div>
+          <div style="font-weight:600;font-size:23px;line-height:28px;color:${NARANJA};">${t.cierre[0]}</div>
+          <div style="font-weight:600;font-size:18px;line-height:24px;color:#FFFFFF;">${t.cierre[1]}</div>
+          <div style="font-weight:600;font-size:17px;line-height:24px;color:${NARANJA};">${t.cierre[2]}</div>
         </td></tr>
 
         <tr><td bgcolor="${NARANJA}" align="center" style="background:${NARANJA};">
-          <a href="${urlAbrir}" style="display:block;padding:16px 12px;font-family:${CONDENSADA};font-weight:600;font-size:21px;line-height:26px;color:#000000;text-decoration:none;text-transform:uppercase;letter-spacing:0.5px;">${t.boton}&nbsp;&rarr;</a>
+          <a href="${urlAbrir}" style="display:block;padding:16px 12px;font-family:${CONDENSADA};font-weight:600;font-size:18px;line-height:24px;color:#000000;text-decoration:none;text-transform:uppercase;letter-spacing:0.5px;">${t.boton}&nbsp;&rarr;</a>
         </td></tr>
 
       </table>
@@ -218,7 +228,7 @@ export function htmlReactivacion({ nombre, urlAbrir, urlBaja, variante }: DatosE
     </table>
   </td></tr>
 
-  <tr><td align="center" style="padding:30px 16px 4px;font-family:${CONDENSADA};font-weight:600;font-size:32px;line-height:36px;color:#FFFFFF;text-transform:uppercase;">CORRR Crew</td></tr>
+  <tr><td align="center" style="padding:30px 16px 4px;font-family:${CONDENSADA};font-weight:600;font-size:26px;line-height:30px;color:#FFFFFF;text-transform:uppercase;">CORRR Crew</td></tr>
   <tr><td align="center" style="padding:0 16px 30px;font-family:${MONO};font-size:12px;letter-spacing:2px;color:#777777;">CORRE.&nbsp; CONQUISTA.&nbsp; DOMINA.</td></tr>
 
   <tr><td style="padding:0 24px 36px;font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:18px;color:#8A8A8A;">
