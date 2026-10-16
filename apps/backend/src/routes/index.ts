@@ -5953,14 +5953,20 @@ async function sembrarDondeMira(
   if (caja.x1 - caja.x0 > SIEMBRA_AUTO_MAX_CAJA) return false;
   if (caja.y1 - caja.y0 > SIEMBRA_AUTO_MAX_CAJA) return false;
 
-  // (1) ¿Hay evento vivo? De aquí salen la fecha de fin y los puntos.
+  // (1) ¿Hay evento vivo? De aquí salen las fechas y los puntos.
   const { rows: ev } = await db.query(
-    `SELECT hasta, MAX(puntos)::int AS puntos FROM objetos
+    `SELECT hasta, MIN(desde) AS empieza, MAX(puntos)::int AS puntos FROM objetos
       WHERE tipo = 'calabaza'
         AND hasta IS NOT DISTINCT FROM (SELECT MAX(hasta) FROM objetos WHERE tipo = 'calabaza')
       GROUP BY hasta`);
   const hasta = ev[0]?.hasta ? new Date(ev[0].hasta) : null;
   if (!hasta || hasta <= new Date()) return false;
+  // Las que nacen aquí empiezan CUANDO EMPIEZA EL EVENTO, no cuando alguien
+  // mira el mapa. El día 22 por la noche se siembra con fecha de arranque el
+  // 23, y sin esto quien viva en una ciudad sin territorio —que es justo a
+  // quien esto va dirigido— habría podido cogerlas un día antes que el resto.
+  const empieza = ev[0]?.empieza ? new Date(ev[0].empieza) : new Date();
+  const desde = empieza > new Date() ? empieza : new Date();
 
   // (2) y (5): a quién le toca, y cuándo se le sembró por última vez.
   const { rows: yo } = await db.query(
@@ -5996,7 +6002,7 @@ async function sembrarDondeMira(
 
   const nuevas = await sembrar(db, {
     cuantos: SIEMBRA_AUTO_CUANTAS, tipo: 'calabaza', puntos: ev[0].puntos || 200,
-    desde: new Date(), hasta,
+    desde, hasta,
     caja: { x0: cx - SIEMBRA_AUTO_RADIO, x1: cx + SIEMBRA_AUTO_RADIO,
             y0: cy - SIEMBRA_AUTO_RADIO, y1: cy + SIEMBRA_AUTO_RADIO },
   }).catch(() => [] as { x: number; y: number }[]);
@@ -6005,7 +6011,7 @@ async function sembrarDondeMira(
     return false;
   }
   const fantasmas = await sembrarFantasmas(db, {
-    calabazas: nuevas, desde: new Date(), hasta, premios: PREMIOS_FANTASMA,
+    calabazas: nuevas, desde, hasta, premios: PREMIOS_FANTASMA,
   }).catch(() => 0);
   console.log(`[Objetos] sembradas ${nuevas.length} calabazas y ${fantasmas} fantasmas para ${yo[0].display_name} (${cx},${cy})`);
   return true;
