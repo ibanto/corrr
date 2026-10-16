@@ -6,9 +6,15 @@ Instrucciones para Claude trabajando en este repo. Léelo entero antes de tocar 
 
 ## 0. Dónde estamos (leer esto primero)
 
-*Al día a 16-oct-2026, tarde. Si algo de aquí abajo contradice a este apartado, manda este.*
+*Al día a 16-oct-2026, noche. Si algo de aquí abajo contradice a este apartado, manda este.*
 
-**En las tiendas**: 1.11.10 (Android vc67, iPhone build 17). 46 corredores.
+**En las tiendas**: **1.11.11** en las dos (Android vc87, iPhone build 34),
+publicadas el 16-oct. 54 personas. **Android ya anunciado** (`/app/version`
+sirve 1.11.11 / 87); **iPhone sigue anunciado en 1.11.10 a propósito**: Apple
+tarda hasta 24 h en repartir y, mientras su servicio de consulta
+(`itunes.apple.com/lookup?bundleId=app.corrr`) siga devolviendo 1.11.10,
+anunciarlo manda a la gente a una tienda donde no está. **Anunciarlo en cuanto
+cambie**: `LATEST_IOS_VERSION = 1.11.11` y `LATEST_IOS_BUILD = 34`.
 
 **LA FECHA QUE MANDA: lunes 19 de octubre**, subir la 1.11.11 a las dos tiendas.
 El evento de Halloween va del **viernes 23 de octubre al domingo 1 de noviembre**
@@ -16,33 +22,31 @@ El evento de Halloween va del **viernes 23 de octubre al domingo 1 de noviembre*
 
 ### Lo siguiente que hay que hacer
 
-1. **APPLE RECHAZÓ la 1.11.11 (34) el 15-oct**, por dos cosas de METADATOS —
-   el paquete está bien y **no hace falta build nueva** (§15):
-   · **2.3.10**: la línea *"En Android, el móvil te avisa…"* en "Novedades".
-     Ya está fuera de `store/notas-1.11.11.md`; hay que pegarlo en la ficha.
-   · **2.1**: no pudieron entrar con `applereview@corrr.es` — **esa cuenta no
-     existía**. Ahora se crea desde el panel (Herramientas → *Cuenta para la
-     revisión de Apple*). **Que Iban le dé al botón** y luego reenvíe.
-   Google sigue en revisión, sin novedad. Todo lo anterior (vc80-86, build
-   26-33) está DESCARTADO.
-   **En cuanto publique CADA una, anunciarla (§4 punto 5) — una cada vez**: si
-   se anuncia antes, a la gente le sale el aviso y en la tienda no hay nada.
-2. **TERMINAR EL MAPA DE CALLES DE ESPAÑA** (§9-bis). Estaba a medias el
-   16-oct a las 15:03: **459 de 538 trozos** de las 23 ciudades de la gente
-   registrada, y detrás van encoladas ~886 ciudades más (todo pueblo de España
-   con 2.000 habitantes o más). Se retoma solo donde se quedó:
-   `cd apps/backend && npm run calles`. **Baja a disco, NO toca la BD.**
+1. **ANUNCIAR iPhone en cuanto la App Store sirva la 1.11.11** (ver arriba).
+   El rechazo de Apple del 15-oct ya está resuelto y documentado en §15.
+2. **TERMINAR EL MAPA DE CALLES DE ESPAÑA** (§9-bis). El 16-oct por la noche
+   iba por **549 de 1.928 trozos** (745 pueblos nuevos, todos los de España
+   con 2.000 habitantes o más, ordenados de más grande a más pequeño: si hay
+   que cortar, lo que falta son los pueblos chicos). Se retoma solo donde se
+   quedó: `cd apps/backend && caffeinate -i npm run calles`. **Baja a disco,
+   NO toca la BD**, y el Mac tiene que quedarse encendido. Medido: 44 s por
+   trozo (es lo que tarda Overpass), o sea unas 20 h.
    Cuando acabe: `npm run calles:subir` — **pedir permiso a Iban antes**, es
    la única escritura en producción que queda pendiente. Solo AÑADE filas
    (`ON CONFLICT DO NOTHING`); la BD va por 181 MB de 500 y esto suma ~34.
-3. **PRUEBA PENDIENTE, y es la que falta para dar esto por bueno**: con
-   Halloween en `prueba:Ibanto` y el evento de prueba sembrado (45 calabazas,
-   hasta el 19-oct), que Iban abra el mapa, pulse la lupa y se vaya a
-   **Zaragoza**. Si aparecen calabazas, la siembra automática está confirmada
-   de punta a punta. **Burgos seguirá vacío hasta subir las calles** (ahí hay
-   cero calles y cero celdas): eso es lo esperado, no un fallo.
-4. **Sembrar para el evento** con el botón morado del panel (§9-bis). Ojo: el
+3. **Sembrar para el evento** con el botón morado del panel (§9-bis). Ojo: el
    campo "Sembrar cerca de" en gris es el EJEMPLO, no está escrito.
+4. **Mandar el correo de Halloween** (Panel → Correos → *Halloween — a TODO el
+   mundo*): 50 destinatarios, prueba primero. **El 22 por la noche o el 23 por
+   la mañana**, no antes. Y el **aviso dentro de la app** con el botón
+   "ME APUNTO" (`docs/aviso-halloween.md`), el mismo día.
+
+**Probado de punta a punta el 16-oct**: la siembra automática funciona. Con un
+evento de prueba vivo, Iban se fue a Zaragoza con el buscador del mapa y le
+salieron **25 calabazas y 66 fantasmas** que no existían; en la BD quedó su
+marca como "sembró algo". Burgos salió vacío **y es lo correcto**: ahí no hay
+ni una calle descargada ni nadie que haya corrido, y preferimos cero calabazas
+a calabazas en mitad de un campo.
 
 ### Ya funcionando en producción (servidor, sin build)
 
@@ -85,7 +89,9 @@ Cercos repartidos a todos menos a **KarolK** — 34.644 celdas, 4.553 de otros,
 39.197 puntos. Sin cobrar **a propósito**: lo decide él. `npm run cercos` para
 ver los pendientes (solo lee).
 
-**Calabazas**: no queda ninguna en el mapa, las de prueba ya se quitaron. En la
+**Calabazas**: hay **70 de PRUEBA** sembradas el 16-oct (barrio de Iban +
+Zaragoza, de la prueba de la siembra automática) que **caducan solas el 19**.
+No hace falta quitarlas y no ensucian el ranking (el contador va por evento). En la
 tabla siguen las **8 cogidas probando** (7 de Ibanto, 1 de fausrunner el 2-oct)
 y no se borran: desde el 15-oct **el contador es por evento** y lo de antes no
 suma (§9-bis). El interruptor de Halloween sigue en `prueba:Ibanto`; el 22 por
