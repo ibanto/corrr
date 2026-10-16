@@ -612,6 +612,10 @@ async function initDB() {
   // Cuándo se le sembró por última vez a esta persona por mirar el mapa, para
   // no repetirlo cada vez que mueve el dedo (ver `sembrarDondeMira`).
   await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS objetos_sembrados_at TIMESTAMPTZ`).catch(() => {});
+  // Y si aquella vez se llegó a poner algo o no. Nace en FALSE a propósito:
+  // las marcas que ya había se tratan como intento fallido y se reintentan
+  // enseguida, que es lo correcto para quien se quedó sin nada.
+  await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS objetos_sembrados_ok BOOLEAN NOT NULL DEFAULT FALSE`).catch(() => {});
 
   // ── Cells (grid-based territory, v2 model) ─────────────────────────────────
   // 10m × 10m cells (v1.8.0 — was 5m before). Identified by integer (cell_x,
@@ -5939,7 +5943,17 @@ const SIEMBRA_AUTO_CUANTAS = 25;
 const SIEMBRA_AUTO_RADIO = 150;
 /** Y a cuánto hay que mirar para decidir que "no hay nada": 5 km. */
 const SIEMBRA_AUTO_MIRAR = 500;
+/** Si se sembró de verdad, no hace falta volver a mirar en un buen rato. */
 const SIEMBRA_AUTO_ESPERA_HORAS = 6;
+/** Pero si NO se pudo poner nada, la espera tiene que ser corta.
+ *
+ *  Probándolo el 16-oct salió así: Iban miró Burgos —donde no hay ni una calle
+ *  descargada ni nadie que haya corrido— y no se pudo sembrar. Eso le marcó
+ *  las seis horas, y cuando miró Zaragoza, **donde sí había sitio**, el freno
+ *  lo paró y no salió nada. Un intento fallido no puede cerrar la puerta en
+ *  los sitios donde sí funcionaría: lo único que hay que evitar es repetir el
+ *  trabajo caro en cada movimiento del dedo, y para eso sobran 20 minutos. */
+const SIEMBRA_AUTO_ESPERA_FALLO_MIN = 20;
 /** Encuadre máximo en celdas (1.200 = 12 km): más que eso no es "su zona". */
 const SIEMBRA_AUTO_MAX_CAJA = 1200;
 /** Red de seguridad: objetos libres en toda España. */
@@ -5970,11 +5984,14 @@ async function sembrarDondeMira(
 
   // (2) y (5): a quién le toca, y cuándo se le sembró por última vez.
   const { rows: yo } = await db.query(
-    'SELECT display_name, objetos_sembrados_at FROM users WHERE id = $1', [userId]);
+    'SELECT display_name, objetos_sembrados_at, objetos_sembrados_ok FROM users WHERE id = $1', [userId]);
   if (!yo.length) return false;
   if (!ajusteLeToca(await valorAjuste('halloween'), yo[0].display_name)) return false;
   const ultima = yo[0].objetos_sembrados_at ? new Date(yo[0].objetos_sembrados_at).getTime() : 0;
-  if (Date.now() - ultima < SIEMBRA_AUTO_ESPERA_HORAS * 3600 * 1000) return false;
+  const espera = yo[0].objetos_sembrados_ok
+    ? SIEMBRA_AUTO_ESPERA_HORAS * 3600 * 1000
+    : SIEMBRA_AUTO_ESPERA_FALLO_MIN * 60 * 1000;
+  if (Date.now() - ultima < espera) return false;
 
   const cx = Math.round((caja.x0 + caja.x1) / 2);
   const cy = Math.round((caja.y0 + caja.y1) / 2);
@@ -5996,9 +6013,12 @@ async function sembrarDondeMira(
     return false;
   }
 
-  // La marca se pone ANTES de sembrar: si la siembra falla o no cabe nada, no
-  // queremos reintentarlo en cada movimiento del mapa.
-  await db.query('UPDATE users SET objetos_sembrados_at = NOW() WHERE id = $1', [userId]);
+  // La marca se pone ANTES de sembrar, para que dos peticiones a la vez no
+  // siembren dos veces. De momento como FALLIDA: si todo sale bien se cambia
+  // abajo. Así, si la siembra revienta a mitad, la espera es la corta.
+  await db.query(
+    'UPDATE users SET objetos_sembrados_at = NOW(), objetos_sembrados_ok = FALSE WHERE id = $1',
+    [userId]);
 
   const nuevas = await sembrar(db, {
     cuantos: SIEMBRA_AUTO_CUANTAS, tipo: 'calabaza', puntos: ev[0].puntos || 200,
@@ -6007,12 +6027,16 @@ async function sembrarDondeMira(
             y0: cy - SIEMBRA_AUTO_RADIO, y1: cy + SIEMBRA_AUTO_RADIO },
   }).catch(() => [] as { x: number; y: number }[]);
   if (nuevas.length === 0) {
+    // Sin calles descargadas y sin celdas corridas no hay dónde ponerlas. Se
+    // queda marcado como fallo, así que se reintenta en veinte minutos y no
+    // le estropea la siembra en el siguiente sitio que mire.
     console.warn(`[Objetos] ${yo[0].display_name} mira una zona vacía y no hay dónde sembrar (ni calles ni celdas en ${cx},${cy})`);
     return false;
   }
   const fantasmas = await sembrarFantasmas(db, {
     calabazas: nuevas, desde, hasta, premios: PREMIOS_FANTASMA,
   }).catch(() => 0);
+  await db.query('UPDATE users SET objetos_sembrados_ok = TRUE WHERE id = $1', [userId]);
   console.log(`[Objetos] sembradas ${nuevas.length} calabazas y ${fantasmas} fantasmas para ${yo[0].display_name} (${cx},${cy})`);
   return true;
 }
