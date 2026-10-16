@@ -109,7 +109,7 @@ const TEXTOS: Record<Variante, {
     cierre: [
       'Del 23 de octubre al 1 de noviembre.',
       'Actualiza la app: sin la versión nueva no las vas a ver.',
-      'Que no te pillen el barrio dormido. 🎃',
+      'Tu barrio no se va a defender solo. 🎃',
     ],
   },
 };
