@@ -19,6 +19,7 @@ import {
 } from '../services/territorio.js';
 import {
   CAMPANA_REACTIVACION, ASUNTO_REACTIVACION, CAMPANA_DOBLE, ASUNTO_DOBLE,
+  CAMPANA_HALLOWEEN, ASUNTO_HALLOWEEN,
   htmlReactivacion, textoReactivacion, Variante,
 } from '../services/emailReactivacion.js';
 
@@ -6631,6 +6632,27 @@ const SQL_PENDIENTES_DOBLE = `
       AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.user_id = u.id)
       AND NOT EXISTS (SELECT 1 FROM email_envios e WHERE e.user_id = u.id AND e.campana = $1)`;
 
+/** Público de HALLOWEEN: **todo el mundo**, y esta es la diferencia con las
+ *  otras dos campañas, que persiguen a quien no corre.
+ *
+ *  Aquí no hay filtro de puntos, ni de carreras, ni de días desde el alta: el
+ *  evento es para toda la comunidad y quien más corre es justo a quien más le
+ *  interesa. Lo único que se respeta, que es lo que manda:
+ *
+ *   · quien pidió la BAJA no recibe nada (`email_baja_at`), y eso no se toca
+ *     ni para un evento ni para nada — es la LSSI y es lo correcto;
+ *   · hace falta correo verificado (o cuenta de Google, que ya lo verificó):
+ *     escribir a una dirección sin verificar es pedir un rebote;
+ *   · fuera los bots del ejército y las cuentas de revisión de Apple y Google;
+ *   · y nadie lo recibe dos veces (`email_envios`). */
+const SQL_PENDIENTES_HALLOWEEN = `
+      (u.email_verified OR u.google_id IS NOT NULL)
+      AND NOT u.es_bot
+      AND u.email_baja_at IS NULL
+      AND u.email NOT ILIKE '%@corrr.es'
+      AND u.email NOT ILIKE '%+googletest@%'
+      AND NOT EXISTS (SELECT 1 FROM email_envios e WHERE e.user_id = u.id AND e.campana = $1)`;
+
 /** Qué versión del email le toca: 'poco' si tiene alguna carrera, 'nada' si no. */
 const SQL_VARIANTE_REACTIVACION =
   `CASE WHEN EXISTS (SELECT 1 FROM runs r WHERE r.user_id = u.id) THEN 'poco' ELSE 'nada' END`;
@@ -6649,6 +6671,12 @@ const CAMPANAS: Record<string, { asunto: string; pendientes: string; variante: s
     pendientes: SQL_PENDIENTES_DOBLE,
     variante: `'doble'`,
     titulo: 'Cuenta doble — a quien no se ha estrenado',
+  },
+  [CAMPANA_HALLOWEEN]: {
+    asunto: ASUNTO_HALLOWEEN,
+    pendientes: SQL_PENDIENTES_HALLOWEEN,
+    variante: `'halloween'`,
+    titulo: 'Halloween — a TODO el mundo (menos quien se dio de baja)',
   },
 };
 
@@ -6848,7 +6876,9 @@ app.post('/admin/email/reactivacion', { preHandler: requireAdmin }, async (req: 
   if (modo === 'prueba') {
     if (typeof para !== 'string' || !para.includes('@')) return reply.status(400).send({ error: 'Falta "para"' });
     const { rows } = await db.query('SELECT display_name FROM users WHERE email = $1', [para]);
-    const cual: Variante = campana === CAMPANA_DOBLE ? 'doble' : (variante === 'poco' ? 'poco' : 'nada');
+    const cual: Variante = campana === CAMPANA_HALLOWEEN ? 'halloween'
+      : campana === CAMPANA_DOBLE ? 'doble'
+      : (variante === 'poco' ? 'poco' : 'nada');
     const { data, error } = await enviarReactivacion(
       para, rows[0]?.display_name ?? 'Corredor', urlBajaEmail(USUARIO_PRUEBA),
       cual, `[PRUEBA] ${conf.asunto}`,

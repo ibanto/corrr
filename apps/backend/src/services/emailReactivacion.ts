@@ -25,14 +25,27 @@ export const ASUNTO_REACTIVACION = 'Una vuelta basta';
 export const CAMPANA_DOBLE = 'cuenta-doble';
 export const ASUNTO_DOBLE = 'Tu primera carrera cuenta doble';
 
+/** Halloween 2026: va a TODO EL MUNDO, no solo a quien no ha corrido. Es la
+ *  única campaña que no persigue a nadie — anuncia el evento y punto. El tono
+ *  lo pidió Iban el 16-oct: "con los emojis y cachondo, animando a entrar y
+ *  conquistar". */
+export const CAMPANA_HALLOWEEN = 'halloween-2026';
+export const ASUNTO_HALLOWEEN = '🎃 Tu barrio se ha llenado de calabazas';
+
 /** 'nada': ninguna carrera. 'poco': alguna, pero 100 puntos o menos.
- *  'doble': ninguna carrera, y se le recuerda con el x2 por delante. */
-export type Variante = 'nada' | 'poco' | 'doble';
+ *  'doble': ninguna carrera, y se le recuerda con el x2 por delante.
+ *  'halloween': el evento, para todos. */
+export type Variante = 'nada' | 'poco' | 'doble' | 'halloween';
 
 const TEXTOS: Record<Variante, {
   preheader: string; intro: string; circuito: string; misiones: string; boton: string;
   /** El bloque naranja grande y la imagen de cabecera cambian por campaña. */
   bloque: string; hero: string; asunto: string;
+  /** Las tres líneas de la lista naranja. Eran fijas hasta el 16-oct, cuando
+   *  entró Halloween: ahí no son misiones, son lo que te puedes encontrar. */
+  lista: [string, string, string];
+  /** El cierre grande antes del botón: naranja, blanco, naranja. */
+  cierre: [string, string, string];
 }> = {
   nada: {
     preheader: 'Te uniste a CORRR y tu primera zona sigue sin dueño.',
@@ -43,6 +56,8 @@ const TEXTOS: Record<Variante, {
     bloque: 'Da igual que corras<br>o que camines',
     hero: 'https://ibanto.github.io/corrr/email/una-vuelta-basta.jpg',
     asunto: ASUNTO_REACTIVACION,
+    lista: ['Una vuelta a la manzana', 'Un paseo al parque y vuelta', '10 minutos caminando después de comer'],
+    cierre: ['Nada de maratones.', 'Solo salir. Cerrar el círculo.', 'Te está esperando.'],
   },
   poco: {
     preheader: 'Ya saliste con CORRR. Tu territorio todavía cabe en una calle.',
@@ -53,6 +68,8 @@ const TEXTOS: Record<Variante, {
     bloque: 'Da igual que corras<br>o que camines',
     hero: 'https://ibanto.github.io/corrr/email/una-vuelta-basta.jpg',
     asunto: ASUNTO_REACTIVACION,
+    lista: ['Una vuelta a la manzana', 'Un paseo al parque y vuelta', '10 minutos caminando después de comer'],
+    cierre: ['Nada de maratones.', 'Solo salir. Cerrar el círculo.', 'Te está esperando.'],
   },
   doble: {
     preheader: 'Mientras tengas menos de 100 puntos, cada carrera te cuenta el doble.',
@@ -63,6 +80,28 @@ const TEXTOS: Record<Variante, {
     bloque: 'Tu primera carrera<br>cuenta doble',
     hero: 'https://ibanto.github.io/corrr/email/cuenta-doble.jpg',
     asunto: ASUNTO_DOBLE,
+    lista: ['Una vuelta a la manzana', 'Un paseo al parque y vuelta', '10 minutos caminando después de comer'],
+    cierre: ['Nada de maratones.', 'Solo salir. Cerrar el círculo.', 'Te está esperando.'],
+  },
+  halloween: {
+    preheader: 'Del 23 de octubre al 1 de noviembre. 200 puntos cada una. Y fantasmas al lado. 🎃',
+    intro: 'tu ciudad se ha llenado de calabazas. 🎃 Y de fantasmas, que esos muerden.',
+    circuito: 'Píllalas corriendo. Y si cierras un círculo, las que queden dentro también son tuyas.',
+    misiones: '// TRUCO O TRATO: LO QUE TE PUEDES ENCONTRAR',
+    boton: 'Me apunto 🎃',
+    bloque: '200 puntos<br>cada calabaza',
+    hero: 'https://ibanto.github.io/corrr/email/halloween.jpg',
+    asunto: ASUNTO_HALLOWEEN,
+    lista: [
+      'Calabaza 🎃 — 200 puntos y un mensaje nuevo',
+      'Fantasma 👻 — o +500, o −1.000, o nada',
+      'Cierra un círculo ⭕ — las de dentro, tuyas',
+    ],
+    cierre: [
+      'Los fantasmas se ven todos iguales.',
+      'No sabes cuál te toca hasta que lo pisas.',
+      'Del 23 de octubre al 1 de noviembre. 🎃',
+    ],
   },
 };
 
@@ -148,17 +187,17 @@ export function htmlReactivacion({ nombre, urlAbrir, urlBaja, variante }: DatosE
 
         <tr><td>
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-            ${mision('01', 'Una vuelta a la manzana')}
-            ${mision('02', 'Un paseo al parque y vuelta')}
-            ${mision('03', '10 minutos caminando después de comer')}
+            ${mision('01', t.lista[0])}
+            ${mision('02', t.lista[1])}
+            ${mision('03', t.lista[2])}
           </table>
         </td></tr>
         ${linea}
 
         <tr><td style="font-family:${CONDENSADA};text-transform:uppercase;padding-bottom:22px;">
-          <div style="font-weight:600;font-size:31px;line-height:37px;color:${NARANJA};">Nada de maratones.</div>
-          <div style="font-weight:600;font-size:24px;line-height:30px;color:#FFFFFF;">Solo salir. Cerrar el círculo.</div>
-          <div style="font-weight:600;font-size:20px;line-height:28px;color:${NARANJA};">Te está esperando.</div>
+          <div style="font-weight:600;font-size:31px;line-height:37px;color:${NARANJA};">${t.cierre[0]}</div>
+          <div style="font-weight:600;font-size:24px;line-height:30px;color:#FFFFFF;">${t.cierre[1]}</div>
+          <div style="font-weight:600;font-size:20px;line-height:28px;color:${NARANJA};">${t.cierre[2]}</div>
         </td></tr>
 
         <tr><td bgcolor="${NARANJA}" align="center" style="background:${NARANJA};">
@@ -200,12 +239,12 @@ ${t.intro}
 
 ${t.bloque.replace('<br>', ' ')}. ${t.circuito}
 
-Elige tu misión:
-01 · Una vuelta a la manzana
-02 · Un paseo al parque y vuelta
-03 · 10 minutos caminando después de comer
+${t.misiones.replace('// ', '')}:
+01 · ${t.lista[0]}
+02 · ${t.lista[1]}
+03 · ${t.lista[2]}
 
-Nada de maratones. Solo salir. Cerrar el círculo. Te está esperando.
+${t.cierre[0]} ${t.cierre[1]} ${t.cierre[2]}
 
 ${t.boton}: ${urlAbrir}
 
