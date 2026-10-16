@@ -582,7 +582,36 @@ pantalla solo da para ~133 casillas de agrupación de 300 m. Sembrar 100 por
 zona son del orden de 1.500 calabazas y 3.750 fantasmas en todo el país, y la
 app nunca recibe más de 500 de golpe ni pinta más de 133.
 
-**Dos cosas que salieron de medir, y que había que arreglar antes del evento:**
+**EL AGUJERO GORDO: la siembra se colgaba del TERRITORIO, y media comunidad
+no tiene** (16-oct). El botón del panel siembra alrededor de cada corredor con
+celdas. Medido: de **54 personas, 33 no habían corrido nunca**, repartidas por
+**25 ciudades donde nadie ha corrido** —Bilbao, Sevilla, Málaga, Zaragoza,
+Burgos, Jaén, Cádiz, Albacete, Plasencia, Terrassa…— con **27 personas dentro,
+la mitad**. A todas ellas el evento **no les habría existido**, y a quien se
+diera de alta durante los diez días tampoco: el mapa se siembra el día 22 y no
+alcanza a quien llega después. Iban lo vio antes que nadie ("si esta semana se
+da de alta gente, ¿no tendrán calabazas?").
+
+Arreglado con **siembra automática en `/objetos/viewport`** (`sembrarDondeMira`):
+si durante el evento alguien mira su zona y ahí no hay NADA, se siembra en ese
+momento y le salen en esa misma respuesta. No tiene que correr antes ni esperar
+a nadie. **Es cambio de servidor: no necesita versión nueva en las tiendas.**
+Cinco frenos, porque escribe desde una consulta que se llama al mover el mapa:
+evento vivo (hereda su fecha de fin y sus puntos, §9-bis) · solo a quien le toca
+Halloween · encuadre pequeño (su barrio, no España) · nada libre en 5 km a la
+redonda · una vez cada 6 h por persona y techo de 20.000 objetos. La marca de
+"ya se le sembró" (`users.objetos_sembrados_at`) se pone AUNQUE no se haya
+podido sembrar, que si no se reintenta lo caro en cada movimiento del mapa.
+
+**Y hace falta que haya DÓNDE ponerlas**: sin calles descargadas ni celdas
+corridas, no cabe ninguna. De las 37 ciudades de la gente registrada, **23 no
+estaban en el mapa de calles**. Se geocodificaron con Nominatim (gratis, de
+OpenStreetMap; **España primero y luego Francia** — buscando en las dos a la
+vez, "Arona" salía en Allier en vez de en Tenerife) y se añadieron a
+`datos/zonas.json`. `npm run calles` solo baja los trozos que faltan, y
+`npm run calles:subir` solo AÑADE (`ON CONFLICT DO NOTHING`).
+
+**Dos cosas más que salieron de medir:**
 
 1. **El respaldo del mapa de calles iba por TABLA y no por CAJA.** Solo se
    miraba si `calles` estaba vacía del todo; si lo que estaba vacío era la

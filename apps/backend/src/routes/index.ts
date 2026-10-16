@@ -609,6 +609,9 @@ async function initDB() {
   // cinco direcciones inventadas y los rebotes ensucian la reputación de envío.
   // Marcarlos es más seguro que confiar en que no estén verificados.
   await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS es_bot BOOLEAN NOT NULL DEFAULT FALSE`).catch(() => {});
+  // Cuándo se le sembró por última vez a esta persona por mirar el mapa, para
+  // no repetirlo cada vez que mueve el dedo (ver `sembrarDondeMira`).
+  await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS objetos_sembrados_at TIMESTAMPTZ`).catch(() => {});
 
   // ── Cells (grid-based territory, v2 model) ─────────────────────────────────
   // 10m × 10m cells (v1.8.0 — was 5m before). Identified by integer (cell_x,
@@ -5897,6 +5900,117 @@ app.get('/admin/cuenta-revision', { preHandler: requireAdmin }, async (req: any,
 /** Los objetos libres que hay a la vista. La app los pinta como pinta el
  *  territorio; cogerlos es pasar por encima corriendo, y de eso se encarga el
  *  servidor al guardar la carrera. */
+/** Siembra automática: EL EVENTO VA A DONDE ESTÁ LA GENTE.
+ *
+ *  El problema que resuelve, medido el 16-oct-2026: la siembra del panel se
+ *  cuelga del TERRITORIO —siembra alrededor de cada corredor que tenga celdas—
+ *  y de 54 personas, **33 no habían corrido nunca**. Eran **25 ciudades con 27
+ *  personas dentro** (Bilbao, Sevilla, Málaga, Zaragoza, Burgos, Jaén, Cádiz,
+ *  Albacete, Plasencia, Terrassa…) donde el evento sencillamente NO HABRÍA
+ *  EXISTIDO. La mitad de la gente. Y lo mismo para quien se diera de alta
+ *  durante los diez días: el mapa, sembrado el día 22, no les alcanzaba.
+ *
+ *  Sembrar antes "por si acaso" no vale: una calabaza mide 10×10 m y hay que
+ *  pisar ese cuadrado, así que repartirlas por España las deja en el campo.
+ *  Hace falta saber DÓNDE está cada uno, y el servidor lo sabe exactamente en
+ *  un momento: cuando la app le pide el mapa.
+ *
+ *  Así que si alguien mira su zona durante el evento y ahí no hay NADA, se
+ *  siembra en ese momento y le salen en esa misma respuesta. No tiene que
+ *  correr antes, ni esperar a que lo haga otro, ni que nadie pulse nada.
+ *
+ *  Cinco frenos, porque esto escribe en la base de datos desde una consulta
+ *  que se llama cada vez que el mapa se mueve:
+ *
+ *    1. Solo con un evento VIVO, y heredando su fecha de fin y sus puntos
+ *       (así el contador por evento sigue cuadrando, §9-bis).
+ *    2. Solo a quien le toque Halloween, igual que al recoger.
+ *    3. Solo si el encuadre es pequeño: alguien mirando su barrio, no alguien
+ *       paseando el mapa por España.
+ *    4. Solo si no hay NI UNA libre en varios kilómetros a la redonda — no
+ *       basta con que el encuadre esté vacío, o bastaría con mirar al hueco de
+ *       al lado para que salieran más.
+ *    5. Una vez cada seis horas por persona, y un techo global. La marca se
+ *       pone AUNQUE no se haya podido sembrar (sitio sin calles ni celdas), que
+ *       si no se reintentaría lo caro en cada movimiento del mapa.
+ */
+const SIEMBRA_AUTO_CUANTAS = 25;
+/** Radio, en celdas de 10 m: 150 = 1,5 km alrededor de donde mira. */
+const SIEMBRA_AUTO_RADIO = 150;
+/** Y a cuánto hay que mirar para decidir que "no hay nada": 5 km. */
+const SIEMBRA_AUTO_MIRAR = 500;
+const SIEMBRA_AUTO_ESPERA_HORAS = 6;
+/** Encuadre máximo en celdas (1.200 = 12 km): más que eso no es "su zona". */
+const SIEMBRA_AUTO_MAX_CAJA = 1200;
+/** Red de seguridad: objetos libres en toda España. */
+const SIEMBRA_AUTO_TECHO = 20_000;
+
+async function sembrarDondeMira(
+  userId: string,
+  caja: { x0: number; x1: number; y0: number; y1: number },
+): Promise<boolean> {
+  // (3) ¿Está mirando su zona o paseando el mapa?
+  if (caja.x1 - caja.x0 > SIEMBRA_AUTO_MAX_CAJA) return false;
+  if (caja.y1 - caja.y0 > SIEMBRA_AUTO_MAX_CAJA) return false;
+
+  // (1) ¿Hay evento vivo? De aquí salen la fecha de fin y los puntos.
+  const { rows: ev } = await db.query(
+    `SELECT hasta, MAX(puntos)::int AS puntos FROM objetos
+      WHERE tipo = 'calabaza'
+        AND hasta IS NOT DISTINCT FROM (SELECT MAX(hasta) FROM objetos WHERE tipo = 'calabaza')
+      GROUP BY hasta`);
+  const hasta = ev[0]?.hasta ? new Date(ev[0].hasta) : null;
+  if (!hasta || hasta <= new Date()) return false;
+
+  // (2) y (5): a quién le toca, y cuándo se le sembró por última vez.
+  const { rows: yo } = await db.query(
+    'SELECT display_name, objetos_sembrados_at FROM users WHERE id = $1', [userId]);
+  if (!yo.length) return false;
+  if (!ajusteLeToca(await valorAjuste('halloween'), yo[0].display_name)) return false;
+  const ultima = yo[0].objetos_sembrados_at ? new Date(yo[0].objetos_sembrados_at).getTime() : 0;
+  if (Date.now() - ultima < SIEMBRA_AUTO_ESPERA_HORAS * 3600 * 1000) return false;
+
+  const cx = Math.round((caja.x0 + caja.x1) / 2);
+  const cy = Math.round((caja.y0 + caja.y1) / 2);
+
+  // (4) ¿De verdad no hay nada cerca?
+  const { rows: cerca } = await db.query(
+    `SELECT 1 FROM objetos
+      WHERE tomado_por IS NULL AND (hasta IS NULL OR hasta > NOW())
+        AND cell_x BETWEEN $1 AND $2 AND cell_y BETWEEN $3 AND $4 LIMIT 1`,
+    [cx - SIEMBRA_AUTO_MIRAR, cx + SIEMBRA_AUTO_MIRAR,
+     cy - SIEMBRA_AUTO_MIRAR, cy + SIEMBRA_AUTO_MIRAR]);
+  if (cerca.length > 0) return false;
+
+  // (5) El techo global.
+  const { rows: cuantos } = await db.query(
+    `SELECT COUNT(*)::int n FROM objetos WHERE tomado_por IS NULL AND (hasta IS NULL OR hasta > NOW())`);
+  if ((cuantos[0]?.n ?? 0) >= SIEMBRA_AUTO_TECHO) {
+    console.warn('[Objetos] techo alcanzado, no se siembra automáticamente');
+    return false;
+  }
+
+  // La marca se pone ANTES de sembrar: si la siembra falla o no cabe nada, no
+  // queremos reintentarlo en cada movimiento del mapa.
+  await db.query('UPDATE users SET objetos_sembrados_at = NOW() WHERE id = $1', [userId]);
+
+  const nuevas = await sembrar(db, {
+    cuantos: SIEMBRA_AUTO_CUANTAS, tipo: 'calabaza', puntos: ev[0].puntos || 200,
+    desde: new Date(), hasta,
+    caja: { x0: cx - SIEMBRA_AUTO_RADIO, x1: cx + SIEMBRA_AUTO_RADIO,
+            y0: cy - SIEMBRA_AUTO_RADIO, y1: cy + SIEMBRA_AUTO_RADIO },
+  }).catch(() => [] as { x: number; y: number }[]);
+  if (nuevas.length === 0) {
+    console.warn(`[Objetos] ${yo[0].display_name} mira una zona vacía y no hay dónde sembrar (ni calles ni celdas en ${cx},${cy})`);
+    return false;
+  }
+  const fantasmas = await sembrarFantasmas(db, {
+    calabazas: nuevas, desde: new Date(), hasta, premios: PREMIOS_FANTASMA,
+  }).catch(() => 0);
+  console.log(`[Objetos] sembradas ${nuevas.length} calabazas y ${fantasmas} fantasmas para ${yo[0].display_name} (${cx},${cy})`);
+  return true;
+}
+
 app.get('/objetos/viewport', { preHandler: requireAuth }, async (req: any, reply) => {
   const { north, south, east, west } = req.query as any;
   const n = parseFloat(north), s2 = parseFloat(south);
@@ -5906,13 +6020,19 @@ app.get('/objetos/viewport', { preHandler: requireAuth }, async (req: any, reply
   }
   const sw = coordToCell(s2, w);
   const ne = coordToCell(n, e);
-  const { rows } = await db.query(
+  const caja = { x0: sw.x, x1: ne.x, y0: sw.y, y1: ne.y };
+  const mirar = () => db.query(
     `SELECT id, cell_x, cell_y, puntos, tipo FROM objetos
       WHERE tomado_por IS NULL AND desde <= NOW() AND (hasta IS NULL OR hasta > NOW())
         AND cell_x BETWEEN $1 AND $2 AND cell_y BETWEEN $3 AND $4
       LIMIT 500`,
-    [sw.x, ne.x, sw.y, ne.y],
-  );
+    [caja.x0, caja.x1, caja.y0, caja.y1]);
+  let { rows } = await mirar();
+  // Si aquí no hay nada, puede que sea la primera persona que mira este trozo
+  // de mapa. Se siembra y se vuelve a mirar, para que le salgan YA.
+  if (rows.length === 0 && await sembrarDondeMira(req.userId, caja).catch(() => false)) {
+    ({ rows } = await mirar());
+  }
   return reply.send({
     objetos: rows.map((r: any) => ({ id: r.id, x: r.cell_x, y: r.cell_y, puntos: r.puntos, tipo: r.tipo })),
   });
