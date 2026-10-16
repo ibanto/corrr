@@ -603,6 +603,15 @@ redonda · una vez cada 6 h por persona y techo de 20.000 objetos. La marca de
 "ya se le sembró" (`users.objetos_sembrados_at`) se pone AUNQUE no se haya
 podido sembrar, que si no se reintenta lo caro en cada movimiento del mapa.
 
+**NADA DE REPASO NOCTURNO** (decidido por Iban el 16-oct). Se planteó un
+trabajo a las 00:00 que volviera a sembrar cada noche para que la gente nueva
+recibiera calabazas. **No se hace, y no se vuelve a proponer**: la siembra al
+mirar el mapa ya lo resuelve y encima al instante —quien se instala la app un
+viernes a las 10 de la mañana no tiene que esperar a medianoche— y un trabajo
+nocturno no arregla el agujero de verdad, que es no tener calles donde ponerlas.
+Además `node-cron` está en el `package.json` pero **no se usa en ningún sitio**:
+sería maquinaria nueva a seis días del evento.
+
 **Y hace falta que haya DÓNDE ponerlas**: sin calles descargadas ni celdas
 corridas, no cabe ninguna. De las 37 ciudades de la gente registrada, **23 no
 estaban en el mapa de calles**. Se geocodificaron con Nominatim (gratis, de
