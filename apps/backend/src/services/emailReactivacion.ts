@@ -28,9 +28,18 @@ export const ASUNTO_DOBLE = 'Tu primera carrera cuenta doble';
 /** Halloween 2026: va a TODO EL MUNDO, no solo a quien no ha corrido. Es la
  *  única campaña que no persigue a nadie — anuncia el evento y punto. El tono
  *  lo pidió Iban el 16-oct: "con los emojis y cachondo, animando a entrar y
- *  conquistar". */
+ *  conquistar".
+ *
+ *  **Está escrito EN FUTURO a propósito.** La primera versión decía "tu ciudad
+ *  se ha llenado de calabazas" y se iba a mandar el 16, siete días antes del
+ *  evento: 50 personas abrirían la app y no verían ni una. Iban lo cazó
+ *  ("cambiamos por la ciudad se va a llenar de..."). En futuro se puede mandar
+ *  cuando se quiera, y además hace el trabajo que más falta hace ahora mismo:
+ *  **que la gente ACTUALICE**, porque las calabazas solo las ven las apps
+ *  1.11.11 o más nuevas y el 22 por la noche `MIN_APP_VERSION` las va a
+ *  exigir. El botón lleva a la tienda, donde sale "Actualizar". */
 export const CAMPANA_HALLOWEEN = 'halloween-2026';
-export const ASUNTO_HALLOWEEN = '🎃 Tu barrio se ha llenado de calabazas';
+export const ASUNTO_HALLOWEEN = '🎃 Tu barrio se va a llenar de calabazas';
 
 /** 'nada': ninguna carrera. 'poco': alguna, pero 100 puntos o menos.
  *  'doble': ninguna carrera, y se le recuerda con el x2 por delante.
@@ -84,11 +93,11 @@ const TEXTOS: Record<Variante, {
     cierre: ['Nada de maratones.', 'Solo salir. Cerrar el círculo.', 'Te está esperando.'],
   },
   halloween: {
-    preheader: 'Del 23 de octubre al 1 de noviembre. 200 puntos cada una. Y fantasmas al lado. 🎃',
-    intro: 'tu ciudad se ha llenado de calabazas. 🎃 Y de fantasmas, que esos muerden.',
-    circuito: 'Píllalas corriendo. Y si cierras un círculo, las que queden dentro también son tuyas.',
-    misiones: '// TRUCO O TRATO: LO QUE TE PUEDES ENCONTRAR',
-    boton: 'Me apunto 🎃',
+    preheader: 'El 23 de octubre empieza. Actualiza la app y que no te pille dormido. 🎃',
+    intro: 'el 23 de octubre tu ciudad se va a llenar de calabazas. 🎃 Y de fantasmas, que esos muerden.',
+    circuito: 'Las pillas corriendo. Y si cierras un círculo, las que queden dentro también son tuyas.',
+    misiones: '// TRUCO O TRATO: LO QUE TE VAS A ENCONTRAR',
+    boton: 'Actualizo y me apunto 🎃',
     bloque: '200 puntos<br>cada calabaza',
     hero: 'https://ibanto.github.io/corrr/email/halloween.jpg',
     asunto: ASUNTO_HALLOWEEN,
@@ -98,9 +107,9 @@ const TEXTOS: Record<Variante, {
       'Cierra un círculo ⭕ — las de dentro, tuyas',
     ],
     cierre: [
-      'Los fantasmas se ven todos iguales.',
-      'No sabes cuál te toca hasta que lo pisas.',
-      'Del 23 de octubre al 1 de noviembre. 🎃',
+      'Del 23 de octubre al 1 de noviembre.',
+      'Actualiza la app: sin la versión nueva no las vas a ver.',
+      'Que no te pillen el barrio dormido. 🎃',
     ],
   },
 };
