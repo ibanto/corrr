@@ -6,7 +6,7 @@ Instrucciones para Claude trabajando en este repo. Léelo entero antes de tocar 
 
 ## 0. Dónde estamos (leer esto primero)
 
-*Al día a 15-oct-2026, tarde. Si algo de aquí abajo contradice a este apartado, manda este.*
+*Al día a 16-oct-2026, tarde. Si algo de aquí abajo contradice a este apartado, manda este.*
 
 **En las tiendas**: 1.11.10 (Android vc67, iPhone build 17). 46 corredores.
 
@@ -27,10 +27,22 @@ El evento de Halloween va del **viernes 23 de octubre al domingo 1 de noviembre*
    26-33) está DESCARTADO.
    **En cuanto publique CADA una, anunciarla (§4 punto 5) — una cada vez**: si
    se anuncia antes, a la gente le sale el aviso y en la tienda no hay nada.
-2. **Que la pruebe**: pisar un fantasma y ver qué le toca, que el resumen los
-   enseñe uno por línea, y una carrera larga cerrando el círculo (a ver si el
-   cuelgue de Oriol15 ha desaparecido).
-3. **Sembrar para el evento** con el botón morado del panel (§9-bis).
+2. **TERMINAR EL MAPA DE CALLES DE ESPAÑA** (§9-bis). Estaba a medias el
+   16-oct a las 15:03: **459 de 538 trozos** de las 23 ciudades de la gente
+   registrada, y detrás van encoladas ~886 ciudades más (todo pueblo de España
+   con 2.000 habitantes o más). Se retoma solo donde se quedó:
+   `cd apps/backend && npm run calles`. **Baja a disco, NO toca la BD.**
+   Cuando acabe: `npm run calles:subir` — **pedir permiso a Iban antes**, es
+   la única escritura en producción que queda pendiente. Solo AÑADE filas
+   (`ON CONFLICT DO NOTHING`); la BD va por 181 MB de 500 y esto suma ~34.
+3. **PRUEBA PENDIENTE, y es la que falta para dar esto por bueno**: con
+   Halloween en `prueba:Ibanto` y el evento de prueba sembrado (45 calabazas,
+   hasta el 19-oct), que Iban abra el mapa, pulse la lupa y se vaya a
+   **Zaragoza**. Si aparecen calabazas, la siembra automática está confirmada
+   de punta a punta. **Burgos seguirá vacío hasta subir las calles** (ahí hay
+   cero calles y cero celdas): eso es lo esperado, no un fallo.
+4. **Sembrar para el evento** con el botón morado del panel (§9-bis). Ojo: el
+   campo "Sembrar cerca de" en gris es el EJEMPLO, no está escrito.
 
 ### Ya funcionando en producción (servidor, sin build)
 
