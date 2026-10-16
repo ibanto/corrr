@@ -66,15 +66,26 @@ function trozos({ sur, norte, oeste, este }) {
   return out;
 }
 
+/** Los tres servidores públicos de Overpass. Se van turnando en cada
+ *  reintento: cuando el principal está saturado —502 y 504 un rato largo, como
+ *  el 16-oct-2026 bajando los pueblos de España— los otros suelen ir bien, y
+ *  esperar sentado a que el mismo se recupere puede costar horas. */
+const SERVIDORES = [
+  'https://overpass-api.de/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter',
+  'https://overpass.private.coffee/api/interpreter',
+];
+
 async function pideOverpass(caja, intento = 1) {
   const consulta = `[out:json][timeout:120];
 way["highway"~"^(${TIPOS})$"](${caja.sur},${caja.oeste},${caja.norte},${caja.este});
 out geom;`;
+  const servidor = SERVIDORES[(intento - 1) % SERVIDORES.length];
   try {
     // Formulario, no texto plano: con `Content-Type: text/plain` Overpass
     // contesta 406 y no explica por qué. Y con User-Agent propio, que es lo
     // educado con un servicio público y gratuito.
-    const r = await fetch('https://overpass-api.de/api/interpreter', {
+    const r = await fetch(servidor, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
@@ -89,9 +100,13 @@ out geom;`;
   } catch (e) {
     // Overpass es gratis y a ratos va saturado: contesta 504 en segundos y a
     // los dos minutos va perfecto. Merece la pena esperar antes que rendirse.
-    if (intento >= 6) throw e;
-    const espera = [15000, 30000, 60000, 90000, 120000][intento - 1] ?? 120000;
-    console.log(`     reintento ${intento} en ${espera / 1000}s (${e.message})`);
+    if (intento >= 9) throw e;
+    // Las esperas son cortas al principio porque el reintento va a OTRO
+    // servidor: no tiene sentido esperar dos minutos para preguntarle a uno
+    // que no estaba saturado.
+    const espera = [3000, 5000, 15000, 30000, 45000, 60000, 90000, 120000][intento - 1] ?? 120000;
+    const siguiente = new URL(SERVIDORES[intento % SERVIDORES.length]).host;
+    console.log(`     reintento ${intento} en ${espera / 1000}s con ${siguiente} (${e.message})`);
     await dormir(espera);
     return pideOverpass(caja, intento + 1);
   }
