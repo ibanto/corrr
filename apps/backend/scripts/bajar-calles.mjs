@@ -66,15 +66,21 @@ function trozos({ sur, norte, oeste, este }) {
   return out;
 }
 
-/** Los tres servidores públicos de Overpass. Se van turnando en cada
- *  reintento: cuando el principal está saturado —502 y 504 un rato largo, como
- *  el 16-oct-2026 bajando los pueblos de España— los otros suelen ir bien, y
- *  esperar sentado a que el mismo se recupere puede costar horas. */
-const SERVIDORES = [
-  'https://overpass-api.de/api/interpreter',
-  'https://overpass.kumi.systems/api/interpreter',
-  'https://overpass.private.coffee/api/interpreter',
-];
+/** UN SOLO SERVIDOR, y es a propósito.
+ *
+ *  El 16-oct-2026 se intentó turnar tres servidores públicos para esquivar la
+ *  saturación del principal. Salió MAL y hay que medirlo antes de repetirlo:
+ *  probados los tres con NUESTRA consulta de verdad —la del `~"^(...)$"` con
+ *  once tipos de vía—, `overpass.kumi.systems` y `overpass.private.coffee`
+ *  contestan **500 en cero segundos**, siempre. Aceptan consultas simples
+ *  (`highway="residential"`) pero no la nuestra, ni en versión regex ni como
+ *  unión de once `way[...]`. Turnarlos significaba perder dos de cada tres
+ *  intentos y encadenar esperas para nada.
+ *
+ *  Así que se reintenta contra el mismo, que SÍ contesta (44 s por trozo el
+ *  día que se midió). **Si algún día se añade otro servidor, se prueba antes
+ *  con la consulta real, no con una de juguete.** */
+const SERVIDORES = ['https://overpass-api.de/api/interpreter'];
 
 async function pideOverpass(caja, intento = 1) {
   const consulta = `[out:json][timeout:120];
@@ -100,13 +106,9 @@ out geom;`;
   } catch (e) {
     // Overpass es gratis y a ratos va saturado: contesta 504 en segundos y a
     // los dos minutos va perfecto. Merece la pena esperar antes que rendirse.
-    if (intento >= 9) throw e;
-    // Las esperas son cortas al principio porque el reintento va a OTRO
-    // servidor: no tiene sentido esperar dos minutos para preguntarle a uno
-    // que no estaba saturado.
-    const espera = [3000, 5000, 15000, 30000, 45000, 60000, 90000, 120000][intento - 1] ?? 120000;
-    const siguiente = new URL(SERVIDORES[intento % SERVIDORES.length]).host;
-    console.log(`     reintento ${intento} en ${espera / 1000}s con ${siguiente} (${e.message})`);
+    if (intento >= 8) throw e;
+    const espera = [10000, 20000, 40000, 60000, 90000, 120000, 120000][intento - 1] ?? 120000;
+    console.log(`     reintento ${intento} en ${espera / 1000}s (${e.message})`);
     await dormir(espera);
     return pideOverpass(caja, intento + 1);
   }
