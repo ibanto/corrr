@@ -566,6 +566,39 @@ calabazas hay que poder usarlos. Arrancando el viernes 23 entran el fin de
 semana del 24-25, la semana entera y el fin de semana de Halloween. Con los
 días 29-31 (jueves a sábado) se desbloqueaban casi sin tiempo de mandarlos.
 
+**Medido antes de sembrar** (16-oct-2026, todo leyendo producción):
+
+| | |
+|---|---|
+| Zonas sobre las que siembra el botón morado | **26** (una por corredor con territorio) |
+| Tamaño de esas zonas | de 1,7 a 81,7 km² — son ciudades, no cajas locas |
+| Lo que tarda el botón morado | **5,4 s solo de consultas**, 10-30 s en total |
+| `/objetos/viewport` con 10.000 objetos | **1,9 ms** — hay `LIMIT 500` y la tabla es minúscula |
+| Chinchetas que puede pintar la app a la vez | **133** en un móvil de 360 dp, 285 en un iPad |
+
+Ese techo de chinchetas es GEOMÉTRICO y no depende de cuántas haya en España:
+más allá de `MAX_DELTA_FOR_CELLS` no se ve ninguna, y justo por debajo la
+pantalla solo da para ~133 casillas de agrupación de 300 m. Sembrar 100 por
+zona son del orden de 1.500 calabazas y 3.750 fantasmas en todo el país, y la
+app nunca recibe más de 500 de golpe ni pinta más de 133.
+
+**Dos cosas que salieron de medir, y que había que arreglar antes del evento:**
+
+1. **El respaldo del mapa de calles iba por TABLA y no por CAJA.** Solo se
+   miraba si `calles` estaba vacía del todo; si lo que estaba vacío era la
+   ciudad de alguien, la consulta devolvía cero candidatas y se sembraban CERO
+   calabazas **en silencio**. Pasaba en 2 de las 26 zonas: **Alcázar de San
+   Juan** (21raulnicolas, 28.042 celdas corridas) y **Girona** (Clara) — el
+   mapa de calles se bajó antes de que ellos se dieran de alta. Ahora, si en
+   esa caja no hay calles, se siembra sobre lo que ya ha pisado esa persona.
+   Comprobado: Barcelona sigue usando calles, esas dos pasan a pisadas.
+   **Lo suyo es bajar las calles de esas dos ciudades** (`npm run calles`),
+   que permite sembrar por cualquier calle y no solo por donde ya corrió.
+2. **El botón morado no se bloqueaba al pulsarlo.** Tarda entre 10 y 30
+   segundos y el panel parece colgado; el segundo clic **siembra otra vez**,
+   porque las calabazas se suman, no se reemplazan. Ahora los botones se apagan
+   y el cartel va contando los segundos.
+
 **El contador es POR EVENTO** (15-oct). Las filas de `objetos` no se borran
 nunca, así que al empezar Halloween el ranking arrancaba con las 8 calabazas de
 las pruebas de octubre y con sus mensajes ya desbloqueados. Un evento se

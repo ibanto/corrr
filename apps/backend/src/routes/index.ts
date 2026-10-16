@@ -2478,7 +2478,23 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
       m.textContent = '✗ ' + e.message;
     });
   });
+  // Sembrar por todas las ciudades tarda entre 10 y 30 segundos: son 26 zonas
+  // y por cada una hay que leer su territorio, buscar calles y comprobar la
+  // separación. Durante ese rato el panel parece colgado, y el segundo clic
+  // SIEMBRA OTRA VEZ — las calabazas no se reemplazan, se suman. Por eso los
+  // dos botones se apagan mientras tanto y el cartel va diciendo el rato que
+  // lleva, en vez de dejar al que mira pensando si ha pasado algo.
+  var sembrando = false;
+  var relojSiembra = null;
+  function botonesSiembra(apagados) {
+    document.getElementById('o_sembrar').disabled = apagados;
+    document.getElementById('o_todos').disabled = apagados;
+    document.getElementById('o_quitar').disabled = apagados;
+  }
   function sembrarCalabazas(todas) {
+    if (sembrando) return;
+    sembrando = true;
+    botonesSiembra(true);
     var cuerpo = {
       tipo: 'calabaza',
       fuente: document.getElementById('o_fuente').value,
@@ -2489,19 +2505,30 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
       desde: val('o_desde') || null,
       hasta: val('o_hasta') || null,
     };
-    msgObjetos(todas ? 'Sembrando por todas las ciudades, esto tarda…' : 'Sembrando…', true);
+    var desdeCuando = Date.now();
+    var base = todas ? 'Sembrando por todas las ciudades' : 'Sembrando';
+    msgObjetos(base + '... (no toques nada)', true);
+    relojSiembra = setInterval(function () {
+      msgObjetos(base + '... ' + Math.round((Date.now() - desdeCuando) / 1000) + ' s (no toques nada)', true);
+    }, 1000);
+    function terminar() {
+      sembrando = false;
+      botonesSiembra(false);
+      if (relojSiembra) { clearInterval(relojSiembra); relojSiembra = null; }
+    }
     api('/admin/objetos', { method: 'POST', body: JSON.stringify(cuerpo) }).then(function (r) {
+      terminar();
       msgObjetos('Sembradas ' + r.puestas + ' calabazas de ' + r.puntos + ' puntos y '
         + r.fantasmas + ' fantasmas alrededor' + (r.donde || '')
         + (r.puestas < r.pedidas ? ' · de las calabazas, el resto caía demasiado cerca de otra' : '')
         + (r.fantasmas === 0 ? ' · OJO: no cupo ningún fantasma, no hay calles alrededor' : ''), true);
       cargarObjetos();
-    }).catch(function (e) { msgObjetos(e.message, false); });
+    }).catch(function (e) { terminar(); msgObjetos(e.message, false); });
   }
   document.getElementById('o_sembrar').addEventListener('click', function () { sembrarCalabazas(false); });
   document.getElementById('o_todos').addEventListener('click', function () {
     var n = Number(document.getElementById('o_cuantas').value);
-    if (!confirm('Se van a sembrar ' + n + ' calabazas (y sus zombis) alrededor de CADA corredor con territorio. ¿Seguimos?')) return;
+    if (!confirm('Se van a sembrar hasta ' + n + ' calabazas (con sus fantasmas) alrededor de CADA corredor con territorio: 26 zonas. Tarda entre 10 y 30 segundos y NO reemplaza las que ya hay, las suma. Seguimos?')) return;
     sembrarCalabazas(true);
   });
   document.getElementById('o_quitar').addEventListener('click', function () {

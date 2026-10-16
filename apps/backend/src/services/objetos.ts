@@ -70,20 +70,30 @@ export async function sembrar(
 
   // Candidatas en orden aleatorio. Se piden de más porque muchas se
   // descartarán por caer demasiado cerca de otro objeto.
-  // Si el mapa de calles aún no se ha cargado, se tira de las pisadas en vez
-  // de sembrar cero calabazas y dejar el evento vacío sin decir nada.
-  let tabla = fuente === 'pisadas' ? 'cells' : 'calles';
-  if (tabla === 'calles') {
-    const { rows: hay } = await db.query('SELECT 1 FROM calles LIMIT 1');
-    if (hay.length === 0) tabla = 'cells';
-  }
   const filtro = caja
     ? `WHERE cell_x BETWEEN ${caja.x0} AND ${caja.x1} AND cell_y BETWEEN ${caja.y0} AND ${caja.y1}`
     : '';
-  const { rows: candidatas } = await db.query(
+  const pedir = (tabla: string) => db.query(
     `SELECT cell_x, cell_y FROM ${tabla} ${filtro} ORDER BY random() LIMIT $1`,
     [cuantos * 25],
   );
+  // El respaldo va POR CAJA, no por tabla entera. Antes solo se miraba si la
+  // tabla `calles` estaba vacía del todo, y eso dejaba fuera a quien corre en
+  // una ciudad que no se descargó de OpenStreetMap: la consulta devolvía cero
+  // candidatas y se sembraban CERO calabazas, en silencio.
+  //
+  // Medido el 16-oct-2026 antes de Halloween: de 26 zonas, DOS no tenían ni
+  // una calle —Alcázar de San Juan (21raulnicolas, 28.042 celdas corridas) y
+  // Girona (Clara)—, así que esas dos personas se habrían quedado sin evento
+  // sin que nadie se enterara. Lo bueno es que quien corre por ahí ya ha
+  // dejado sus propias celdas, y sobre esas sí se puede sembrar.
+  let candidatas: any[] = [];
+  let deDondeSalieron = fuente === 'pisadas' ? 'cells' : 'calles';
+  ({ rows: candidatas } = await pedir(deDondeSalieron));
+  if (candidatas.length === 0 && deDondeSalieron === 'calles') {
+    deDondeSalieron = 'cells';
+    ({ rows: candidatas } = await pedir('cells'));
+  }
 
   // Los que ya están puestos y siguen libres, para respetar la separación.
   // Separados por tipo: a los del propio tipo se les guarda la distancia
@@ -197,20 +207,25 @@ export async function sembrarFantasmas(
   /** Entre fantasmas, 50 m: que no salgan amontonados en la misma esquina. */
   const ENTRE_ELLOS = 5;
 
-  let tabla = fuente === 'pisadas' ? 'cells' : 'calles';
-  if (tabla === 'calles') {
-    const { rows: hay } = await db.query('SELECT 1 FROM calles LIMIT 1');
-    if (hay.length === 0) tabla = 'cells';
-  }
   // Las calles de toda la zona de golpe: una consulta en vez de una por calabaza.
   const x0 = Math.min(...calabazas.map(c => c.x)) - CERCA_MAX;
   const x1 = Math.max(...calabazas.map(c => c.x)) + CERCA_MAX;
   const y0 = Math.min(...calabazas.map(c => c.y)) - CERCA_MAX;
   const y1 = Math.max(...calabazas.map(c => c.y)) + CERCA_MAX;
-  const { rows: candidatas } = await db.query(
+  const pedirCerca = (tabla: string) => db.query(
     `SELECT cell_x x, cell_y y FROM ${tabla}
       WHERE cell_x BETWEEN $1 AND $2 AND cell_y BETWEEN $3 AND $4`,
     [x0, x1, y0, y1]);
+  // Mismo respaldo por caja que en `sembrar`: si en esta zona no hay calles
+  // descargadas, los fantasmas salen sobre lo ya pisado. Sin esto, una ciudad
+  // sin mapa de calles tendría calabazas (por el respaldo de arriba) y CERO
+  // fantasmas, que es justo lo que le quita la gracia — la calabaza deja de
+  // ser una apuesta.
+  let candidatas: any[] = [];
+  ({ rows: candidatas } = await pedirCerca(fuente === 'pisadas' ? 'cells' : 'calles'));
+  if (candidatas.length === 0 && fuente !== 'pisadas') {
+    ({ rows: candidatas } = await pedirCerca('cells'));
+  }
   const { rows: puestos } = await db.query(
     `SELECT cell_x x, cell_y y FROM objetos WHERE tomado_por IS NULL AND (hasta IS NULL OR hasta > NOW())`);
 
