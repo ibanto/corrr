@@ -6,47 +6,36 @@ Instrucciones para Claude trabajando en este repo. Léelo entero antes de tocar 
 
 ## 0. Dónde estamos (leer esto primero)
 
-*Al día a 16-oct-2026, noche. Si algo de aquí abajo contradice a este apartado, manda este.*
+*Al día a 17-oct-2026, tarde. Si algo de aquí abajo contradice a este apartado, manda este.*
 
-**En las tiendas**: **1.11.11** en las dos (Android vc87, iPhone build 34),
-publicadas el 16-oct. 54 personas. **Android ya anunciado** (`/app/version`
-sirve 1.11.11 / 87); **iPhone sigue anunciado en 1.11.10 a propósito**: Apple
-tarda hasta 24 h en repartir y, mientras su servicio de consulta
-(`itunes.apple.com/lookup?bundleId=app.corrr`) siga devolviendo 1.11.10,
-anunciarlo manda a la gente a una tienda donde no está. **Anunciarlo en cuanto
-cambie**: `LATEST_IOS_VERSION = 1.11.11` y `LATEST_IOS_BUILD = 34`.
+**En las tiendas**: **1.11.11 publicada y ANUNCIADA en las dos** (Android
+vc87, iPhone build 34). 54 personas. Ya no queda nada de la subida.
 
-**LA FECHA QUE MANDA: lunes 19 de octubre**, subir la 1.11.11 a las dos tiendas.
-El evento de Halloween va del **viernes 23 de octubre al domingo 1 de noviembre**
-(§9-bis). Apple tarda hasta tres días en revisar, de ahí el margen.
+**OJO para la próxima subida**: `itunes.apple.com/lookup` siguió devolviendo
+1.11.10 **más de doce horas** después de publicar. No sirve para decidir cuándo
+anunciar; la ficha web sí (ahí sale "Versión 1.11.11" como actual con su fecha).
+
+**El evento de Halloween va del viernes 23 de octubre al domingo 1 de
+noviembre** (§9-bis).
 
 ### Lo siguiente que hay que hacer
 
-1. **ANUNCIAR iPhone en cuanto la App Store sirva la 1.11.11** (ver arriba).
-   El rechazo de Apple del 15-oct ya está resuelto y documentado en §15.
-2. **TERMINAR EL MAPA DE CALLES DE ESPAÑA** (§9-bis). El 16-oct por la noche
-   iba por **549 de 1.928 trozos** (745 pueblos nuevos, todos los de España
-   con 2.000 habitantes o más, ordenados de más grande a más pequeño: si hay
-   que cortar, lo que falta son los pueblos chicos). Se retoma solo donde se
-   quedó: `cd apps/backend && caffeinate -i npm run calles`. **Baja a disco,
-   NO toca la BD**, y el Mac tiene que quedarse encendido. Medido: 44 s por
-   trozo (es lo que tarda Overpass), o sea unas 20 h.
-   Cuando acabe: `npm run calles:subir` — **pedir permiso a Iban antes**, es
-   la única escritura en producción que queda pendiente. Solo AÑADE filas
-   (`ON CONFLICT DO NOTHING`); la BD va por 181 MB de 500 y esto suma ~34.
-3. **Sembrar para el evento** con el botón morado del panel (§9-bis). Ojo: el
-   campo "Sembrar cerca de" en gris es el EJEMPLO, no está escrito.
-4. **Mandar el correo de Halloween** (Panel → Correos → *Halloween — a TODO el
-   mundo*): 50 destinatarios, prueba primero. **El 22 por la noche o el 23 por
-   la mañana**, no antes. Y el **aviso dentro de la app** con el botón
-   "ME APUNTO" (`docs/aviso-halloween.md`), el mismo día.
+**Todo lo de la subida está cerrado. Lo que queda es el evento**, y es del
+día 22 por la noche, en este orden:
 
-**Probado de punta a punta el 16-oct**: la siembra automática funciona. Con un
-evento de prueba vivo, Iban se fue a Zaragoza con el buscador del mapa y le
-salieron **25 calabazas y 66 fantasmas** que no existían; en la BD quedó su
-marca como "sembró algo". Burgos salió vacío **y es lo correcto**: ahí no hay
-ni una calle descargada ni nadie que haya corrido, y preferimos cero calabazas
-a calabazas en mitad de un campo.
+1. **Sembrar** con el botón morado del panel (§9-bis). Tarda 10-30 s y los
+   botones se quedan apagados mientras. Ojo: el "ibanto" gris del campo
+   "Sembrar cerca de" es el EJEMPLO, no está escrito.
+2. **Halloween → "Encendido para todo el mundo"** en el panel.
+3. **`MIN_APP_VERSION = 1.11.11`** en Railway.
+4. **Publicar el aviso** dentro de la app, el del botón "ME APUNTO"
+   (`docs/aviso-halloween.md`). Con notificación al móvil.
+
+El **correo** de Halloween ya se mandó el 16-oct a las 19:21: **51 enviados,
+0 fallos, 0 bajas**. Va escrito en FUTURO a propósito y empuja a actualizar.
+
+**El 2 de noviembre**: nombrar al que más cogió (Panel → Juego → el top 5, que
+es solo de este evento) y bajar `MIN_APP_VERSION`.
 
 ### Ya funcionando en producción (servidor, sin build)
 
@@ -620,6 +609,33 @@ Halloween · encuadre pequeño (su barrio, no España) · nada libre en 5 km a l
 redonda · una vez cada 6 h por persona y techo de 20.000 objetos. La marca de
 "ya se le sembró" (`users.objetos_sembrados_at`) se pone AUNQUE no se haya
 podido sembrar, que si no se reintenta lo caro en cada movimiento del mapa.
+
+**EL MAPA DE CALLES, TERMINADO** (17-oct). Se bajó de OpenStreetMap y se subió
+con permiso de Iban. Cubre **todos los municipios de España de 2.000 habitantes
+para arriba** más las ciudades de la gente registrada: 811 zonas, 1.928 trozos
+de 3×3 km, unas 20 horas de descarga.
+
+| | Antes | Ahora |
+|---|---|---|
+| Celdas de calle | 159.900 | **860.227** |
+| Superficie | 1.599 km² | **8.602 km²** |
+| Tabla `calles` | 10 MB | **55 MB** |
+| Base de datos | 181 MB | **225 MB** de 500 |
+
+Comprobado ciudad por ciudad después de subirlo, incluidas tres **donde no vive
+nadie registrado** (Salamanca, Lugo, Teruel) para confirmar que quien se
+instale la app ahí durante el evento también tendrá calabazas. Burgos pasó de
+**0 a 793** trozos de calle, y las calabazas ya se ven ahí.
+
+Tres cosas aprendidas bajando esto, por si hay que repetirlo:
+- **Las cajas se ajustan a los trozos de descarga, un pelo por debajo.** Una
+  caja de 3 km sale como 3,0000000000005 al convertir grados a km, y el `ceil`
+  la parte en DOS trozos. Poniendo 2,99 se arregla: 2.836 trozos → 1.928.
+- **Overpass: un solo servidor.** Se probó turnar tres y fue peor — los otros
+  dos contestan 500 a nuestra consulta (la del regex con once tipos de vía),
+  siempre y al instante. Si se añade otro, **probarlo con la consulta real**.
+- **Las zonas van de ciudad más grande a más pequeña**, así que si la descarga
+  se corta, lo que falta es lo que menos gente cubre.
 
 **NADA DE REPASO NOCTURNO** (decidido por Iban el 16-oct). Se planteó un
 trabajo a las 00:00 que volviera a sembrar cada noche para que la gente nueva
