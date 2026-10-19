@@ -777,11 +777,31 @@ el servidor no tenía ningún límite de peticiones**. Esto es lo que queda:
 peticiones, CORS, compresión, los POST con el cuerpo vacío, las cinco pestañas
 de la app con datos y sin ellos.
 
-**Sin comprobar, porque hace falta leer la base de datos** (pedir permiso a
-Iban): que el índice único de `display_name` exista de verdad y que la seguridad
-a nivel de fila esté activa en `users`, `user_stats`, `runs` y `zones`. Las dos
-se crean con un `.catch(() => {})` que se traga el fallo en silencio, así que
-podrían no estar puestas sin que nadie se entere. Son dos `SELECT` de nada.
+**La seguridad a nivel de fila: COMPROBADA el 19-oct-2026** y está bien. Salió
+a raíz de un vídeo que Iban mandó sobre apps hechas con IA que se arruinan.
+Medido, no leído:
+
+- **RLS activa en las 22 tablas** del esquema. La única sin ella es
+  `spatial_ref_sys`, que es la tabla de referencia de PostGIS: datos públicos
+  de sistemas de coordenadas, cero riesgo.
+- Las **13 políticas** que hay son todas `service_full_access` y **solo para el
+  papel `postgres`**. El papel `anon` —el de la API pública de Supabase— no
+  tiene ni una, así que RLS le niega todo por defecto. Ojo: `anon` SÍ tiene
+  permisos de tabla (SELECT, INSERT, UPDATE…, los que pone Supabase de serie);
+  **lo único que lo frena es RLS**, así que apagarla en una tabla la deja
+  abierta de par en par.
+- **La app NO habla con Supabase**: no tiene `supabase-js`, solo llama a
+  nuestra propia API. En el repositorio público no hay ninguna clave ni URL de
+  Supabase (`git grep` de `supabase.co`, `SUPABASE_*` y del prefijo de los JWT:
+  cero resultados).
+- Probado desde fuera y sin credenciales: `GET /rest/v1/users`, `/runs` y
+  `/cells` contra el proyecto contestan **401 "No API key found"**.
+
+Es justo el fallo del vídeo —tablas con RLS apagada y la clave anónima dentro
+del JavaScript— y aquí no se da por las dos cosas a la vez.
+
+**Lo que sigue sin comprobarse**: que el índice único de `display_name` exista
+de verdad (se crea con el mismo `.catch(() => {})` silencioso).
 
 **Lo que NO se puede arreglar desde el código:**
 
