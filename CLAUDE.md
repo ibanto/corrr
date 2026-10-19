@@ -803,6 +803,32 @@ del JavaScript— y aquí no se da por las dos cosas a la vez.
 **Lo que sigue sin comprobarse**: que el índice único de `display_name` exista
 de verdad (se crea con el mismo `.catch(() => {})` silencioso).
 
+**Una factura disparada: CUBIERTO** (19-oct-2026). Salió de un vídeo que mandó
+Iban sobre apps hechas con IA que se arruinan, y los cinco avisos se miraron
+uno a uno. El del dinero era el único con algo que hacer, y ya está hecho:
+
+- **Tope de gasto en Railway**: *Usage → Set limits → COMPUTE*. **Aviso por
+  correo a los $10 y corte a los $25.** La columna AGENT se deja en blanco:
+  es de los asistentes de Railway, que CORRR no usa.
+- **Lo que gasta de verdad**, medido el mismo día: **$1,58 al mes** (memoria
+  $1,26, CPU $0,03, tráfico $0,28 por 5,66 GB). Plan Hobby, que incluye $5.
+  Hacen falta **quince veces** el consumo actual para que salte el corte.
+- Y por qué no se puede disparar: la respuesta más pesada (Barcelona, 42.416
+  celdas) son **124 KB comprimida** y **exige sesión**; lo que puede pedir
+  alguien sin cuenta son **25 rutas que devuelven menos de 2 KB**; y el límite
+  de peticiones corta a 500/min por IP (medido en producción el 3-oct).
+
+Para comparar: los 189 TB del vídeo, a los $0,05/GB que cobra Railway, serían
+**9.450 dólares**. CORRR lleva 5,66 GB.
+
+Los otros cuatro avisos del vídeo, en una línea: **no mandamos SMS** (el caso
+de los 5 M$ es por SMS en EE. UU.) y el correo cumple la LSSI con baja de un
+clic (§ del correo de Halloween); **el único robot** que hay baja calles de
+OpenStreetMap, que es gratis y corre en el Mac de Iban, no en el servidor;
+**las tablas abiertas** no aplican (ver arriba, RLS comprobada); y la **demanda
+por accesibilidad** es una ley estadounidense contra webs — CORRR es una app
+española y gratis, riesgo bajo y nada urgente.
+
 **Lo que NO se puede arreglar desde el código:**
 
 - **La contraseña del keystore de Android está en el historial público de git**
