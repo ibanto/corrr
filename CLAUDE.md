@@ -1058,6 +1058,18 @@ marca `es_bot` y sacarlos de:
   **Decisión de Iban (14-oct): se hace DESPUÉS de Halloween.** "Si hacemos este
   arreglo y reventamos el mapa, la gente se desmotiva." Toca la pieza más
   delicada a ocho días de subir, y el evento manda.
+- **Al activar "Tus otras carreras", traerse los ÚLTIMOS 7 DÍAS.** Hoy solo
+  entran los entrenos POSTERIORES a activarlo (decisión de sept-2026, para que
+  nadie se traiga su histórico de golpe). Tiene sentido, pero a quien se acaba
+  de instalar la app le deja la sensación de que **no funciona**: lo activa, no
+  pasa nada, y se va. Pasó literalmente el 20-oct — un usuario con Garmin →
+  Strava → Salud escribió diciendo que no le entraba nada y que *"si no puedo
+  sincronizar las carreras no usaré la app"*. El tope de 7 días (`MAX_AGE_MS`)
+  ya existe en `healthkit.ts`: es cambiar `since` para que no mire
+  `connectedAt`, y avisar en el aviso de conexión de lo que va a entrar.
+  **Pendiente de saber en qué quedó ese caso**: puede que lo suyo fuera
+  simplemente que Strava manda el entreno a Salud SIN la ruta, y sin ruta no
+  hay territorio. La pregunta que lo decide es si ve el mapa en la app Fitness.
 - **Guardar la carrera en el móvil MIENTRAS se corre.** Hoy solo se guarda al
   pulsar PARAR (que es lo que mató la carrera de Oriol15 el 4-oct y ya está
   arreglado), y en segundo plano. Con la app abierta en pantalla, los puntos
