@@ -6,7 +6,7 @@ Instrucciones para Claude trabajando en este repo. Léelo entero antes de tocar 
 
 ## 0. Dónde estamos (leer esto primero)
 
-*Al día a 17-oct-2026, tarde. Si algo de aquí abajo contradice a este apartado, manda este.*
+*Al día a 22-oct-2026, noche. Si algo de aquí abajo contradice a este apartado, manda este.*
 
 **En las tiendas**: **1.11.11 publicada y ANUNCIADA en las dos** (Android
 vc87, iPhone build 34). 54 personas. Ya no queda nada de la subida.
@@ -20,22 +20,29 @@ noviembre** (§9-bis).
 
 ### Lo siguiente que hay que hacer
 
-**Todo lo de la subida está cerrado. Lo que queda es el evento**, y es del
-día 22 por la noche, en este orden:
+**EL EVENTO ESTÁ EN MARCHA.** La noche del 22 se hicieron los tres primeros
+pasos, comprobados uno a uno:
 
-1. **Sembrar** con el botón morado del panel (§9-bis). Tarda 10-30 s y los
-   botones se quedan apagados mientras. Ojo: el "ibanto" gris del campo
-   "Sembrar cerca de" es el EJEMPLO, no está escrito.
-2. **Halloween → "Encendido para todo el mundo"** en el panel.
-3. **`MIN_APP_VERSION = 1.11.11`** en Railway.
-4. **Publicar el aviso** dentro de la app, el del botón "ME APUNTO"
+1. ✅ **Sembrado** con el botón morado: **1.123 calabazas y 2.800 fantasmas**
+   repartidas por ~47 zonas, del 23-oct al 1-nov, 200 puntos cada una. Salen
+   1.123 y no 2.600 porque la separación mínima de 300 m descarta las que
+   caen demasiado juntas.
+2. ✅ **Halloween encendido para todo el mundo** (`ajustes_juego` = `si`).
+3. ✅ **`MIN_APP_VERSION = 1.11.11`** en Railway, comprobado en
+   `/app/version` para android e ios. **OJO**: en Railway las variables se
+   quedan EN ESPERA hasta que se pulsa el botón de desplegar — la fila sale
+   resaltada en morado con el valor a la vista. No basta con guardarla.
+4. ⏳ **Falta el AVISO dentro de la app**, el del botón "ME APUNTO"
    (`docs/aviso-halloween.md`). Con notificación al móvil.
 
-El **correo** de Halloween ya se mandó el 16-oct a las 19:21: **51 enviados,
-0 fallos, 0 bajas**. Va escrito en FUTURO a propósito y empuja a actualizar.
+**OJO con la hora**: las fechas se guardaron como las 02:00 del 23 (el
+servidor va en UTC y España está en +2 en octubre). O sea que las calabazas
+aparecen a las 2 de la madrugada del viernes, no a medianoche, y el evento
+acaba sobre las 2 de la madrugada del 2-nov. Se decidió dejarlo: son dos
+horas en las que no corre nadie.
 
-**El 2 de noviembre**: nombrar al que más cogió (Panel → Juego → el top 5, que
-es solo de este evento) y bajar `MIN_APP_VERSION`.
+**El 2 de noviembre**: nombrar al que más cogió (panel → Juego → *Marcador del
+evento*) y **bajar `MIN_APP_VERSION` a `1.0.0`**.
 
 ### Ya funcionando en producción (servidor, sin build)
 
