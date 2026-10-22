@@ -2070,6 +2070,13 @@ Sale UNA vez por persona; para repetirlo, se crea otro. Solo lo ven las apps 1.1
 
 <section id="p-juego" role="tabpanel" hidden>
 <div class="caja">
+<h2>Marcador del evento</h2>
+<p class="nota">Todo lo de aquí es del evento que est&aacute; en marcha. Lo de las pruebas de octubre
+no cuenta. Se actualiza solo cada minuto.</p>
+<div id="marcador">Cargando&hellip;</div>
+<button class="mini" id="m_refrescar" type="button">Actualizar ahora</button>
+</div>
+<div class="caja">
 <h2>Halloween</h2>
 <p class="nota">La app ya lleva dentro las calabazas y los diez mensajes nuevos, pero <b>apagados</b>.
 Este interruptor los enciende para todo el mundo, sin sacar versión. Mientras esté apagado, en Retos
@@ -2424,6 +2431,66 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
   }
   document.getElementById('c_test').addEventListener('click', function () { mandarCorreo('prueba'); });
   document.getElementById('c_enviar').addEventListener('click', function () { mandarCorreo('enviar'); });
+  function cajita(titulo, grande, pie) {
+    return '<div style="flex:1;min-width:150px;background:#161616;border-left:3px solid #FF5500;'
+      + 'padding:10px 12px;border-radius:4px;">'
+      + '<div style="font-size:11px;letter-spacing:1px;color:#888;text-transform:uppercase;">' + titulo + '</div>'
+      + '<div style="font-size:26px;font-weight:800;color:#fff;line-height:1.2;">' + grande + '</div>'
+      + '<div style="font-size:12px;color:#aaa;">' + pie + '</div></div>';
+  }
+  function pintarMarcador(e) {
+    var c = e.calabazas || {}, f = e.fantasmas || {};
+    var h = '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px;">'
+      + cajita('Calabazas cogidas', c.cogidas || 0, (c.libres || 0) + ' siguen en el mapa')
+      + cajita('Fantasmas pisados', f.cogidas || 0, (f.libres || 0) + ' siguen en el mapa')
+      + cajita('Corredores jugando', c.corredores || 0, (c.cogidas_hoy || 0) + ' calabazas en 24 h')
+      + cajita('Puntos repartidos', ((c.puntos || 0) + (f.puntos || 0)).toLocaleString('es-ES'),
+               'calabazas ' + (c.puntos || 0).toLocaleString('es-ES') + ' / fantasmas ' + (f.puntos || 0).toLocaleString('es-ES'))
+      + '</div>';
+
+    if (c.empieza) {
+      var d1 = new Date(c.empieza), d2 = new Date(c.acaba), ahora = new Date();
+      var estado = ahora < d1 ? 'empieza el ' + d1.toLocaleString('es-ES')
+        : ahora > d2 ? 'TERMINADO el ' + d2.toLocaleString('es-ES')
+        : 'en marcha, termina el ' + d2.toLocaleString('es-ES');
+      h += '<p class="meta">Evento ' + estado + '.</p>';
+    }
+
+    var pr = (e.premios || []).map(function (p) {
+      var q = Number(p.puntos);
+      var nombre = q > 0 ? 'Buenos (+' + q + ')' : q < 0 ? 'Malos (' + q + ')' : 'Vacíos (nada)';
+      return '<tr><td>' + nombre + '</td><td style="text-align:right">' + p.pisados + ' de ' + p.total + '</td></tr>';
+    }).join('');
+    if (pr) h += '<h3 style="margin:14px 0 6px;font-size:14px;color:#FF5500;">Truco o trato</h3>'
+      + '<table style="width:100%;font-size:13px;color:#ddd;border-collapse:collapse;">' + pr + '</table>';
+
+    var r = (e.ranking || []).map(function (x, i) {
+      return '<tr><td style="color:#FF5500;width:28px;">' + (i + 1) + '</td>'
+        + '<td>' + esc(x.display_name) + ' <span style="color:#777;font-size:11px;">' + esc(x.city || '') + '</span></td>'
+        + '<td style="text-align:right">' + x.calabazas + ' 🎃</td>'
+        + '<td style="text-align:right;color:#888;">' + x.fantasmas + ' 👻</td>'
+        + '<td style="text-align:right;font-weight:700;">' + Number(x.puntos).toLocaleString('es-ES') + '</td></tr>';
+    }).join('');
+    h += '<h3 style="margin:14px 0 6px;font-size:14px;color:#FF5500;">Quién va ganando</h3>'
+      + (r ? '<table style="width:100%;font-size:13px;color:#ddd;border-collapse:collapse;">' + r + '</table>'
+           : '<p class="meta">Todav&iacute;a no ha cogido nadie nada.</p>');
+
+    var ci = (e.ciudades || []).map(function (x) {
+      return '<span style="display:inline-block;background:#161616;border-radius:3px;padding:3px 8px;margin:0 6px 6px 0;font-size:12px;color:#ccc;">'
+        + esc(x.city) + ' <b style="color:#fff;">' + x.cuantas + '</b></span>';
+    }).join('');
+    if (ci) h += '<h3 style="margin:14px 0 6px;font-size:14px;color:#FF5500;">Sin coger, por zona</h3><div>' + ci + '</div>';
+
+    document.getElementById('marcador').innerHTML = h;
+  }
+  function cargarMarcador() {
+    api('/admin/evento').then(pintarMarcador).catch(function (e) {
+      document.getElementById('marcador').innerHTML = '<p class="meta">No se ha podido cargar: ' + esc(e.message) + '</p>';
+    });
+  }
+  document.getElementById('m_refrescar').addEventListener('click', cargarMarcador);
+  cargarMarcador();
+  setInterval(cargarMarcador, 60000);
   function pintarObjetos(o) {
     var top = (o.top || []).map(function (t, i) {
       return (i + 1) + '. ' + esc(t.display_name) + ' — ' + t.cuantos;
@@ -6216,6 +6283,71 @@ app.get('/admin/objetos', { preHandler: requireAdmin }, async (req: any, reply) 
     [tipo],
   );
   return reply.send({ tipo, ...rows[0], top });
+});
+
+/** EL MARCADOR DEL EVENTO, de un vistazo.
+ *
+ *  Lo pidió Iban la noche de sembrar: quería ver cómo va la cosa sin tener que
+ *  sumar a mano lo de dos apartados. Va todo del EVENTO ACTUAL (§9-bis), así
+ *  que las calabazas de las pruebas de octubre no ensucian ningún número.
+ *
+ *  Lo interesante no es cuántas quedan, es **cuánto se está moviendo**: las que
+ *  faltan por coger dicen si hay que sembrar más, el desglose de los fantasmas
+ *  dice si la gente se está atreviendo, y las de las últimas 24 h dicen si el
+ *  evento sigue vivo o se ha apagado. */
+app.get('/admin/evento', { preHandler: requireAdmin }, async (_req, reply) => {
+  const porTipo = async (tipo: string) => {
+    const { rows } = await db.query(
+      `SELECT
+         COUNT(*) FILTER (WHERE tomado_por IS NULL)::int AS libres,
+         COUNT(*) FILTER (WHERE tomado_por IS NOT NULL)::int AS cogidas,
+         COUNT(*) FILTER (WHERE tomado_at >= NOW() - INTERVAL '24 hours')::int AS cogidas_hoy,
+         COUNT(DISTINCT tomado_por)::int AS corredores,
+         COALESCE(SUM(puntos) FILTER (WHERE tomado_por IS NOT NULL), 0)::int AS puntos,
+         MIN(desde) AS empieza, MAX(hasta) AS acaba
+       FROM objetos o
+        WHERE tipo = $1 AND ${DE_ESTE_EVENTO('o.')}`, [tipo]);
+    return rows[0];
+  };
+  const calabazas = await porTipo('calabaza');
+  const fantasmas = await porTipo('fantasma');
+
+  // Los fantasmas, por lo que llevaban dentro. Es lo que cuenta si la apuesta
+  // está saliendo cara o barata.
+  const { rows: premios } = await db.query(
+    `SELECT puntos, COUNT(*)::int AS total,
+            COUNT(*) FILTER (WHERE tomado_por IS NOT NULL)::int AS pisados
+       FROM objetos o WHERE tipo = 'fantasma' AND ${DE_ESTE_EVENTO('o.')}
+      GROUP BY puntos ORDER BY puntos DESC`, ['fantasma']);
+
+  const { rows: ranking } = await db.query(
+    `SELECT u.display_name, u.city,
+            COUNT(*) FILTER (WHERE o.tipo = 'calabaza')::int AS calabazas,
+            COUNT(*) FILTER (WHERE o.tipo = 'fantasma')::int AS fantasmas,
+            SUM(o.puntos)::int AS puntos,
+            MAX(o.tomado_at) AS ultima
+       FROM objetos o JOIN users u ON u.id = o.tomado_por
+      WHERE o.hasta IS NOT DISTINCT FROM (SELECT MAX(hasta) FROM objetos WHERE tipo = 'calabaza')
+      GROUP BY u.display_name, u.city
+      ORDER BY calabazas DESC, puntos DESC LIMIT 20`);
+
+  // Dónde están las que nadie ha cogido todavía, por ciudad de quien vive
+  // cerca. Sirve para ver si alguna zona se ha quedado sin nada.
+  const { rows: ciudades } = await db.query(
+    `SELECT u.city, COUNT(*)::int AS cuantas
+       FROM objetos o
+       JOIN LATERAL (
+         SELECT c.owner_id FROM cells c
+          WHERE c.cell_x BETWEEN o.cell_x - 300 AND o.cell_x + 300
+            AND c.cell_y BETWEEN o.cell_y - 300 AND o.cell_y + 300
+          LIMIT 1) cc ON TRUE
+       JOIN users u ON u.id = cc.owner_id
+      WHERE o.tipo = 'calabaza' AND o.tomado_por IS NULL
+        AND o.hasta IS NOT DISTINCT FROM (SELECT MAX(hasta) FROM objetos WHERE tipo = 'calabaza')
+        AND u.city IS NOT NULL AND u.city <> ''
+      GROUP BY u.city ORDER BY cuantas DESC LIMIT 12`).catch(() => ({ rows: [] }));
+
+  return reply.send({ calabazas, fantasmas, premios, ranking, ciudades });
 });
 
 /** Sembrar el evento: "pon 100 calabazas del 29 al 31". Se puede repetir para
