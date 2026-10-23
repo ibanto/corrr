@@ -536,6 +536,22 @@ verdad, compilar en **Release** (lleva el código dentro y no necesita nada):
   carrera corría sin servicio ni notificación y a 0,00 km. Es el mismo fallo
   que el botón de centrar del 6-oct, y se quedó sin arreglar aquí.
   **Todo `await` de ubicación lleva `conTiempo` o va detrás de lo importante.**
+- **El servidor tiraba las vueltas grandes enteras** (22-oct-2026, arreglado
+  el 23 en el servidor, sin build): `POST /runs` rechazaba con 400 toda
+  carrera de más de 50.000 celdas, y la app manda el recorrido MÁS el interior
+  relleno de la vuelta. Una vuelta de unos 6 km² (~61.000 celdas) se perdía
+  ENTERA, km incluidos, mientras la app decía «se mandará sola» y fallaba
+  siempre. Ahora el tope es `MAX_CELDAS_POR_PETICION` = 100.000 (10 km², el
+  mismo que el cerco), con `cajaDe` en vez de `Math.min(...xs)` (el spread
+  revienta la pila hacia 110.000 en Node 20), un SAVEPOINT alrededor del cerco
+  (un fallo ahí dejaba la transacción abortada y se perdía la carrera) y las
+  celdas con coordenadas raras fuera en vez de un 500. Por encima de 100.000
+  sigue el 400: `soloElBorde` (services/territorio.ts) está escrito y probado
+  para guardar el borde y mandar el interior al cerco, pero **no se usa**:
+  cambia el reparto del interior y se decide después de Halloween. Ojo también:
+  en Android la copia pendiente no se relee por encima de ~2 MiB (cursor de
+  AsyncStorage), para la próxima build. La carrera perdida (21raulnicolas,
+  15,8 km) se metió a mano con un script a medida en `soporte/` (fuera de git).
 - **Subir la versión mínima con gente corriendo** (22-oct, probable): la
   pantalla de «actualiza» desmonta el mapa y la carrera en marcha se pierde
   (con la 1.11.10, sin copia). `MIN_APP_VERSION` se cambia **de madrugada** o

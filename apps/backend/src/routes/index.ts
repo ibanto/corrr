@@ -3148,6 +3148,22 @@ const RUN_SPAN_FLOOR_M = 300;
  *  2,5 km² — veinte veces la mayor conquista real registrada. */
 const MAX_CELLS_PER_RUN = 25_000;
 
+/** Tope de celdas que acepta `POST /runs` en una carrera. No es el de arriba,
+ *  que solo MARCA.
+ *
+ *  La app manda el recorrido MÁS el interior relleno de la vuelta que cierra,
+ *  y todo cuenta como pisado (§9-bis). El 22-oct-2026 el tope era 50.000 y
+ *  tiró una carrera real de ~61.000 celdas (una vuelta de unos 6 km² con su
+ *  interior): 400, y la app la guardaba para «mandarla sola» y fallaba
+ *  siempre. Ahora es el mismo número que el cerco (10 km²).
+ *
+ *  Medido con 100.000: el cuerpo pesa ~2,4 MB (el bodyLimit es 10 MB) y las
+ *  consultas van en bloque (unnest), no una por celda. Por encima sigue el 400
+ *  de siempre: para vueltas de más de 10 km² está `soloElBorde` en
+ *  services/territorio.ts, sin usar a propósito hasta después de Halloween
+ *  (cambia cómo se reparte el interior, y eso lo decide Iban). */
+const MAX_CELDAS_POR_PETICION = MAX_CELDAS_CERCO;
+
 /** Velocidad máxima sostenida creíble. El récord de maratón ronda los 21 km/h;
  *  30 deja margen para ciclistas ocasionales y errores del GPS sin permitir
  *  "100 km en diez minutos". */
@@ -3268,7 +3284,7 @@ app.post('/runs', {
   // dejar runs falsos en la BD. Top-cap a valores físicos creíbles:
   //   - distanceKm: máx 100 km por carrera (ultramarathon teórico).
   //   - durationSecs: máx 24h.
-  //   - claimedCells: máx 50.000 celdas (~500 km de territorio, holgado).
+  //   - claimedCells: máx MAX_CELDAS_POR_PETICION (100.000, ver la constante).
   //   - zones: máx 200.
   const isFiniteNum = (v: any) => typeof v === 'number' && Number.isFinite(v);
 
@@ -3288,11 +3304,24 @@ app.post('/runs', {
   if (!isFiniteNum(durationSecs) || durationSecs < 0 || durationSecs > 86400) {
     return reply.status(400).send({ error: 'durationSecs fuera de rango (0-86400 s)' });
   }
-  if (claimedCells != null && (!Array.isArray(claimedCells) || claimedCells.length > 50000)) {
+  if (claimedCells != null && !Array.isArray(claimedCells)) {
     return reply.status(400).send({ error: 'claimedCells inválido o demasiado grande' });
   }
   if (zones != null && (!Array.isArray(zones) || zones.length > 200)) {
     return reply.status(400).send({ error: 'zones inválido o demasiado grande' });
+  }
+
+  // Las celdas que se van a apuntar: solo las de coordenadas enteras y dentro
+  // del planeta. Antes una sola celda rara (x nulo) llegaba al INSERT, que
+  // fallaba: 500, y la app reenviaba la misma copia para siempre. Ante la duda
+  // se guarda la carrera, sin esa celda (validateClaimedCellsGeometry, más
+  // abajo, sigue mirando lo que llegó en bruto).
+  const celdasEnBruto: any[] = Array.isArray(claimedCells) ? claimedCells : [];
+  const celdas: Celda[] = celdasEnBruto.filter((c: any) =>
+    Number.isInteger(c?.x) && Number.isInteger(c?.y)
+    && Math.abs(c.x) <= MAX_CELL_COORD && Math.abs(c.y) <= MAX_CELL_COORD);
+  if (celdas.length > MAX_CELDAS_POR_PETICION) {
+    return reply.status(400).send({ error: 'claimedCells inválido o demasiado grande' });
   }
 
   // ── Cuándo se corrió ─────────────────────────────────────────────────────
@@ -3376,9 +3405,11 @@ app.post('/runs', {
   // La señal anti-trampas no se pierde: queda registrada en flagged_reason y
   // en el log con las cifras, para poder revisarla y calibrar el umbral con
   // datos reales en vez de a ojo. Los topes duros de más arriba (distancia
-  // 0-100 km, máximo de celdas, velocidad media) sí siguen rechazando: esos
+  // 0-100 km, celdas que la app no puede mandar) sí siguen rechazando: esos
   // son físicamente imposibles, no discutibles.
   let flaggedReason: string | null = null;
+  // Sobre lo que ha LLEGADO, no sobre `celdas`: si se ha quitado alguna rara,
+  // la marca tiene que contar lo que se mandó.
   if (Array.isArray(claimedCells) && claimedCells.length > 0) {
     flaggedReason = validateClaimedCellsGeometry(claimedCells, distanceKm, durationSecs);
     if (flaggedReason) {
@@ -3426,19 +3457,23 @@ app.post('/runs', {
     // ── Grid (v2) — process claimedCells if present ──────────────────────────
     // Coexists with the polygon logic below. v1.5.x clients send only `zones`,
     // v1.6+ clients send `claimedCells`. Server handles whichever arrives.
+    // De aquí abajo, siempre `celdas` (las ya filtradas).
     let newCellCount = 0;
     let newerCellsKept = 0;
-    if (Array.isArray(claimedCells) && claimedCells.length > 0) {
+    if (celdas.length > 0) {
       // Bounding box of all claims — used to fetch existing ownership in one query.
-      const xs = claimedCells.map((c: any) => c.x);
-      const ys = claimedCells.map((c: any) => c.y);
-      const minX = Math.min(...xs), maxX = Math.max(...xs);
-      const minY = Math.min(...ys), maxY = Math.max(...ys);
+      // Con cajaDe (un bucle) y NO con Math.min(...xs): el spread pasa cada
+      // celda como un argumento y, medido en Node 20 (también dentro de un
+      // handler de Fastify), revienta la pila («Maximum call stack size
+      // exceeded») entre 110.000 y 120.000. El margen sobre el tope era solo
+      // del 10-20 % y depende de la versión de Node. Ese fallo acababa en el
+      // catch de abajo: 500 y carrera perdida igual.
+      const bbox = cajaDe(celdas, 0);
 
       const { rows: existing } = await client.query(
         `SELECT cell_x, cell_y, owner_id, claimed_at FROM cells
          WHERE cell_x BETWEEN $1 AND $2 AND cell_y BETWEEN $3 AND $4`,
-        [minX, maxX, minY, maxY]
+        [bbox.x0, bbox.x1, bbox.y0, bbox.y1]
       );
       const existingMap = new Map<string, { owner: string; at: number }>();
       for (const e of existing) {
@@ -3453,7 +3488,7 @@ app.post('/runs', {
       // importadas: una carrera de la app siempre es la más reciente).
       const robosByPrevOwner = new Map<string, { x: number; y: number }[]>();
       const toClaim: { x: number; y: number }[] = [];
-      for (const c of claimedCells) {
+      for (const c of celdas) {
         const prev = existingMap.get(`${c.x},${c.y}`);
         if (!prev) {
           newCellCount++;
@@ -3706,7 +3741,12 @@ app.post('/runs', {
     // pisabas, así que cerrabas el círculo, veías dos dentro y se quedaban
     // ahí, encima de tu propio territorio, sin poder cogerlas.
     let celdasDelCerco: Celda[] = [];
-    if (Array.isArray(claimedCells) && claimedCells.length > 0) {
+    if (celdas.length > 0) {
+      // Un fallo aquí no puede costarle la carrera a nadie, y para eso no basta
+      // con el catch: todo va dentro de la misma transacción, y en Postgres
+      // una consulta que falla la deja ABORTADA — el COMMIT de abajo fallaba
+      // igual y la carrera se perdía. El SAVEPOINT deshace solo el cerco.
+      await client.query('SAVEPOINT cerco');
       try {
         // Solo la zona de esta carrera, con hasta 3 km de margen: el cerco
         // que se acaba de cerrar está aquí, y así no se repasa el territorio
@@ -3714,7 +3754,7 @@ app.post('/runs', {
         // que es mejor que no mirar (antes era fijo, no cabía en cuanto la
         // carrera pasaba de 1,1 km de ancho, y se saltaba el cerco entero sin
         // decir nada: por eso hubo que dar cercos a mano desde el panel).
-        const caja = cajaDeTrabajo(claimedCells as Celda[], 300);
+        const caja = cajaDeTrabajo(celdas, 300);
         if (caja) {
           const { rows: mias } = await client.query(
             `SELECT cell_x, cell_y FROM cells
@@ -3733,8 +3773,9 @@ app.post('/runs', {
               { userId, encerradas: encerradas.length },
               '[cerco] demasiado grande, no se rellena',
             );
-            await avisarCercoEnorme(client, userId, encerradas.length)
-              .catch((e: any) => req.log.warn({ err: String(e) }, '[cerco] no se pudo avisar del tope'));
+            // Sin .catch propio: si falla, que lo deshaga el SAVEPOINT. Tragarse
+            // aquí el error dejaba la transacción abortada.
+            await avisarCercoEnorme(client, userId, encerradas.length);
           } else if (encerradas.length > 0) {
             const cerco = await ocuparCercadas(client, userId, encerradas, runId);
             cercadas = cerco.total;
@@ -3744,13 +3785,20 @@ app.post('/runs', {
           }
         } else {
           req.log.warn(
-            { userId, celdas: claimedCells.length },
+            { userId, celdas: celdas.length },
             '[cerco] la carrera abarca más de 10 km de lado, no se mira el cerco',
           );
         }
+        await client.query('RELEASE SAVEPOINT cerco');
       } catch (e) {
-        // Un fallo aquí no puede costarle la carrera a nadie.
-        req.log.warn({ err: String(e) }, '[cerco] no se pudo calcular');
+        // Si esto también falla, la transacción ya no tiene arreglo: que salte
+        // al catch de fuera (ROLLBACK, la app guarda la copia y reintenta).
+        await client.query('ROLLBACK TO SAVEPOINT cerco');
+        cercadas = 0;
+        cercadasRobadas = 0;
+        victimasCerco = new Map();
+        celdasDelCerco = [];
+        req.log.warn({ err: String(e) }, '[cerco] no se pudo calcular; se guarda la carrera sin él');
       }
     }
 
@@ -3763,7 +3811,7 @@ app.post('/runs', {
     // calabaza corriendo: no podía verla —ni tenía la versión— pero el
     // servidor se la dio igual y le sumó los 200 puntos.
     let halloweenLeToca = false;
-    if (Array.isArray(claimedCells) && claimedCells.length > 0) {
+    if (celdas.length > 0) {
       const valorHw = await valorAjuste('halloween');
       if (valorHw === 'si') halloweenLeToca = true;
       else if (valorHw.startsWith('prueba:')) {
@@ -3772,7 +3820,7 @@ app.post('/runs', {
       }
     }
     const objetos = halloweenLeToca
-      ? await recoger(client, userId, claimedCells, new Date(isImport ? runEndMs : nowMs), celdasDelCerco)
+      ? await recoger(client, userId, celdas, new Date(isImport ? runEndMs : nowMs), celdasDelCerco)
       : [];
     const puntosObjetos = objetos.reduce((n: number, o: Objeto) => n + o.puntos, 0);
     // Separados para el resumen: una carrera con una calabaza y un zombi suma

@@ -7,7 +7,7 @@
  * mapa le estaría dando a alguien territorio que no ha rodeado — o quitándole
  * el que sí — así que no se sube nada con esto en rojo.
  */
-import { celdasEncerradas, cajaDe, cajaDeTrabajo, gruposDeCeldas } from '../dist/services/territorio.js';
+import { celdasEncerradas, cajaDe, cajaDeTrabajo, gruposDeCeldas, soloElBorde } from '../dist/services/territorio.js';
 
 let fallos = 0;
 function comprueba(nombre, ok, detalle) {
@@ -134,6 +134,82 @@ function marco(n) {
   for (let i = 0; i < 300; i += 3) barrio.push({ x: i, y: 0 }, { x: 0, y: i });
   comprueba('un barrio con huecos sigue siendo UNA zona',
     gruposDeCeldas(barrio).length === 1, `${gruposDeCeldas(barrio).length} zona(s)`);
+}
+
+// ── Vueltas demasiado grandes para apuntarlas enteras (POST /runs) ─────────
+// La app manda el recorrido MÁS el interior relleno. Por encima de 100.000
+// celdas el servidor se queda solo con el borde y el interior lo decide el
+// cerco. Si el borde no encerrase lo de dentro, la vuelta se perdería en
+// silencio: por eso se comprueba con el MISMO cálculo de cercos.
+
+/** Disco relleno de radio r (en celdas), como lo deja fillEnclosedCells. */
+function discoRelleno(r, cx = 0, cy = 0) {
+  const c = [];
+  for (let y = -r; y <= r; y++) {
+    for (let x = -r; x <= r; x++) if (x * x + y * y <= r * r) c.push({ x: x + cx, y: y + cy });
+  }
+  return c;
+}
+
+{
+  // Un cuadrado relleno: el borde es su contorno, y el contorno encierra
+  // exactamente lo que se ha quitado.
+  const lado = 400, lleno = [];
+  for (let y = 0; y < lado; y++) for (let x = 0; x < lado; x++) lleno.push({ x, y });
+  const borde = soloElBorde(lleno);
+  comprueba('el borde de un cuadrado relleno es su contorno', borde.length === 4 * lado - 4,
+    `${borde.length} celdas (esperadas ${4 * lado - 4})`);
+  const caja = cajaDeTrabajo(borde, 300);
+  const dentro = caja ? celdasEncerradas(borde, caja) : [];
+  comprueba('y el cerco ve dentro todo lo quitado', dentro.length === lleno.length - borde.length,
+    `${dentro.length} celdas (esperadas ${lleno.length - borde.length})`);
+}
+
+{
+  // El caso de verdad: una vuelta redonda de ~15 km, ~18 km² (~179.000
+  // celdas). Con el tope en 100.000 se perdía ENTERA.
+  const t0 = Date.now();
+  const vuelta = discoRelleno(239, 17000, 460000);
+  const borde = soloElBorde(vuelta);
+  const ms = Date.now() - t0;
+  const caja = cajaDeTrabajo(borde, 300);
+  const dentro = caja ? celdasEncerradas(borde, caja) : [];
+  comprueba('una vuelta de ~18 km² se queda en su borde, y rápido',
+    borde.length < 5000 && ms < 1000, `${vuelta.length} → ${borde.length} celdas en ${ms} ms`);
+  comprueba('y su interior entero llega al cerco (que avisará: pasa de 10 km²)',
+    dentro.length === vuelta.length - borde.length && dentro.length > 100_000,
+    `${dentro.length} celdas`);
+}
+
+{
+  // Repetidas: salen una vez (el INSERT no admite dos veces la misma celda).
+  const lleno = [];
+  for (let y = 0; y < 10; y++) for (let x = 0; x < 10; x++) lleno.push({ x, y });
+  const borde = soloElBorde([...lleno, ...lleno]);
+  comprueba('las celdas repetidas salen una sola vez', borde.length === 36, `${borde.length} celdas`);
+}
+
+{
+  // Una recta o un recorrido sin rellenar se quedan como están.
+  const recta = Array.from({ length: 500 }, (_, i) => ({ x: i, y: 0 }));
+  comprueba('un recorrido sin relleno es todo borde', soloElBorde(recta).length === 500, '500 celdas');
+}
+
+{
+  // Lo que la app no rellena nunca (caja de más de 2.000.000) no se toca.
+  comprueba('una caja que la app no rellena se rechaza',
+    soloElBorde([{ x: 0, y: 0 }, { x: 3000, y: 3000 }]) === null, 'null');
+}
+
+{
+  // Cerca de lo máximo que deja pasar el bodyLimit (10 MB, ~450.000 celdas).
+  const vuelta = discoRelleno(366, 17000, 460000);
+  const t0 = Date.now();
+  const borde = soloElBorde(vuelta);
+  const ms = Date.now() - t0;
+  const caja = cajaDeTrabajo(borde, 300);
+  comprueba('con ~420.000 celdas sigue cabiendo el cerco y tarda poco',
+    caja !== null && ms < 1000, `${vuelta.length} → ${borde.length} celdas en ${ms} ms, caja ${caja ? 'sí' : 'NO'}`);
 }
 
 console.log(fallos ? `\n${fallos} comprobaciones FALLAN.` : '\nCercos en orden.');

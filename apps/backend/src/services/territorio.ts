@@ -66,6 +66,52 @@ export function cajaDe(celdas: Celda[], margen = 1): Caja {
   };
 }
 
+/** Caja máxima para `soloElBorde`: 4 MB de rejilla. La app solo rellena la
+ *  vuelta si su caja no pasa de 2.000.000 de celdas (`fillEnclosedCells`), así
+ *  que una carrera rellena de verdad cabe siempre, con margen. */
+export const MAX_CAJA_BORDE = 4_000_000;
+
+/** Las celdas de un conjunto que tocan el exterior, sin el relleno.
+ *
+ *  Una celda es de BORDE si alguna de sus cuatro vecinas en cruz no está en el
+ *  conjunto. Para lo que manda la app (el recorrido más el interior relleno de
+ *  la vuelta) el borde es el propio recorrido que da al exterior, y el
+ *  interior queda fuera.
+ *
+ *  Sirve para las vueltas tan grandes que no se pueden apuntar enteras de una
+ *  vez: se guarda el borde y el interior lo decide el cálculo de cercos, con
+ *  su tope y su aviso. Funciona porque el borde separa el interior del
+ *  exterior EN CRUZ —todo camino en cruz de fuera hacia dentro entra al
+ *  conjunto por una celda de borde— y `celdasEncerradas` inunda en cruz: ve el
+ *  interior como rodeado, igual que si la vuelta se hubiera cerrado en días.
+ *
+ *  Lo que se pierde: lo pisado por DENTRO de la vuelta (cruzarla por el medio)
+ *  no se distingue del relleno y cae con él.
+ *
+ *  Las repetidas salen una sola vez. Devuelve null si la caja pasa de
+ *  `MAX_CAJA_BORDE`: eso no lo ha rellenado la app. Las celdas tienen que ser
+ *  enteras (quien llama ya las ha filtrado). */
+export function soloElBorde(celdas: Celda[]): Celda[] | null {
+  if (celdas.length === 0) return [];
+  // Margen de una celda: así las vecinas de las del filo caen dentro de la
+  // rejilla y valen 0 (fuera), sin comprobar los bordes de la caja.
+  const { x0, x1, y0, y1 } = cajaDe(celdas, 1);
+  const ancho = x1 - x0 + 1, alto = y1 - y0 + 1;
+  if (!(ancho * alto <= MAX_CAJA_BORDE)) return null;
+  const en = new Uint8Array(ancho * alto);
+  for (const c of celdas) en[(c.y - y0) * ancho + (c.x - x0)] = 1;
+  const borde: Celda[] = [];
+  for (const c of celdas) {
+    const i = (c.y - y0) * ancho + (c.x - x0);
+    if (en[i] !== 1) continue; // ya vista (repetida)
+    en[i] = 2; // sigue contando como "dentro" para sus vecinas
+    if (!en[i - 1] || !en[i + 1] || !en[i - ancho] || !en[i + ancho]) {
+      borde.push({ x: c.x, y: c.y });
+    }
+  }
+  return borde;
+}
+
 /** La caja para buscar el cerco de una carrera: la de sus celdas con el mayor
  *  margen que quepa, hasta `margen`.
  *
