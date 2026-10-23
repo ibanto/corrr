@@ -11,6 +11,27 @@ Instrucciones para Claude trabajando en este repo. Léelo entero antes de tocar 
 **En las tiendas**: **1.11.11 publicada y ANUNCIADA en las dos** (Android
 vc87, iPhone build 34). 54 personas. Ya no queda nada de la subida.
 
+**1.11.12 (SOLO Android, vc88) — montada el 23-oct, en PRUEBA INTERNA**
+(`apps/mobile/builds/corrr-v1.11.12-vc88.aab`, notas en
+`store/notas-1.11.12.md`). Falta: la prueba en la calle de Iban con su Xiaomi
+(`docs/prueba-gps.md` + abrir otras apps a media carrera y volver), pasarla a
+producción y, cuando Google la publique, `LATEST_APP_VERSION` = 1.11.12 y
+`LATEST_APP_VC` = 88 en Railway. **`MIN_APP_VERSION` NO se toca** (§9, «subir
+la versión mínima con gente corriendo»). El iPhone se queda en la 1.11.11.
+Lleva tres arreglos, todos en `MapScreen.tsx` (runTracker no se toca):
+1. **La carrera ya no se pierde cuando Android cierra la pantalla de la app**
+   (§9, «carrera viva»). Lo sufría un corredor con un Xiaomi.
+2. **El GPS de la carrera se enciende al pulsar INICIAR**, sin esperar a una
+   lectura suelta que en Android no caduca nunca; si falla, se reintenta, y
+   al volver a primer plano se vuelve a encender si hace falta. Mientras no
+   ha entrado ningún punto sale «Buscando GPS…» sin vibrar (tope 90 s).
+3. **La copia pendiente ya no se manda dos veces** ni la borra el reenvío de
+   otra carrera (contador de envíos + `borrarCopiaSiEsLaMisma`).
+Probado en el emulador con «No mantener actividades» (cinco escenarios, dos
+vueltas de revisión a la contra). Lo que NO cubre: el proceso muerto entero
+(§14) y una falsa alarma que viene de antes (quieto >25 s con GPS bueno →
+AUTO-PAUSA y «Sin señal GPS» con vibración). Las dos, después de Halloween.
+
 **OJO para la próxima subida**: `itunes.apple.com/lookup` siguió devolviendo
 1.11.10 **más de doce horas** después de publicar. No sirve para decidir cuándo
 anunciar; la ficha web sí (ahí sale "Versión 1.11.11" como actual con su fecha).
@@ -270,7 +291,7 @@ curl https://corrr-api-production.up.railway.app/app/version
 
 Paso a paso completo (Xcode, App Store Connect, Play Console, Railway): `docs/publicar-version.md`.
 
-**Versión actual** (2-oct-2026): Android `1.11.10` vc67 y iPhone `1.11.10` build 17 publicadas y **anunciadas las dos** (`/app/version`). **La 1.11.11 (vc68 / build 18) está CONSTRUIDA**: AAB en `apps/mobile/builds/corrr-v1.11.11-vc68.aab`; falta archivar el iPhone en Xcode, la prueba de calle y subir a las tiendas. **No anunciar hasta que cada tienda la haya publicado.**
+**Versión actual** (ver §0, que manda; esto es de 2-oct-2026): Android `1.11.10` vc67 y iPhone `1.11.10` build 17 publicadas y **anunciadas las dos** (`/app/version`). **La 1.11.11 (vc68 / build 18) está CONSTRUIDA**: AAB en `apps/mobile/builds/corrr-v1.11.11-vc68.aab`; falta archivar el iPhone en Xcode, la prueba de calle y subir a las tiendas. **No anunciar hasta que cada tienda la haya publicado.**
 
 **Bloqueo por versión mínima** (`MIN_APP_VERSION` en Railway, hoy en `1.0.0`): el aviso normal de "hay versión nueva" es **descartable** y sale una vez por sesión, así que no garantiza que nadie actualice. El bloqueo sí, y se pone sin build ni tiendas. Se usará la noche del 22 de octubre (§9-bis).
 
@@ -490,6 +511,35 @@ verdad, compilar en **Release** (lleva el código dentro y no necesita nada):
   por prefijo, y con una segunda red: al recoger el buffer se descarta todo
   punto ANTERIOR al arranque de la carrera en curso. **Al cambiar cómo se
   GUARDA algo, buscar todos los sitios donde se BORRA.**
+- **La carrera desaparecía al guardar el móvil en un Xiaomi** (23-oct-2026,
+  arreglado en la 1.11.12 de Android): «cada vez que guardaba el móvil y lo
+  volvía a sacar, el marcador salía a cero». Android (los fabricantes con
+  ahorro agresivo) DESTRUYE la Activity con el proceso vivo; React Native 0.81
+  (bridgeless) desmonta el árbol con el JavaScript VIVO y lo vuelve a montar al
+  volver. Toda la carrera vivía en refs de MapScreen → mapa con «INICIAR
+  CARRERA» y 0,0 km. Y el efecto de montaje de la 1.11.11 que paraba la tarea
+  «huérfana» suponía que montar = JavaScript arrancado de cero: **mataba
+  carreras vivas** y expo tiraba los puntos del bolsillo («Task or consumer not
+  found»). Arreglado con la **carrera viva** a nivel de módulo (tracker,
+  tiempos, pausas, trazo): al remontar se retoma y se reengancha; solo se para
+  la tarea si NO hay carrera viva. **Se reproduce en el emulador activando
+  «No mantener actividades» DESDE Ajustes → Opciones de desarrollador** (por
+  adb `always_finish_activities` no tiene efecto) y saliendo con HOME; con la
+  pantalla apagada sola no basta. Con la Activity viva nunca pasó: por eso no
+  se vio antes. Datos que lo confirmaron: sus carreras guardadas estaban
+  enteras y entre ellas había 78 minutos con la app abierta y nada guardado.
+  **Lección: «el componente se monta» no significa «la app ha arrancado».**
+- **El arranque de carrera esperaba a un GPS que no caduca** (arreglado en la
+  1.11.12): `await getCurrentPositionAsync({Balanced})` ANTES de encender la
+  tarea de fondo y el vigilante. En Android esa petición no tiene duración
+  (Play Services: `durationMillis = Long.MAX_VALUE`) y, con el GPS frío, la
+  carrera corría sin servicio ni notificación y a 0,00 km. Es el mismo fallo
+  que el botón de centrar del 6-oct, y se quedó sin arreglar aquí.
+  **Todo `await` de ubicación lleva `conTiempo` o va detrás de lo importante.**
+- **Subir la versión mínima con gente corriendo** (22-oct, probable): la
+  pantalla de «actualiza» desmonta el mapa y la carrera en marcha se pierde
+  (con la 1.11.10, sin copia). `MIN_APP_VERSION` se cambia **de madrugada** o
+  no se cambia.
 - **MapView con `display:'none'`**: en versiones < 1.10.0 ocultaba el mapa durante el run pero al volver visible RN-Maps no refrescaba los polígonos. Solución: Modal absoluto encima, no `display:'none'`.
 - **`pathSegments` no limpiado en stopRun**: dejaba dashes naranjas sobre las celdas tras la carrera. Limpiar siempre.
 - **JWT_ACCESS_SECRET vacío**: `TextEncoder().encode(undefined)` produce secret literal "undefined" → cualquiera firma tokens. Fail-fast SIEMPRE si missing.

@@ -157,6 +157,157 @@ const toReading = (loc: Location.LocationObject): GpsReading => ({
 // disco hasta volver a la app y se procesaban con otras reglas.
 let bgReadingsListener: ((readings: GpsReading[]) => void) | null = null;
 
+/** La carrera en marcha, guardada FUERA de la pantalla.
+ *
+ *  Por qué existe (23-oct-2026, reproducido en el emulador): en Android, cuando
+ *  el sistema destruye la ventana de la app con una carrera en marcha —los
+ *  Xiaomi y otros con ahorro agresivo lo hacen al guardarse el móvil en el
+ *  bolsillo—, React Native desmonta la pantalla del mapa CON EL JAVASCRIPT
+ *  VIVO y al volver la monta de nuevo. Todo lo de la carrera vivía dentro de
+ *  la pantalla, así que al volver salía "INICIAR CARRERA" y 0,0 km; y encima
+ *  el arranque creía que era un seguimiento huérfano y paraba la tarea de
+ *  fondo, tirando los puntos que Android tenía retenidos. Cada vez que el
+ *  corredor guardaba y sacaba el móvil se perdía un trozo, y solo llegaba al
+ *  servidor el último.
+ *
+ *  Aquí vive lo necesario para que, al volver, la pantalla siga la MISMA
+ *  carrera y el resumen salga igual: el registro (que es el que cuenta km y
+ *  celdas, y es siempre el mismo objeto), la hora de inicio, las pausas, el
+ *  trazo y lo del círculo cerrado. La crea doStartRun y la borra stopRun.
+ *
+ *  Mientras la pantalla está montada, la que manda es la pantalla y esto solo
+ *  comparte el registro; al desmontarse se le deja aquí lo demás y los puntos
+ *  de fondo entran aquí directamente (meterEnCarreraViva). Si muere el
+ *  PROCESO entero esto también se pierde: eso es otro arreglo (§14). */
+interface CarreraViva {
+  tracker: RunTracker;
+  inicio: number;
+  /** Desde cuándo está en pausa (manual o automática), o null. */
+  pausaDesde: number | null;
+  pausaAcumulada: number;
+  /** Pausa MANUAL. Al volver no se reanuda sola. (La auto-pausa no se
+   *  guarda aparte: la lleva el propio registro, tracker.autoPaused.) */
+  enPausa: boolean;
+  path: Coord[];
+  segmentos: Coord[][];
+  circuloCerrado: boolean;
+  /** Los puntos de vista previa de los círculos cerrados (totalPoints). */
+  puntosCirculo: number;
+  zonas: ConqueredZone[];
+}
+let carreraViva: CarreraViva | null = null;
+
+/** Un punto de fondo mientras NO hay pantalla montada. Hace con la carrera
+ *  viva lo mismo que handleReading con la pantalla (registro, trazo y salida
+ *  de la auto-pausa), sin nada de lo que se pinta. El registro es el mismo
+ *  objeto, así que km y celdas se cuentan exactamente igual. */
+function meterEnCarreraViva(r: GpsReading): void {
+  const c = carreraViva;
+  if (!c) return;
+  const out = c.tracker.addReading(r);
+  if (out.kind === 'duplicate' || out.kind === 'skip') return;
+  if (out.kind === 'teleport') {
+    if (c.path.length > 1) c.segmentos = [...c.segmentos, c.path];
+    c.path = [out.coord];
+  } else {
+    c.path = [...c.path, out.coord];
+  }
+  if (out.resumed && c.pausaDesde) {
+    c.pausaAcumulada += finDePausa(c.pausaDesde, r);
+    c.pausaDesde = null;
+  }
+}
+
+/** Cuánto ha durado una auto-pausa que levanta el punto `r`.
+ *
+ *  Con la hora del PUNTO, no con la de ahora (23-oct-2026, medido en el
+ *  emulador): con la pantalla apagada Android retiene los puntos de fondo y
+ *  los suelta todos de golpe al sacar el móvil. Con Date.now() la pausa
+ *  acababa al sacar el móvil y no cuando echó a correr, así que lo corrido en
+ *  el bolsillo se contaba como pausa: 47 s de carrera desaparecían del reloj
+ *  (y del ritmo que se guarda). Acotado entre el inicio de la pausa y ahora,
+ *  por si la hora del GPS y la del móvil no casan. Solo toca el TIEMPO: km,
+ *  celdas y puntos no pasan por aquí. */
+function finDePausa(pausaDesde: number, r: GpsReading): number {
+  const fin = Math.min(Date.now(), Math.max(pausaDesde, r.timestamp));
+  return fin - pausaDesde;
+}
+
+/** Hay una carrera guardándose en el servidor (de PARAR a la respuesta).
+ *  A nivel de módulo porque la pantalla puede rehacerse mientras tanto (ver
+ *  CarreraViva): la pantalla nueva encontraría la copia del móvil
+ *  (@corrr_carrera_pendiente) y la mandaría OTRA VEZ, y el servidor solo
+ *  descarta repetidas las del reloj, así que la carrera contaría doble.
+ *
+ *  Es un CONTADOR de envíos en marcha y no un sí/no (23-oct-2026): pueden ir
+ *  dos a la vez (el reenvío de una copia vieja y el PARAR de una carrera
+ *  nueva), y con un sí/no el primero que terminaba lo apagaba con el otro aún
+ *  de camino; si justo entonces se rehacía la pantalla, mandaba otra vez la
+ *  copia. Cada envío suma 1 al salir y resta 1 UNA sola vez al acabar. */
+let guardandoCarrera = 0;
+
+/** Borra la copia del móvil (@corrr_carrera_pendiente) SOLO si sigue siendo
+ *  la que se mandó (23-oct-2026). Si mientras tanto un PARAR ha escrito la de
+ *  una carrera más nueva, esa no es nuestra y se queda: borrarla dejaba la
+ *  carrera nueva sin copia, y si su envío fallaba se perdía entera. */
+async function borrarCopiaSiEsLaMisma(enviada: string): Promise<void> {
+  try {
+    const ahora = await AsyncStorage.getItem(CARRERA_PENDIENTE);
+    if (ahora === enviada) await AsyncStorage.removeItem(CARRERA_PENDIENTE);
+  } catch (e) {
+    console.warn('[pendiente] no se pudo borrar la copia ya mandada:', e);
+  }
+}
+
+/** Ver restaurarCarreraViva: margen para que entre antes la tanda de puntos
+ *  que Android retuvo con la pantalla apagada. */
+const ESPERA_VIGILANTE_AL_RETOMAR_MS = 3000;
+
+/** Ver buscandoGps: segundos de carrera tras los que "Buscando GPS…" deja de
+ *  tapar el aviso de que no se está registrando. Con el GPS frío lo normal es
+ *  engancharlo en menos de un minuto; más que eso ya no es esperar. */
+const TOPE_BUSCANDO_GPS_S = 90;
+
+/** Ver arrancarTareaDeFondo: cuánto se espera antes del segundo intento. */
+const REINTENTO_TAREA_DE_FONDO_MS = 1500;
+
+/** Enciende la tarea de fondo (el servicio con la notificación "Carrera en
+ *  curso"), SIN tocar los puntos que haya en disco.
+ *
+ *  Separado de "empezar carrera nueva" (startBackgroundUpdates, que además
+ *  borra el disco) porque también se usa para volver a encenderla a mitad de
+ *  carrera: ahí lo que haya en disco es de ESTA carrera y no se tira.
+ *
+ *  Si falla, se reintenta UNA vez un poco después (23-oct-2026). Justo tras el
+ *  diálogo del permiso de fondo Android todavía no da la app por delante y
+ *  expo-location contesta ForegroundServiceStartNotAllowedException: antes eso
+ *  se quedaba en un aviso de consola y la carrera seguía sin servicio, o sea
+ *  sin registrar con la pantalla apagada. El reintento no se espera: el
+ *  vigilante de primer plano no tiene por qué aguardar a nada. Y solo si sigue
+ *  siendo la MISMA carrera y no está en pausa manual: si mientras tanto se ha
+ *  parado o pausado, encenderla sería dejar un servicio huérfano. Si al volver
+ *  a la app sigue apagada, la enciende el cambio de estado (ver handleAppState). */
+async function arrancarTareaDeFondo(): Promise<void> {
+  try {
+    await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, BG_LOCATION_OPTIONS);
+    return;
+  } catch (e) {
+    console.warn('[BG Location] no se pudo iniciar; se reintenta:', e);
+  }
+  const c = carreraViva;
+  if (!c) return;
+  setTimeout(async () => {
+    if (carreraViva !== c || c.enPausa) return;
+    try {
+      if (await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK)) return;
+      await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, BG_LOCATION_OPTIONS);
+      console.warn('[BG Location] iniciada al segundo intento');
+    } catch (e) {
+      console.warn('[BG Location] tampoco al segundo intento; se probará al volver a la app:', e);
+    }
+  }, REINTENTO_TAREA_DE_FONDO_MS);
+}
+
 TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
   if (error) return;
   const { locations } = data as { locations: Location.LocationObject[] };
@@ -1003,14 +1154,27 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
   // se borra jamás sin confirmación, que es justo el fallo que había.
   useEffect(() => {
     let cancelado = false;
+    // Si esa copia es la de una carrera que SE ESTÁ guardando ahora mismo (la
+    // pantalla se rehízo entre PARAR y la respuesta), no se manda otra vez:
+    // contaría doble. Si ese envío falla, la copia se queda y se manda la
+    // próxima vez que se abra la app.
+    if (guardandoCarrera > 0) return;
     (async () => {
       let guardada: string | null = null;
       try { guardada = await AsyncStorage.getItem(CARRERA_PENDIENTE); } catch { return; }
-      if (!guardada || cancelado) return;
+      // Otra vez DESPUÉS de leer el disco (23-oct-2026, medido en el emulador:
+      // dos POST /runs de la misma carrera, y el servidor aceptó los dos). La
+      // marca de arriba solo la ponía stopRun, y la lectura tarda: si la
+      // pantalla se rehacía mientras este mismo envío iba de camino, la nueva
+      // leía la copia, no veía ninguna marca y la mandaba otra vez.
+      if (!guardada || cancelado || guardandoCarrera > 0) return;
+      // Este envío también cuenta como "guardándose", hasta que la copia se
+      // borra (o falla): así una pantalla rehecha entretanto no la repite.
+      guardandoCarrera++;
       try {
         const carrera = JSON.parse(guardada) as CellRunPayload;
         const res = await api.saveRun(carrera);
-        await AsyncStorage.removeItem(CARRERA_PENDIENTE);
+        await borrarCopiaSiEsLaMisma(guardada);
         if (cancelado) return;
         // `duplicate` llega cuando esa carrera ya estaba guardada: el envío sí
         // había llegado y lo que falló fue la respuesta. Tampoco hay que
@@ -1024,6 +1188,8 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         }
       } catch (e) {
         console.warn('[pendiente] no se pudo mandar todavía:', e);
+      } finally {
+        guardandoCarrera--;
       }
     })();
     return () => { cancelado = true; };
@@ -1068,6 +1234,29 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       // if the JS thread was suspended while the screen was off.
       if (runStartTimeRef.current) setRunTime(computeRunTime());
 
+      // Si la tarea de fondo no está encendida (falló al empezar y también al
+      // reintentar), se vuelve a encender aquí — salvo en pausa MANUAL, que la
+      // apaga a propósito. OJO: esto NO ve un servicio que Android haya
+      // tumbado con la tarea aún registrada — hasStartedLocationUpdatesAsync
+      // solo mira si la tarea está registrada, no si el servicio sigue vivo.
+      // Eso queda para después de Halloween (§14). Sin borrar el disco: lo que
+      // haya ahí es de esta carrera y se recoge justo debajo. Sin esto, con la
+      // pantalla apagada no se registraba nada y no había forma de saberlo.
+      // Y se vuelve a mirar después del `await`: si entretanto se ha parado o
+      // pausado, encenderla dejaría el servicio huérfano.
+      const c = carreraViva;
+      if (c && !c.enPausa) {
+        try {
+          const encendida = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
+          if (!encendida && carreraViva === c && !c.enPausa) {
+            console.warn('[BG Location] apagada con la carrera en marcha; se vuelve a encender');
+            await arrancarTareaDeFondo();
+          }
+        } catch (e) {
+          console.warn('[BG Location] no se pudo comprobar al volver a la app:', e);
+        }
+      }
+
       const persisted = await loadAndClearPersistedBgBuffer();
       persisted.sort((a, b) => a.timestamp - b.timestamp);
       // Solo lo de ESTA carrera. Si quedaran puntos de una anterior —porque la
@@ -1079,17 +1268,16 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         handleReadingRef.current(r, false);
       }
 
-      // Reanudar el vigilante de primer plano si se perdió
-      if (isRunningRef.current && !locationRef.current) {
-        locationRef.current = await Location.watchPositionAsync(
-          { accuracy: Location.Accuracy.BestForNavigation, distanceInterval: 8, timeInterval: 3000 },
-          handleLocationUpdateRef.current,
-        );
-      }
+      // Reanudar el vigilante de primer plano si se perdió. vigilarPosicion
+      // no lo arranca en PAUSA: antes, volver a la app con la carrera en pausa
+      // lo encendía, y eso pasa siempre que Android rehace la pantalla.
+      if (isRunningRef.current) vigilarPosicion();
     };
 
     const sub = AppState.addEventListener('change', handleAppState);
-    return () => { sub.remove(); bgReadingsListener = null; };
+    // El oyente de fondo NO se toca aquí: si hay carrera viva tiene que seguir
+    // recogiendo puntos sin pantalla (ver el efecto de desmontaje, más abajo).
+    return () => { sub.remove(); };
   }, []);
 
   /** Al abrir la app: si quedó un seguimiento de ubicación en marcha, matarlo.
@@ -1100,11 +1288,24 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
    *  siempre, gastando batería, con la app cerrada y sin forma de pararlo más
    *  que desinstalando. Lo contó un corredor el 14-oct-2026 con una foto.
    *
-   *  Aquí no hay carrera posible: si este componente se está montando es que el
-   *  JavaScript ha arrancado de cero, así que lo que haya registrado es de una
-   *  carrera muerta. El buffer NO se toca: esos puntos son lo único que queda
-   *  de lo que corrió, y tirarlos cierra la puerta a devolvérselo. */
+   *  OJO, que esto ya mató carreras vivas (23-oct-2026): montarse NO quiere
+   *  decir que el JavaScript haya arrancado de cero. Android puede destruir la
+   *  ventana con la carrera en marcha y React Native vuelve a montar la
+   *  pantalla con el mismo JavaScript; esto paraba entonces la tarea de fondo
+   *  de una carrera VIVA y Android tiraba los puntos retenidos ("Task or
+   *  consumer not found"). Por eso, si hay carrera viva, se retoma y no se
+   *  para nada. Solo sin carrera viva es de verdad un huérfano: el proceso
+   *  arrancó de cero.
+   *
+   *  El buffer NO se toca: esos puntos son lo único que queda de lo que
+   *  corrió, y tirarlos cierra la puerta a devolvérselo. */
   useEffect(() => {
+    montadoRef.current = true;
+    const viva = carreraViva;
+    if (viva) {
+      restaurarCarreraViva(viva);
+      return;
+    }
     (async () => {
       try {
         const vivo = await TaskManager.isTaskRegisteredAsync(BACKGROUND_LOCATION_TASK);
@@ -1138,6 +1339,52 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
   const locationRef = useRef<any>(null);
   const pathRef = useRef<Coord[]>([]);
   const [pathSegments, setPathSegments] = useState<Coord[][]>([]);
+  /** Espejo síncrono de pathSegments, para dejarlo en la carrera viva al
+   *  desmontar: el estado puede ir un pintado por detrás. */
+  const segmentosRef = useRef<Coord[][]>([]);
+  /** Lo último pintado de la carrera, para dejarlo en la carrera viva al
+   *  desmontar (el desmontaje no ve el estado actual, solo referencias). */
+  const pintadoRef = useRef({ totalPoints, conqueredZones });
+  pintadoRef.current = { totalPoints, conqueredZones };
+  /** Al retomar la carrera viva, el vigilante de primer plano espera hasta
+   *  esta hora (ver restaurarCarreraViva), y este es su aplazamiento. */
+  const vigilarDesdeRef = useRef(0);
+  const vigilarLuegoRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Si esta pantalla sigue montada. Un `await` del GPS que vuelve después de
+   *  desmontarse no puede dejar un vigilante colgado de una pantalla muerta. */
+  const montadoRef = useRef(true);
+  /** Hay un watchPositionAsync en camino: que no se pidan dos a la vez (al
+   *  volver a la app lo piden la restauración y el cambio de estado). */
+  const vigilandoRef = useRef(false);
+
+  // Al desmontarse la pantalla con una carrera en marcha (Android destruye la
+  // ventana con el móvil guardado), la carrera NO se acaba: se deja todo en la
+  // carrera viva y los puntos de fondo siguen entrando ahí. Y se limpia lo que
+  // antes quedaba zombi: relojes y el vigilante de primer plano, que seguían
+  // vivos llamando a una pantalla que ya no existe.
+  useEffect(() => () => {
+    montadoRef.current = false;
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    if (autoPauseTimer.current) { clearInterval(autoPauseTimer.current); autoPauseTimer.current = null; }
+    if (gpsWatchTimer.current) { clearInterval(gpsWatchTimer.current); gpsWatchTimer.current = null; }
+    if (vigilarLuegoRef.current) { clearTimeout(vigilarLuegoRef.current); vigilarLuegoRef.current = null; }
+    if (locationRef.current) { locationRef.current.remove(); locationRef.current = null; }
+    const c = carreraViva;
+    if (!c) { bgReadingsListener = null; return; }
+    // Solo si es ESTA pantalla la que la llevaba. Una que la estaba retomando
+    // también cuenta: restaurarCarreraViva rellena las referencias de golpe,
+    // antes de esperar a nada, así que ya tienen lo bueno.
+    if (isRunningRef.current && trackerRef.current === c.tracker) {
+      c.pausaDesde = pauseStartedAtRef.current;
+      c.pausaAcumulada = pausedAccumulatedRef.current;
+      c.path = pathRef.current;
+      c.segmentos = segmentosRef.current;
+      c.circuloCerrado = loopClosedRef.current;
+      c.puntosCirculo = pintadoRef.current.totalPoints;
+      c.zonas = pintadoRef.current.conqueredZones;
+    }
+    bgReadingsListener = readings => { for (const r of readings) meterEnCarreraViva(r); };
+  }, []);
   const mapRef = useRef<MapView>(null);
   const currentDelta = useRef({ latDelta: 0.02, lngDelta: 0.02 });
 
@@ -1905,6 +2152,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
 
     pathRef.current = [path[path.length - 1]];
     setCurrentPath([path[path.length - 1]]);
+    segmentosRef.current = [];
     setPathSegments([]);
     setLoopDetected(false);
   };
@@ -1949,8 +2197,29 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
   // cartel solo lo ve quien ya sospecha algo. Dos vibraciones largas al
   // perderla y una corta al recuperarla, que se notan con el móvil en el
   // brazo o en el bolsillo.
+  //
+  // Pero NO mientras el GPS engancha al empezar (23-oct-2026, Iban en su
+  // Xiaomi): con el GPS frío la primera lectura puede tardar más de 25 s, y
+  // entonces saltaban el cartel "no se está registrando" y las dos vibraciones
+  // largas sin que se hubiera PERDIDO nada — aún no había habido señal. Eso
+  // invita a parar y volver a empezar, que es justo lo que no hay que hacer.
+  // Mientras en esta carrera no haya entrado ninguna lectura buena se dice
+  // "Buscando GPS…" y no vibra; en cuanto la ha habido, el aviso es el de
+  // siempre. El trazo dice si la ha habido: solo crece con lecturas buenas,
+  // empieza vacío en cada carrera y se recupera al retomar la carrera viva.
+  //
+  // Con TOPE de tiempo: si todas las lecturas se rechazan (ubicación
+  // "aproximada" en Android 12+ o sin "Ubicación exacta" en iPhone, ~2 km de
+  // precisión; o un GPS que nunca baja de 20 m), el trazo no crece nunca y sin
+  // tope se correría la carrera entera viendo "Buscando GPS…" para acabar con
+  // 0,00 km. Pasado el tope vuelven el aviso de siempre y la vibración. runTime
+  // sirve: avanza cada segundo, sin contar la pausa manual, y sin lecturas
+  // aceptadas la auto-pausa no salta (tracker.tick).
+  const buscandoGps = isRunning && !isPaused && currentPath.length === 0 && pathSegments.length === 0
+    && runTime < TOPE_BUSCANDO_GPS_S;
   useEffect(() => {
     if (!isRunning) { gpsWarnedRef.current = false; return; }
+    if (buscandoGps) return;
     if (gpsWeak && !gpsWarnedRef.current) {
       gpsWarnedRef.current = true;
       Vibration.vibrate([0, 600, 300, 600]);
@@ -1958,7 +2227,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       gpsWarnedRef.current = false;
       Vibration.vibrate(250);
     }
-  }, [gpsWeak, isRunning]);
+  }, [gpsWeak, isRunning, buscandoGps]);
 
   // Vigilante de señal: si llevamos 25 s sin una lectura GPS utilizable, la
   // carrera no está registrando nada y hay que decirlo. Sin esto el usuario
@@ -1998,13 +2267,12 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
   // código nativo de expo-location. Exigíamos "Siempre", que casi nadie da y
   // que iOS ni ofrece a la primera: para la mayoría, apagar la pantalla dejaba
   // de registrar. El contador se paraba y ese tramo se perdía.
+  //
+  // Esto es "empezar de limpio" (borra lo que haya en disco y enciende); para
+  // volver a encenderla a mitad de carrera sin tirar puntos, arrancarTareaDeFondo.
   const startBackgroundUpdates = async () => {
     await borrarBufferDeFondo();
-    try {
-      await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, BG_LOCATION_OPTIONS);
-    } catch (e) {
-      console.warn('[BG Location] No se pudo iniciar:', e);
-    }
+    await arrancarTareaDeFondo();
   };
 
   const startRun = async () => {
@@ -2087,6 +2355,20 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     // Registro nuevo para cada carrera: nada de la anterior se arrastra.
     trackerRef.current = new RunTracker(Date.now());
     claimedCellsRef.current = trackerRef.current.cells;
+    // La carrera, también fuera de la pantalla: si Android la desmonta con el
+    // móvil guardado, al volver se retoma esta misma (ver CarreraViva).
+    carreraViva = {
+      tracker: trackerRef.current,
+      inicio: runStartTimeRef.current,
+      pausaDesde: null,
+      pausaAcumulada: 0,
+      enPausa: false,
+      path: [],
+      segmentos: [],
+      circuloCerrado: false,
+      puntosCirculo: 0,
+      zonas: [],
+    };
     setClaimedCellsTick(t => t + 1);
     setSplits([]);
     splitsTrackingRef.current = { lastKm: 0, lastTime: 0 };
@@ -2096,90 +2378,13 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     setSpeedWarning(false);
     setIsAutoPaused(false);
 
-    startGpsWatchTimer();
-    startAutoPauseTimer();
     setCurrentSpeed(0);
+    segmentosRef.current = [];
     setPathSegments([]);
     invalidSegments.current = 0;
     pathRef.current = [];
 
-    // Recompute from Date.now() each tick — self-healing against missed ticks
-    // while the JS thread is suspended (screen off, doze mode).
-    timerRef.current = setInterval(() => setRunTime(computeRunTime()), 1000);
-
-    /** Un punto GPS venga de donde venga —vigilante de primer plano, tarea de
-     *  fondo o lo guardado en disco—. Un único camino: antes eran dos con
-     *  reglas distintas, y el de pantalla apagada perdía calles enteras. */
-    const handleReading = (r: GpsReading, live: boolean): ReadingOutcome | null => {
-      const tr = trackerRef.current;
-      if (!tr || !isRunningRef.current) return null;
-      const out = tr.addReading(r);
-      if (out.kind === 'duplicate' || out.kind === 'skip') return out;
-
-      lastGoodPointRef.current = Date.now();
-      if (out.kind === 'teleport') {
-        // Hueco sin puntos (túnel, señal perdida): tramo visual nuevo.
-        if (pathRef.current.length > 1) {
-          const done = [...pathRef.current];
-          setPathSegments(segs => [...segs, done]);
-        }
-        pathRef.current = [out.coord];
-        setCurrentPath([out.coord]);
-      } else {
-        pathRef.current = [...pathRef.current, out.coord];
-        setCurrentPath([...pathRef.current]);
-        // Velocidad con EMA: un spike aislado de deriva apenas mueve la aguja.
-        if (out.moved) setCurrentSpeed(prev => prev * 0.7 + out.speedKmh * 0.3);
-        if (out.cellsChanged) {
-          setClaimedCellsTick(t => t + 1);
-          // ¿Había un objeto en esta celda? El servidor es quien lo da por
-          // bueno al guardar la carrera; esto es solo para que se entere en
-          // el momento, que es la gracia.
-          const celda = coordToCell(out.coord.latitude, out.coord.longitude);
-          const pillado = objetosRef.current.find(o => o.x === celda.x && o.y === celda.y);
-          if (pillado) {
-            objetosRef.current = objetosRef.current.filter(o => o.id !== pillado.id);
-            setObjetos(objetosRef.current);
-            setObjetoCogido(pillado);
-            Vibration.vibrate([0, 120, 80, 120]);
-            setTimeout(() => setObjetoCogido(null), 4000);
-          }
-        }
-      }
-      if (out.resumed) {
-        setIsAutoPaused(false);
-        if (pauseStartedAtRef.current) {
-          pausedAccumulatedRef.current += Date.now() - pauseStartedAtRef.current;
-          pauseStartedAtRef.current = null;
-        }
-      }
-      setDistance(tr.distanceKm);
-      setDistancePosDelta(tr.positionKm);
-      setSpeedWarning(false);
-
-      if (live && out.kind === 'accept' && !loopDetected && pathRef.current.length >= 10) {
-        if (checkLoop(pathRef.current)) closeLoop([...pathRef.current]);
-      }
-      return out;
-    };
-
-    const handleLocationUpdate = (loc: Location.LocationObject) => {
-      const out = handleReading(toReading(loc), true);
-      if (!out || out.kind !== 'accept') return;
-      // El mapa sigue al corredor. El zoom se fija UNA vez, en el primer
-      // punto: antes se imponía en cada lectura, así que si abrías el mapa a
-      // mitad de carrera y te alejabas para ver el barrio, el siguiente punto
-      // te devolvía al zoom 17.
-      const heading = loc.coords.heading;
-      const zoom = runCameraSetRef.current ? undefined : 17;
-      runCameraSetRef.current = true;
-      if (heading != null && heading >= 0 && out.speedKmh > 2) {
-        // En marcha, el mapa gira hacia donde vas.
-        mapRef.current?.animateCamera({ center: out.coord, heading, pitch: 45, ...(zoom ? { zoom } : {}) }, { duration: 500 });
-      } else {
-        mapRef.current?.animateCamera({ center: out.coord, pitch: 0, ...(zoom ? { zoom } : {}) }, { duration: 500 });
-      }
-    };
+    arrancarRelojes();
 
     // Todo listo ANTES de pedirle nada al GPS: un punto que llegara antes se
     // quedaba sin nadie que lo procesara. Y la carrera cuenta como empezada ya,
@@ -2188,41 +2393,272 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     // Mientras se corre, el detector de Android se calla: si no, saltaría el
     // aviso "¿has salido a correr?" justo después de pulsar EMPEZAR.
     marcarCarreraEnMarcha(true);
-    handleLocationUpdateRef.current = handleLocationUpdate;
-    handleReadingRef.current = handleReading;
-    bgReadingsListener = readings => {
-      for (const r of readings) handleReadingRef.current(r, false);
-    };
+    engancharCarrera();
 
-    // Centrar mapa en posición actual al iniciar. Si el GPS tarda o falla, la
-    // carrera sigue: antes una excepción aquí cortaba la función con el
-    // cronómetro ya en marcha, sin registrar nada y con STOP sin responder.
-    try {
-      const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+    // PRIMERO lo que registra: la tarea de fondo y el vigilante de primer
+    // plano. Antes iba delante un `await getCurrentPositionAsync(Balanced)`
+    // para centrar el mapa, y en Android esa petición NO CADUCA nunca (Play
+    // Services la pide sin fecha de fin): con el GPS frío —el Xiaomi de Iban,
+    // 23-oct-2026— no volvía, y mientras tanto no había servicio, ni
+    // notificación "Carrera en curso", ni lecturas: 0,00 km. Él lo veía como
+    // "tengo que reiniciar varias veces hasta que el GPS coge y cuenta".
+    await startBackgroundUpdates();
+    vigilarPosicion();
+
+    // Centrar el mapa, DESPUÉS y sin esperar a nada: la última posición
+    // conocida es instantánea, y con un tope por si tampoco vuelve. Si para
+    // entonces ya llegó el primer punto, no se toca: ese ya centró a zoom 17
+    // (ver handleLocationUpdate) y esto lo devolvería a un zoom de barrio.
+    conTiempo(Location.getLastKnownPositionAsync(), 2000).then(loc => {
+      if (!loc || runCameraSetRef.current || !isRunningRef.current) return;
       mapRef.current?.animateToRegion({
         latitude: loc.coords.latitude,
         longitude: loc.coords.longitude,
         latitudeDelta: 0.02,
         longitudeDelta: 0.02,
       }, 800);
-    } catch (err) {
-      console.warn('[startRun] sin posición inicial:', err);
+    });
+  };
+
+  /** Un punto GPS venga de donde venga —vigilante de primer plano, tarea de
+   *  fondo o lo guardado en disco—. Un único camino: antes eran dos con
+   *  reglas distintas, y el de pantalla apagada perdía calles enteras.
+   *
+   *  Estaba DENTRO de doStartRun; se sacó (23-oct-2026) para poder volver a
+   *  engancharlo cuando Android rehace la pantalla a mitad de carrera. */
+  const handleReading = (r: GpsReading, live: boolean): ReadingOutcome | null => {
+    const tr = trackerRef.current;
+    if (!tr || !isRunningRef.current) return null;
+    const out = tr.addReading(r);
+    if (out.kind === 'duplicate' || out.kind === 'skip') return out;
+
+    lastGoodPointRef.current = Date.now();
+    if (out.kind === 'teleport') {
+      // Hueco sin puntos (túnel, señal perdida): tramo visual nuevo.
+      if (pathRef.current.length > 1) {
+        const done = [...pathRef.current];
+        segmentosRef.current = [...segmentosRef.current, done];
+        setPathSegments(segmentosRef.current);
+      }
+      pathRef.current = [out.coord];
+      setCurrentPath([out.coord]);
+    } else {
+      pathRef.current = [...pathRef.current, out.coord];
+      setCurrentPath([...pathRef.current]);
+      // Velocidad con EMA: un spike aislado de deriva apenas mueve la aguja.
+      if (out.moved) setCurrentSpeed(prev => prev * 0.7 + out.speedKmh * 0.3);
+      if (out.cellsChanged) {
+        setClaimedCellsTick(t => t + 1);
+        // ¿Había un objeto en esta celda? El servidor es quien lo da por
+        // bueno al guardar la carrera; esto es solo para que se entere en
+        // el momento, que es la gracia.
+        const celda = coordToCell(out.coord.latitude, out.coord.longitude);
+        const pillado = objetosRef.current.find(o => o.x === celda.x && o.y === celda.y);
+        if (pillado) {
+          objetosRef.current = objetosRef.current.filter(o => o.id !== pillado.id);
+          setObjetos(objetosRef.current);
+          setObjetoCogido(pillado);
+          Vibration.vibrate([0, 120, 80, 120]);
+          setTimeout(() => setObjetoCogido(null), 4000);
+        }
+      }
     }
+    if (out.resumed) {
+      setIsAutoPaused(false);
+      if (pauseStartedAtRef.current) {
+        // Con la hora del punto, no la de ahora: ver finDePausa.
+        pausedAccumulatedRef.current += finDePausa(pauseStartedAtRef.current, r);
+        pauseStartedAtRef.current = null;
+      }
+    }
+    setDistance(tr.distanceKm);
+    setDistancePosDelta(tr.positionKm);
+    setSpeedWarning(false);
+    // La señal ha vuelto YA, no en el próximo repaso del vigilante (cada 3 s).
+    // Hace falta por "Buscando GPS…": si el vigilante ya la daba por débil
+    // mientras se buscaba, al llegar el primer punto dejaría de buscarse y,
+    // hasta ese repaso, saltaría "Sin señal" con vibración justo al engancharse.
+    setGpsWeak(false);
 
-    await startBackgroundUpdates();
+    if (live && out.kind === 'accept' && !loopDetected && pathRef.current.length >= 10) {
+      if (checkLoop(pathRef.current)) closeLoop([...pathRef.current]);
+    }
+    return out;
+  };
 
+  const handleLocationUpdate = (loc: Location.LocationObject) => {
+    const out = handleReading(toReading(loc), true);
+    if (!out || out.kind !== 'accept') return;
+    // El mapa sigue al corredor. El zoom se fija UNA vez, en el primer
+    // punto: antes se imponía en cada lectura, así que si abrías el mapa a
+    // mitad de carrera y te alejabas para ver el barrio, el siguiente punto
+    // te devolvía al zoom 17.
+    const heading = loc.coords.heading;
+    const zoom = runCameraSetRef.current ? undefined : 17;
+    runCameraSetRef.current = true;
+    if (heading != null && heading >= 0 && out.speedKmh > 2) {
+      // En marcha, el mapa gira hacia donde vas.
+      mapRef.current?.animateCamera({ center: out.coord, heading, pitch: 45, ...(zoom ? { zoom } : {}) }, { duration: 500 });
+    } else {
+      mapRef.current?.animateCamera({ center: out.coord, pitch: 0, ...(zoom ? { zoom } : {}) }, { duration: 500 });
+    }
+  };
+
+  /** Engancha los puntos GPS a ESTA pantalla: los del vigilante de primer
+   *  plano y los de la tarea de fondo. Se llama al empezar la carrera y al
+   *  retomarla cuando Android ha rehecho la pantalla (restaurarCarreraViva). */
+  const engancharCarrera = () => {
+    handleLocationUpdateRef.current = handleLocationUpdate;
+    handleReadingRef.current = handleReading;
+    bgReadingsListener = readings => {
+      for (const r of readings) handleReadingRef.current(r, false);
+    };
+  };
+
+  /** Cronómetro, auto-pausa y vigilante de señal. Se recalcula desde la hora
+   *  real en cada tic, así que un tic perdido con la pantalla apagada se
+   *  corrige solo en el siguiente. */
+  const arrancarRelojes = () => {
+    startGpsWatchTimer();
+    startAutoPauseTimer();
+    if (timerRef.current) clearInterval(timerRef.current);
+    timerRef.current = setInterval(() => setRunTime(computeRunTime()), 1000);
+  };
+
+  /** El vigilante de primer plano (watchPositionAsync), uno solo.
+   *
+   *  Al volver a la app lo piden a la vez la restauración y el cambio de
+   *  estado; sin el cerrojo salían dos y uno se quedaba colgado para siempre.
+   *  Y si mientras llegaba se ha parado, pausado o desmontado la pantalla, se
+   *  quita en vez de quedarse mandando puntos a nadie. */
+  const vigilarPosicion = async () => {
+    if (!montadoRef.current || locationRef.current || vigilandoRef.current) return;
+    if (!isRunningRef.current || carreraViva?.enPausa) return;
+    // Recién retomada la carrera viva, se espera (ver restaurarCarreraViva).
+    // Solo usa referencias, así que vale llamar a la de cualquier pintado.
+    const espera = vigilarDesdeRef.current - Date.now();
+    if (espera > 0) {
+      if (!vigilarLuegoRef.current) {
+        vigilarLuegoRef.current = setTimeout(() => {
+          vigilarLuegoRef.current = null;
+          vigilarPosicion();
+        }, espera);
+      }
+      return;
+    }
+    vigilandoRef.current = true;
     try {
-      locationRef.current = await Location.watchPositionAsync(
+      const sub = await Location.watchPositionAsync(
         { accuracy: Location.Accuracy.BestForNavigation, distanceInterval: 8, timeInterval: 3000 },
-        handleLocationUpdate,
+        loc => handleLocationUpdateRef.current(loc),
       );
+      if (!montadoRef.current || !isRunningRef.current || carreraViva?.enPausa || locationRef.current) {
+        sub.remove();
+        return;
+      }
+      locationRef.current = sub;
     } catch (err) {
-      console.warn('[startRun] no se pudo vigilar la posición:', err);
+      console.warn('[GPS] no se pudo vigilar la posición:', err);
+    } finally {
+      vigilandoRef.current = false;
     }
+  };
+
+  /** Retomar la carrera viva al volver a montarse la pantalla.
+   *
+   *  Pasa cuando Android destruye la ventana con el móvil guardado y React
+   *  Native la rehace con el mismo JavaScript (ver CarreraViva). Antes salía
+   *  "INICIAR CARRERA" con 0,0 km y se paraba la tarea de fondo; ahora se
+   *  pinta la misma carrera, con su tiempo, sus km, su trazo y su pausa, y se
+   *  vuelve a enganchar todo. Si estaba en PAUSA, sigue en pausa. */
+  const restaurarCarreraViva = async (c: CarreraViva) => {
+    // Todo lo que no espera, de golpe y ANTES de cualquier `await`: así no hay
+    // ni un instante con el botón de empezar a la vista (crearía otra carrera
+    // encima de esta) ni con PARAR o PAUSAR pulsables y las referencias aún
+    // vacías (PARAR no haría nada, y PAUSAR contaría la pausa como corrida).
+    runStartTimeRef.current = c.inicio;
+    pauseStartedAtRef.current = c.pausaDesde;
+    pausedAccumulatedRef.current = c.pausaAcumulada;
+    trackerRef.current = c.tracker;
+    claimedCellsRef.current = c.tracker.cells;
+    pathRef.current = c.path;
+    segmentosRef.current = c.segmentos;
+    loopClosedRef.current = c.circuloCerrado;
+    // Por si la pantalla se desmonta antes de volver a pintarse: el
+    // desmontaje lee de aquí y dejaría a cero los puntos y las zonas.
+    pintadoRef.current = { totalPoints: c.puntosCirculo, conqueredZones: c.zonas };
+    setIsRunning(true);
+    marcarCarreraEnMarcha(true);
+    setCurrentPath([...c.path]);
+    setPathSegments(c.segmentos);
+    setTotalPoints(c.puntosCirculo);
+    setConqueredZones(c.zonas);
+    setIsPaused(c.enPausa);
+    // La auto-pausa, de quien la decide (el registro), no de un pintado que
+    // puede ir uno por detrás.
+    setIsAutoPaused(c.tracker.autoPaused);
+    setDistance(c.tracker.distanceKm);
+    setDistancePosDelta(c.tracker.positionKm);
+    setClaimedCellsTick(t => t + 1);
+    setRunTime(computeRunTime());
+    // Los parciales siguen desde donde va: si no, el salto de 0 a lo corrido
+    // apuntaría un kilómetro falso.
+    splitsTrackingRef.current = { lastKm: Math.floor(c.tracker.distanceKm), lastTime: computeRunTime() };
+    setGpsWeak(false);
+    setShowRunMap(false);
+    runCameraSetRef.current = false;
+    setViewBox(null);
+    lastGoodPointRef.current = Date.now();
+    // El vigilante de primer plano, unos segundos más tarde. Con la pantalla
+    // apagada Android retiene los puntos de fondo y los suelta todos juntos
+    // al volver; el registro tira como repetido todo punto anterior al
+    // último, así que si un punto NUEVO del vigilante entrara antes que esa
+    // tanda, se perdería entero lo corrido en el bolsillo. En el emulador la
+    // tanda llegó en el mismo instante de volver; esto es el margen. Mientras
+    // tanto los puntos siguen entrando por la tarea de fondo.
+    vigilarDesdeRef.current = Date.now() + ESPERA_VIGILANTE_AL_RETOMAR_MS;
+
+    isRunningRef.current = true;
+    engancharCarrera();
+
+    // Lo que la tarea de fondo haya dejado en disco, al registro. Con carrera
+    // viva los puntos entran en directo y esto suele venir vacío, pero si hay
+    // algo es lo único que queda de ese tramo.
+    const enDisco = (await loadAndClearPersistedBgBuffer()).filter(r => r.timestamp >= c.inicio);
+    // Si mientras tanto se ha parado la carrera, aquí no hay nada que retomar.
+    if (carreraViva !== c) return;
+    for (const r of enDisco) {
+      // Y si se ha desmontado otra vez, a la carrera viva, no a esta pantalla.
+      if (montadoRef.current) handleReadingRef.current(r, false);
+      else meterEnCarreraViva(r);
+    }
+    if (!montadoRef.current || c.enPausa) return;
+
+    arrancarRelojes();
+    try {
+      await activateScreenAwake();
+    } catch (err) {
+      console.warn('[carrera viva] no se pudo mantener la pantalla activa:', err);
+    }
+    // La tarea de fondo debería seguir viva (es la que ha traído los puntos
+    // sin pantalla). Si no lo está, se arranca SIN borrar el disco, al revés
+    // que startBackgroundUpdates: aquí no hay nada viejo que limpiar.
+    try {
+      const registrada = await TaskManager.isTaskRegisteredAsync(BACKGROUND_LOCATION_TASK);
+      if (!registrada && carreraViva === c && !c.enPausa) {
+        await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, BG_LOCATION_OPTIONS);
+      }
+    } catch (e) {
+      console.warn('[carrera viva] no se pudo reanudar la tarea de fondo:', e);
+    }
+    await vigilarPosicion();
   };
 
   const pauseRun = async () => {
     setIsPaused(true);
+    // En la carrera viva al momento: si Android rehace la pantalla en pausa,
+    // al volver tiene que seguir en pausa y no reanudarse sola.
+    if (carreraViva) carreraViva.enPausa = true;
     // Manual pause overrides any auto-pause that may have been active.
     trackerRef.current?.pause();
     setIsAutoPaused(false);
@@ -2248,6 +2684,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
 
   const resumeRun = async () => {
     setIsPaused(false);
+    if (carreraViva) carreraViva.enPausa = false;
     setIsAutoPaused(false);
     // Accumulate the paused duration so the timer math skips over it.
     if (pauseStartedAtRef.current) {
@@ -2257,24 +2694,12 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     // Lo andado en pausa no cuenta: el primer punto empieza tramo nuevo.
     trackerRef.current?.resume(Date.now());
     await activateScreenAwake();
-    startAutoPauseTimer();
     // El aviso de señal se paraba en la pausa y no volvía a arrancar.
     lastGoodPointRef.current = Date.now();
-    startGpsWatchTimer();
-    // Recompute from Date.now() each tick — self-healing against missed ticks
-    // while the JS thread is suspended (screen off, doze mode).
-    timerRef.current = setInterval(() => setRunTime(computeRunTime()), 1000);
+    arrancarRelojes();
 
     await startBackgroundUpdates();
-
-    try {
-      locationRef.current = await Location.watchPositionAsync(
-        { accuracy: Location.Accuracy.BestForNavigation, distanceInterval: 8, timeInterval: 3000 },
-        handleLocationUpdateRef.current,
-      );
-    } catch (err) {
-      console.warn('[resumeRun] no se pudo vigilar la posición:', err);
-    }
+    await vigilarPosicion();
   };
 
   const stopRun = async () => {
@@ -2283,6 +2708,9 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     // api.saveRun() dos veces y la carrera contaba doble en stats.
     if (!isRunningRef.current) return;
     isRunningRef.current = false;
+    // Fuera la carrera viva: desde aquí la carrera es la que se guarda, y si
+    // la pantalla se rehiciera ahora no hay nada que retomar.
+    carreraViva = null;
     setIsRunning(false);
     marcarCarreraEnMarcha(false);
     setIsPaused(false);
@@ -2432,11 +2860,24 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       // Ahora se escribe aquí, se intenta mandar, y SOLO SE BORRA cuando el
       // servidor confirma. Si algo sale mal, se queda esperando y se reintenta
       // sola al volver a abrir la app.
-      try { await AsyncStorage.setItem(CARRERA_PENDIENTE, JSON.stringify(carrera)); } catch {}
+      //
+      // El contador de envíos en marcha (guardandoCarrera) se resta UNA sola vez: si algo de lo que va detrás del `then` lanzara,
+      // el `catch` también pasaría por aquí y el contador quedaría en negativo.
+      guardandoCarrera++;
+      let envioTerminado = false;
+      const terminarEnvio = () => {
+        if (envioTerminado) return;
+        envioTerminado = true;
+        guardandoCarrera--;
+      };
+      const copia = JSON.stringify(carrera);
+      try { await AsyncStorage.setItem(CARRERA_PENDIENTE, copia); } catch {}
 
       api.saveRun(carrera).then(async (res) => {
-        // Confirmada: ya no hace falta la copia del móvil.
-        try { await AsyncStorage.removeItem(CARRERA_PENDIENTE); } catch {}
+        // Confirmada: ya no hace falta la copia del móvil — si sigue siendo
+        // esta (ver borrarCopiaSiEsLaMisma).
+        await borrarCopiaSiEsLaMisma(copia);
+        terminarEnvio();
         loadZones();
         // Ocultar polígonos ANTES del reload: cuando polygonsVisible=false
         // el render del array colapsa a `false` y React desmonta TODOS los
@@ -2555,6 +2996,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
           }
         }
       }).catch((err) => {
+        terminarEnvio();
         // Si el backend falla, igualmente mostramos resumen con valores
         // estimados — la carrera sí ocurrió y el usuario merece ver lo que
         // hizo aunque no se haya guardado. También alertamos para que sepa
@@ -2594,6 +3036,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     // creaban el efecto "rejilla con puntos" que pedía cerrar/abrir la app.
     // Las celdas (myCellsUnion) ya reflejan el recorrido, no hace falta la
     // polyline encima.
+    segmentosRef.current = [];
     setPathSegments([]);
 
     // Reset camera to north-up flat view
@@ -3314,13 +3757,14 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         )}
 
         {/* Anti-trampa: aviso velocidad excesiva */}
-        {gpsWeak && (
+        {(buscandoGps || gpsWeak) && (
           // Corriendo, las cifras ocupan la franja de abajo: el aviso sube
-          // para no quedar debajo de ellas.
+          // para no quedar debajo de ellas. Al empezar, mientras aún no ha
+          // habido ninguna lectura, no es "sin señal": es que la está buscando.
           <View style={[styles.gpsBanner, isRunning && styles.gpsBannerSobreCifras]}>
-            <Ionicons name="warning" size={18} color="#FFB300" />
+            <Ionicons name={buscandoGps ? 'locate' : 'warning'} size={18} color="#FFB300" />
             <Text style={styles.gpsBannerText}>
-              Sin señal GPS suficiente — no se está registrando
+              {buscandoGps ? 'Buscando GPS…' : 'Sin señal GPS suficiente — no se está registrando'}
             </Text>
           </View>
         )}
@@ -3417,11 +3861,11 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
                 <Text style={styles.cogidoTexto}>{textoObjeto(objetoCogido)}</Text>
               </View>
             )}
-            {gpsWeak && (
+            {(buscandoGps || gpsWeak) && (
               <View style={styles.gpsBannerRun}>
-                <Ionicons name="warning" size={18} color="#FFB300" />
+                <Ionicons name={buscandoGps ? 'locate' : 'warning'} size={18} color="#FFB300" />
                 <Text style={styles.gpsBannerText}>
-                  Sin señal GPS — no se está registrando
+                  {buscandoGps ? 'Buscando GPS…' : 'Sin señal GPS — no se está registrando'}
                 </Text>
               </View>
             )}
