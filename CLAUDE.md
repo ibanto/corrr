@@ -550,6 +550,23 @@ verdad, compilar en **Release** (lleva el código dentro y no necesita nada):
   en Android la copia pendiente no se relee por encima de ~2 MiB (cursor de
   AsyncStorage), para la próxima build. La carrera perdida (21raulnicolas,
   15,8 km) se metió a mano con un script a medida en `soporte/` (fuera de git).
+- **El mapa se comía la cuota gratis de Supabase** (24-oct-2026, arreglado en
+  el servidor sin build): el plan gratis da 5 GB/mes de datos de SALIDA
+  (egress) y CORRR gastaba ~1,1 GB AL DÍA; el ciclo anterior se pasó ~6 veces
+  y Supabase llegó a restringir la organización. El 80-90 % era GET
+  /cells/viewport?formato=tiras: traía el territorio CELDA A CELDA (~93 B por
+  fila, 20.000-57.000 filas por vistazo, con nombre y grito repetidos) para
+  agruparlo en Node. Ahora Postgres manda mapas de bits por dueño, fila y trozo
+  de 32 columnas y Node rehace las mismas tiras (`SQL_TIRAS` y
+  `tirasDesdeDuenos` en services/tiras.ts): 185-276 veces menos, comprobado
+  igual en 10 cajas reales y en la tabla entera (`soporte/egress-supabase/`,
+  fuera de git). El segundo era ownerAvatars, que traía la foto ENTERA en
+  base64 (hasta 2,4 MB) en cada vistazo: ahora la miniatura, con caché en
+  memoria que se borra al cambiar o borrar la foto. **Mirar el egress en el
+  panel de Supabase (Organization → Usage) antes de añadir cualquier consulta
+  que devuelva muchas filas, y nada de emulador contra producción mientras
+  sigamos en el plan gratis.** El formato viejo del viewport también va
+  agrupado (~6 veces menos); no bajar `MIN_APP_VERSION` a 1.0.0 sin mirarlo.
 - **Subir la versión mínima con gente corriendo** (22-oct, probable): la
   pantalla de «actualiza» desmonta el mapa y la carrera en marcha se pierde
   (con la 1.11.10, sin copia). `MIN_APP_VERSION` se cambia **de madrugada** o

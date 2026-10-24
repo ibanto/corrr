@@ -11,7 +11,7 @@ import { SignJWT, jwtVerify } from 'jose';
 import { Resend } from 'resend';
 import { randomBytes, createHmac, timingSafeEqual } from 'crypto';
 import { SUPABASE_ROOT_CA } from '../db/supabase-ca.js';
-import { agruparEnTiras, Dueno } from '../services/tiras.js';
+import { Dueno, SQL_TIRAS, tirasDesdeDuenos } from '../services/tiras.js';
 import { sembrar, sembrarFantasmas, recoger, Objeto } from '../services/objetos.js';
 import {
   celdasEncerradas, cajaDe, cajaDeTrabajo, gruposDeCeldas,
@@ -140,10 +140,9 @@ const RAILWAY_URL = process.env.RAILWAY_PUBLIC_DOMAIN
 // El manejador de abajo es lo que lo evita: registra el problema y deja que
 // el pool descarte esa conexión y abra otra, que es su comportamiento normal.
 //
-// Los tiempos límite acompañan: soltamos las conexiones ociosas nosotros
-// (30s) antes de que las cierre el pooler por su cuenta, y no dejamos que una
-// petición se quede colgada indefinidamente esperando conexión (10s) — mejor
-// un error claro que un usuario mirando una pantalla congelada.
+// Los tiempos límite acompañan: no dejamos que una petición se quede colgada
+// indefinidamente esperando conexión (10s) — mejor un error claro que un
+// usuario mirando una pantalla congelada.
 const db = new Pool({
   ...databaseConfig(),
   max: 10,
@@ -1222,6 +1221,7 @@ app.delete('/users/me', { preHandler: requireAuth }, async (req: any, reply) => 
     await client.query('DELETE FROM user_stats WHERE user_id = $1', [userId]);
     await client.query('DELETE FROM users WHERE id = $1', [userId]);
     await client.query('COMMIT');
+    olvidarAvatar(userId);
     return reply.send({ ok: true });
   } catch (err) {
     await client.query('ROLLBACK');
@@ -1296,6 +1296,9 @@ app.put('/users/me', { preHandler: requireAuth }, async (req: any, reply) => {
 
   values.push(req.userId);
   await db.query(`UPDATE users SET ${updates.join(', ')} WHERE id = $${idx}`, values);
+  // La foto del mapa va en caché (ownerAvatars): se olvida DESPUÉS de
+  // guardar, para que la siguiente carga lea ya la nueva.
+  if (avatarUrl !== undefined) olvidarAvatar(req.userId);
 
   // Bonus único de 50 pts cuando se completa todo el perfil por primera vez.
   // Requerimos los 8 campos del MVP (los 4 que pidió el usuario + 4 míos).
@@ -4354,20 +4357,72 @@ async function puntosDeRobo(
   return Math.round(total);
 }
 
+// Caché de las fotos del mapa, por corredor (24-oct-2026). ownerAvatars se
+// ejecuta en CADA /cells/viewport y antes iba siempre a la base de datos, y
+// además pedía avatar_url —la foto ENTERA en base64, hasta 2,4 MB— aunque ya
+// hubiera miniatura: el segundo mayor gasto de datos de salida de Supabase
+// después del territorio. Ahora la foto de cada uno se pide una vez cada
+// AVATAR_TTL_MS y se borra en cuanto cambia (PUT /users/me) o se borra la
+// cuenta. Se guarda también a quien NO tiene foto (avatar null), para no
+// volver a preguntar por él en cada movimiento del mapa.
+//
+// En memoria del proceso, como el caché del mapa: hay una réplica en Railway.
+// Si algún día hay varias, un cambio de foto podría tardar hasta
+// AVATAR_TTL_MS en verse en las otras; nada peor.
+const AVATAR_TTL_MS = 30 * 60_000;
+// Si la miniatura no se puede hacer (fotos HEIC raras) se manda la ORIGINAL,
+// de hasta 2,4 MB: con 30 min serían hasta 115 MB al día por una sola foto
+// si alguien mira esa zona sin parar. Como toda foto nueva entra por
+// PUT /users/me, que borra la entrada, aquí se puede guardar mucho más.
+const AVATAR_TTL_ORIGINAL_MS = 6 * 3600_000;
+// Red de seguridad de memoria: hoy son 54 personas y casi todas miniaturas de
+// pocos KB. Al llegar aquí se vacía entera y se vuelve a llenar sola.
+const AVATAR_CACHE_MAX = 5_000;
+const avatarCache = new Map<string, { avatar: string | null; expires: number }>();
+// Sube cada vez que se olvida una foto. Una consulta que empezó ANTES de un
+// cambio de foto no puede guardar en la caché lo que leyó (sería la foto
+// vieja durante 20 minutos).
+let avatarEpoch = 0;
+function olvidarAvatar(userId: string) {
+  avatarEpoch++;
+  avatarCache.delete(userId);
+}
+
 async function ownerAvatars(ownerIds: string[], log: any): Promise<Record<string, { avatar: string | null }>> {
   const owners: Record<string, { avatar: string | null }> = {};
   if (ownerIds.length === 0) return owners;
+  const ahora = Date.now();
+  const faltan: string[] = [];
+  for (const id of ownerIds) {
+    const c = avatarCache.get(id);
+    if (c && c.expires > ahora) {
+      // Mismo criterio que la consulta: quien no tiene foto no sale en owners.
+      if (c.avatar !== null) owners[id] = { avatar: c.avatar };
+    } else {
+      faltan.push(id);
+    }
+  }
+  if (faltan.length === 0) return owners;
+
+  const epoch = avatarEpoch;
+  // avatar_url SOLO si no hay miniatura: con el CASE, Postgres ni lee ni manda
+  // la foto grande de quien ya tiene la pequeña. El filtro `IS NOT NULL` no
+  // necesita abrir la foto (mira si es nula, no su contenido).
   const av = await db.query(
-    `SELECT id, avatar_thumb, avatar_url FROM users WHERE id = ANY($1::uuid[]) AND avatar_url IS NOT NULL`,
-    [ownerIds],
+    `SELECT id, avatar_thumb, CASE WHEN avatar_thumb IS NULL THEN avatar_url END AS avatar_url
+       FROM users WHERE id = ANY($1::uuid[]) AND avatar_url IS NOT NULL`,
+    [faltan],
   );
+  const encontrados = new Map<string, string | null>();
+  const originales = new Set<string>();
   for (const o of av.rows) {
     let thumb: string | null = o.avatar_thumb;
     if (!thumb) {
       // Primera vez que se ve a este corredor desde el cambio: se genera la
       // miniatura y se guarda, así solo pasa una vez por usuario. Si la foto
       // no se puede leer, se manda la original (como antes) para no dejar a
-      // nadie sin foto por un fallo nuestro.
+      // nadie sin foto por un fallo nuestro — y se queda en la caché, para no
+      // volver a bajarla de Supabase (ni a intentar la miniatura) cada vez.
       thumb = await makeAvatarThumb(o.avatar_url);
       if (thumb) {
         await db.query(`UPDATE users SET avatar_thumb = $1 WHERE id = $2`, [thumb, o.id]);
@@ -4375,28 +4430,49 @@ async function ownerAvatars(ownerIds: string[], log: any): Promise<Record<string
         log.warn({ userId: o.id }, 'no se pudo hacer la miniatura del avatar');
       }
     }
-    owners[o.id] = { avatar: thumb ?? o.avatar_url };
+    const avatar = thumb ?? o.avatar_url;
+    owners[o.id] = { avatar };
+    encontrados.set(o.id, avatar);
+    if (!thumb) originales.add(o.id);
+  }
+  if (epoch === avatarEpoch) {
+    if (avatarCache.size >= AVATAR_CACHE_MAX) avatarCache.clear();
+    const ahora2 = Date.now();
+    for (const id of faltan) {
+      avatarCache.set(id, {
+        avatar: encontrados.get(id) ?? null,
+        expires: ahora2 + (originales.has(id) ? AVATAR_TTL_ORIGINAL_MS : AVATAR_TTL_MS),
+      });
+    }
   }
   return owners;
 }
 
 async function loadStrips(x0: number, x1: number, y0: number, y1: number, log: any): Promise<StripsEntry> {
-  const q = await db.query(
-    `SELECT c.cell_x, c.cell_y, c.owner_id, u.display_name AS owner_name, u.war_cry AS owner_war_cry,
-            u.color_idx AS owner_color_idx
-       FROM cells c
-       JOIN users u ON u.id = c.owner_id
-      WHERE c.cell_x BETWEEN $1 AND $2 AND c.cell_y BETWEEN $3 AND $4
-      LIMIT $5`,
-    [x0, x1, y0, y1, STRIPS_MAX_CELLS],
-  );
-  if (q.rows.length >= STRIPS_MAX_CELLS) {
-    log.warn({ x0, x1, y0, y1 }, '[viewport] casilla con más celdas de las esperables');
-  }
+  // Las celdas salen YA COMPRIMIDAS de Postgres (SQL_TIRAS, services/tiras.ts:
+  // un mapa de bits por dueño, fila y trozo de 32 columnas) y aquí se rehacen
+  // las tiras. Antes venía una fila por celda —20.000-57.000 por llamada,
+  // ~93 B cada una repitiendo uuid, nombre y grito— y se agrupaban aquí: era
+  // el 80-90 % de los datos de salida de Supabase (plan gratis, 5 GB/mes),
+  // ~1 GB al día en pleno Halloween. Ahora cada dueño viaja una vez y sus
+  // celdas a 32 por entero. La app recibe exactamente las mismas tiras
+  // (comprobado contra agruparEnTiras).
+  //
+  // Sin LIMIT: un tope que corte es lo que pintó la recta vertical del 21-sep
+  // (§9 del CLAUDE.md). STRIPS_MAX_CELLS queda solo como aviso en el registro.
+  const t0 = Date.now();
+  const q = await db.query(SQL_TIRAS, [x0, x1, y0, y1]);
+  const ms = Date.now() - t0;
   // El color se calcula aquí y viaja con el dueño: así la app no tiene que
   // adivinarlo, que es justo lo que provocaba los tonos repetidos.
-  const filas = q.rows.map((r: any) => ({ ...r, owner_color: colorDeCorredor(r.owner_color_idx ?? 0) }));
-  return { expires: Date.now() + VIEWPORT_TTL_MS, ...agruparEnTiras(filas) };
+  const { celdas, ...st } = tirasDesdeDuenos(q.rows, x0, y0, colorDeCorredor);
+  // En local tarda menos que la consulta de antes; si en Supabase se fuera de
+  // madre, que se vea en el registro de Railway sin tocar nada.
+  if (ms > 800) log.warn({ x0, x1, y0, y1, ms, celdas, tiras: st.n }, '[viewport] tiras lentas');
+  if (celdas >= STRIPS_MAX_CELLS) {
+    log.warn({ x0, x1, y0, y1, celdas }, '[viewport] casilla con más celdas de las esperables');
+  }
+  return { expires: Date.now() + VIEWPORT_TTL_MS, ...st };
 }
 
 app.get('/cells/viewport', { preHandler: requireAuth }, async (req: any, reply) => {
@@ -4451,40 +4527,71 @@ app.get('/cells/viewport', { preHandler: requireAuth }, async (req: any, reply) 
     // para que la respuesta cacheada sirva igual a todos.
     const cx = Math.round((x0 + x1) / 2);
     const cy = Math.round((y0 + y1) / 2);
+    // Las MISMAS celdas de siempre (mismo JOIN, mismo orden por cercanía y
+    // mismo tope), pero Postgres las manda agrupadas por dueño: el uuid, el
+    // nombre y el grito UNA vez y luego tres listas de enteros (x e y desde
+    // la esquina de la caja, y la fecha en segundos). Antes cada celda viajaba
+    // con todo repetido (~100 B; con el tope de 40.000, ~4 MB por llamada de
+    // datos de salida de Supabase, plan gratis de 5 GB/mes); así son ~20 B.
+    // Importa desde que MIN_APP_VERSION baje (2-nov) y vuelvan las apps de
+    // antes de la 1.11.10, que usan este formato. La app recibe lo mismo:
+    // abajo se rehace la lista celda a celda en el mismo orden (por cercanía
+    // al centro; los empates ya salían en cualquier orden, aquí por x e y).
+    // Los tres array_agg llevan el mismo ORDER BY para ir alineados.
     const q = await db.query(
-      `SELECT c.cell_x, c.cell_y, c.owner_id,
-              EXTRACT(EPOCH FROM c.claimed_at)::int AS claimed_s,
-              u.display_name AS owner_name, u.war_cry AS owner_war_cry,
-              u.color_idx AS owner_color_idx
-       FROM cells c
-       JOIN users u ON u.id = c.owner_id
-       WHERE c.cell_x BETWEEN $1 AND $2 AND c.cell_y BETWEEN $3 AND $4
-       ORDER BY (c.cell_x - $5) * (c.cell_x - $5) + (c.cell_y - $6) * (c.cell_y - $6)
-       LIMIT $7`,
+      `WITH c AS (
+         SELECT c.cell_x, c.cell_y, c.owner_id,
+                EXTRACT(EPOCH FROM c.claimed_at)::int AS claimed_s
+           FROM cells c
+           JOIN users u ON u.id = c.owner_id
+          WHERE c.cell_x BETWEEN $1 AND $2 AND c.cell_y BETWEEN $3 AND $4
+          ORDER BY (c.cell_x - $5) * (c.cell_x - $5) + (c.cell_y - $6) * (c.cell_y - $6)
+          LIMIT $7
+       ), g AS (
+         SELECT owner_id,
+                array_agg(cell_x - $1 ORDER BY cell_x, cell_y) AS xs,
+                array_agg(cell_y - $3 ORDER BY cell_x, cell_y) AS ys,
+                array_agg(claimed_s ORDER BY cell_x, cell_y) AS ts
+           FROM c
+          GROUP BY owner_id
+       )
+       SELECT g.owner_id, u.display_name AS owner_name, u.war_cry AS owner_war_cry,
+              u.color_idx AS owner_color_idx, g.xs, g.ys, g.ts
+         FROM g
+         JOIN users u ON u.id = g.owner_id`,
       [x0, x1, y0, y1, cx, cy, VIEWPORT_MAX_CELLS]
     );
-    if (q.rows.length >= VIEWPORT_MAX_CELLS) {
+    let total = 0;
+    for (const r of q.rows) total += r.xs.length;
+    if (total >= VIEWPORT_MAX_CELLS) {
       req.log.warn({ cacheKey, tope: VIEWPORT_MAX_CELLS }, '[viewport] casilla recortada por el tope de celdas');
     }
-    const indice = new Map<string, number>();
     const duenos: ViewportEntry['duenos'] = [];
-    const datos = new Int32Array(q.rows.length * 4);
-    q.rows.forEach((r: any, i: number) => {
-      let d = indice.get(r.owner_id);
-      if (d === undefined) {
-        d = duenos.length;
-        indice.set(r.owner_id, d);
-        duenos.push({
-          id: r.owner_id, name: r.owner_name, warCry: r.owner_war_cry,
-          color: colorDeCorredor(r.owner_color_idx ?? 0),
-        });
+    const sinOrden = new Int32Array(total * 4);
+    let k = 0;
+    for (const r of q.rows) {
+      const d = duenos.length;
+      duenos.push({
+        id: r.owner_id, name: r.owner_name, warCry: r.owner_war_cry,
+        color: colorDeCorredor(r.owner_color_idx ?? 0),
+      });
+      for (let i = 0; i < r.xs.length; i++) {
+        sinOrden[k++] = x0 + Number(r.xs[i]);
+        sinOrden[k++] = y0 + Number(r.ys[i]);
+        sinOrden[k++] = d;
+        sinOrden[k++] = Number(r.ts[i] ?? 0);
       }
-      datos[i * 4] = r.cell_x;
-      datos[i * 4 + 1] = r.cell_y;
-      datos[i * 4 + 2] = d;
-      datos[i * 4 + 3] = r.claimed_s ?? 0;
-    });
-    entry = { expires: Date.now() + VIEWPORT_TTL_MS, datos, n: q.rows.length, duenos };
+    }
+    // Mismo orden que el ORDER BY de antes: por cercanía al centro.
+    const dist = (i: number) => {
+      const dx = sinOrden[i * 4] - cx, dy = sinOrden[i * 4 + 1] - cy;
+      return dx * dx + dy * dy;
+    };
+    const orden = Array.from({ length: total }, (_, i) => i).sort((a, b) =>
+      dist(a) - dist(b) || sinOrden[a * 4] - sinOrden[b * 4] || sinOrden[a * 4 + 1] - sinOrden[b * 4 + 1]);
+    const datos = new Int32Array(total * 4);
+    orden.forEach((o, i) => datos.set(sinOrden.subarray(o * 4, o * 4 + 4), i * 4));
+    entry = { expires: Date.now() + VIEWPORT_TTL_MS, datos, n: total, duenos };
     if (viewportCache.size >= VIEWPORT_CACHE_MAX) {
       const now = Date.now();
       for (const [k, v] of viewportCache) if (v.expires <= now) viewportCache.delete(k);
