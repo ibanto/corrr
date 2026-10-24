@@ -11,11 +11,9 @@ Instrucciones para Claude trabajando en este repo. Léelo entero antes de tocar 
 **En las tiendas**: **1.11.11 publicada y ANUNCIADA en las dos** (Android
 vc87, iPhone build 34). 54 personas. Ya no queda nada de la subida.
 
-**1.11.12 (SOLO Android, vc88) — montada el 23-oct, en PRUEBA INTERNA**
+**1.11.12 (SOLO Android, vc88) — montada el 23-oct, en PRUEBA INTERNA; prueba en la calle de Iban OK el 24-oct («todo funciona correctamente»)**
 (`apps/mobile/builds/corrr-v1.11.12-vc88.aab`, notas en
-`store/notas-1.11.12.md`). Falta: la prueba en la calle de Iban con su Xiaomi
-(`docs/prueba-gps.md` + abrir otras apps a media carrera y volver), pasarla a
-producción y, cuando Google la publique, `LATEST_APP_VERSION` = 1.11.12 y
+`store/notas-1.11.12.md`). Falta: pasarla a producción y, cuando Google la publique, `LATEST_APP_VERSION` = 1.11.12 y
 `LATEST_APP_VC` = 88 en Railway. **`MIN_APP_VERSION` NO se toca** (§9, «subir
 la versión mínima con gente corriendo»). El iPhone se queda en la 1.11.11.
 Lleva tres arreglos, todos en `MapScreen.tsx` (runTracker no se toca):
