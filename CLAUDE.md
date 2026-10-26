@@ -11,11 +11,15 @@ Instrucciones para Claude trabajando en este repo. Léelo entero antes de tocar 
 **En las tiendas**: **1.11.11 publicada y ANUNCIADA en las dos** (Android
 vc87, iPhone build 34). 54 personas. Ya no queda nada de la subida.
 
-**1.11.12 (SOLO Android, vc88) — montada el 23-oct, en PRUEBA INTERNA; prueba en la calle de Iban OK el 24-oct («todo funciona correctamente»)**
+**1.11.12 (SOLO Android, vc88) — PUBLICADA EN PRODUCCIÓN el 26-oct (~12:30) y ANUNCIADA** (prueba en la calle de Iban OK el 24-oct)
 (`apps/mobile/builds/corrr-v1.11.12-vc88.aab`, notas en
-`store/notas-1.11.12.md`). Falta: pasarla a producción y, cuando Google la publique, `LATEST_APP_VERSION` = 1.11.12 y
-`LATEST_APP_VC` = 88 en Railway. **`MIN_APP_VERSION` NO se toca** (§9, «subir
-la versión mínima con gente corriendo»). El iPhone se queda en la 1.11.11.
+`store/notas-1.11.12.md`). Google la aprobó y, como Play Console tiene la
+**«Publicación gestionada» activada**, se quedó esperando en *Resumen de
+publicación* hasta que Iban pulsó «Publicar 1 cambio» (ojo la próxima vez:
+aprobada no es publicada). La ficha mostró 1.11.12 a los pocos minutos y se
+anunció cambiando los valores por defecto de `LATEST_APP_VERSION`/`LATEST_APP_VC`
+en `routes/index.ts` (en Railway esas variables no existen). **`MIN_APP_VERSION`
+NO se toca** (§9, «subir la versión mínima con gente corriendo»). El iPhone se queda en la 1.11.11.
 Lleva tres arreglos, todos en `MapScreen.tsx` (runTracker no se toca):
 1. **La carrera ya no se pierde cuando Android cierra la pantalla de la app**
    (§9, «carrera viva»). Lo sufría un corredor con un Xiaomi.
