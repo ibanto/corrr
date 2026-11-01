@@ -2096,6 +2096,52 @@ sale el cartel de "prepárate" y la pestaña de mensajes de Halloween dice "pró
 </form>
 </div>
 <div class="caja">
+<h2>Campa&ntilde;a de marca</h2>
+<p class="nota">Un logo escondido por la calle, <b>sin sacar versi&oacute;n</b>. Aqu&iacute; se escribe todo lo que
+ve el corredor: el dibujo del mapa, lo que dice el cartel al pisarlo y la pantalla de Retos. Solo lo ven las
+apps <b>1.11.13 o m&aacute;s nuevas</b>; las de antes pintan una calabaza. El dibujo es una direcci&oacute;n
+https a un PNG <b>cuadrado y con fondo transparente</b>. Primero se guarda (en prueba, para uno), luego se
+siembra abajo.</p>
+<form class="form" id="fc">
+  <label class="campo">Identificador (corto, sin espacios: tienda-pepe)
+    <input id="c_tipo" placeholder="tienda-pepe"></label>
+  <label class="campo">Nombre (c&oacute;mo se cuenta: el logo de Tienda Pepe)
+    <input id="c_nombre" placeholder="el logo de Tienda Pepe"></label>
+  <label class="campo">Dibujo del mapa (https, PNG cuadrado y transparente)
+    <input id="c_imagen" placeholder="https://..."></label>
+  <label class="campo">Cartel al pisarlo ({puntos} se cambia por los puntos)
+    <input id="c_cartel" placeholder="¡TIENDA PEPE! +{puntos}"></label>
+  <label class="campo">Retos &middot; fechas
+    <input id="c_fechas" placeholder="DEL 10 AL 16 DE NOVIEMBRE"></label>
+  <label class="campo">Retos &middot; t&iacute;tulo
+    <input id="c_titulo" placeholder="CAZA EL LOGO DE TIENDA PEPE"></label>
+  <label class="campo">Retos &middot; c&oacute;mo va
+    <textarea id="c_texto" rows="3"></textarea></label>
+  <label class="campo">Retos &middot; el premio y d&oacute;nde se recoge
+    <textarea id="c_premio" rows="2"></textarea></label>
+  <select id="c_modo">
+    <option value="apagado">Apagado &mdash; nadie la ve</option>
+    <option value="prueba">Solo para un corredor, para probarla</option>
+    <option value="todos">Encendida para todo el mundo</option>
+  </select>
+  <input id="c_corredor" placeholder="Nombre del corredor que la prueba" style="display:none">
+  <button class="btn" id="c_guardar" type="button">Guardar la campa&ntilde;a</button>
+  <div id="c_msg" class="resultado" style="display:none"></div>
+  <label class="campo">Sembrar logos cerca de (nombre del corredor)
+    <input id="c_cerca" placeholder="ibanto"></label>
+  <label class="campo">Cu&aacute;ntos logos
+    <input id="c_cuantos" type="number" min="1" max="500" value="30"></label>
+  <label class="campo">Puntos de cada logo
+    <input id="c_puntos" type="number" min="1" max="1000" value="200"></label>
+  <label class="campo">Desde
+    <input id="c_desde" type="datetime-local"></label>
+  <label class="campo">Hasta
+    <input id="c_hasta" type="datetime-local"></label>
+  <button class="btn" id="c_sembrar" type="button">Sembrar logos</button>
+  <button class="mini" id="c_quitar" type="button">Quitar los logos sin coger</button>
+</form>
+</div>
+<div class="caja">
 <h2>Juego del mapa</h2>
 <p class="nota">Las calabazas se siembran sobre calles de verdad, así que ninguna cae dentro de un
 edificio ni en medio del monte. Abajo eliges si valen todas las calles (el mapa de OpenStreetMap) o
@@ -2526,6 +2572,62 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
         + Math.round(r.celdas / 100).toLocaleString('es-ES') + ' km². Las calabazas pueden caer por cualquiera de ellos.'
       : 'Sin mapa de calles cargado: las calabazas solo pueden caer por donde ya ha corrido alguien.';
   }).catch(function () {});
+  // Campaña de marca. Los campos se llaman igual que en el servidor sin el
+  // "c_", así se rellenan y se leen en un bucle.
+  var CAMPOS_CAMPANA = ['tipo', 'nombre', 'imagen', 'cartel', 'fechas', 'titulo', 'texto', 'premio'];
+  function msgCampana(t, ok) {
+    var m = document.getElementById('c_msg');
+    m.style.display = 'block';
+    m.style.color = ok ? '#4caf50' : '#f44336';
+    m.style.borderLeftColor = ok ? '#4caf50' : '#f44336';
+    m.textContent = t;
+  }
+  function pintarCampana(r) {
+    var c = r.campana || {};
+    CAMPOS_CAMPANA.forEach(function (k) { document.getElementById('c_' + k).value = c[k] || ''; });
+    document.getElementById('c_modo').value = r.modo || 'apagado';
+    document.getElementById('c_corredor').value = r.corredor || '';
+    document.getElementById('c_corredor').style.display = r.modo === 'prueba' ? '' : 'none';
+  }
+  api('/admin/campana').then(pintarCampana).catch(function () {});
+  document.getElementById('c_modo').addEventListener('change', function (ev) {
+    document.getElementById('c_corredor').style.display = ev.target.value === 'prueba' ? '' : 'none';
+  });
+  document.getElementById('c_guardar').addEventListener('click', function () {
+    var cuerpo = { modo: document.getElementById('c_modo').value, corredor: val('c_corredor') };
+    CAMPOS_CAMPANA.forEach(function (k) { cuerpo[k] = val('c_' + k); });
+    if (cuerpo.modo === 'todos' && !confirm('¿Encender la campaña para TODO el mundo?')) return;
+    api('/admin/campana', { method: 'POST', body: JSON.stringify(cuerpo) }).then(function (r) {
+      pintarCampana(r);
+      msgCampana(r.modo === 'todos' ? '✓ Guardada y encendida para todos.'
+        : (r.modo === 'prueba' ? '✓ Guardada. Solo la ve ' + r.corredor + '.' : '✓ Guardada, apagada.'), true);
+    }).catch(function (e) { msgCampana('✗ ' + e.message, false); });
+  });
+  document.getElementById('c_sembrar').addEventListener('click', function () {
+    var tipo = val('c_tipo');
+    if (!tipo) { msgCampana('✗ Guarda primero la campaña con su identificador', false); return; }
+    if (!val('c_cerca')) { msgCampana('✗ Pon cerca de quién: una campaña es de una tienda, no de toda España', false); return; }
+    var b = document.getElementById('c_sembrar');
+    b.disabled = true;
+    msgCampana('Sembrando... (no toques nada)', true);
+    api('/admin/objetos', { method: 'POST', body: JSON.stringify({
+      tipo: tipo, fuente: 'calles', cerca: val('c_cerca'), todos: false,
+      cuantos: Number(document.getElementById('c_cuantos').value),
+      puntos: Number(document.getElementById('c_puntos').value),
+      desde: val('c_desde') || null, hasta: val('c_hasta') || null,
+    }) }).then(function (r) {
+      b.disabled = false;
+      msgCampana('✓ Sembrados ' + r.puestas + ' logos de ' + r.puntos + ' puntos' + (r.donde || ''), true);
+    }).catch(function (e) { b.disabled = false; msgCampana('✗ ' + e.message, false); });
+  });
+  document.getElementById('c_quitar').addEventListener('click', function () {
+    var tipo = val('c_tipo');
+    if (!tipo || !confirm('¿Quitar del mapa los logos de ' + tipo + ' sin coger? Los ya cogidos se quedan.')) return;
+    api('/admin/objetos?tipo=' + encodeURIComponent(tipo), { method: 'DELETE' }).then(function (r) {
+      msgCampana('✓ Quitados ' + r.quitadas + ' logos.', true);
+    }).catch(function (e) { msgCampana('✗ ' + e.message, false); });
+  });
+
   function pintarHalloween(r) {
     document.getElementById('hw_modo').value = r.modo || 'apagado';
     document.getElementById('hw_corredor').value = r.corredor || '';
@@ -4000,6 +4102,18 @@ app.post('/runs', {
         // donde está la gracia de truco o trato.
         fantasmas: fantasmasPisados.map((o: Objeto) => o.puntos),
         puntosFantasmas: fantasmasPisados.reduce((n: number, o: Objeto) => n + o.puntos, 0),
+        // Los logos de una campaña de marca, con su nombre: sin esta línea la
+        // app no podría explicar de dónde salen esos puntos (§9, el desglose).
+        campana: await (async () => {
+          const suyos = objetos.filter((o: Objeto) => !['calabaza', 'fantasma', 'zombi'].includes(o.tipo));
+          if (suyos.length === 0) return null;
+          const c = await campanaGuardada().catch(() => null);
+          return {
+            nombre: c && c.tipo === suyos[0].tipo ? c.nombre : 'Logos',
+            cuantos: suyos.length,
+            puntos: suyos.reduce((n: number, o: Objeto) => n + o.puntos, 0),
+          };
+        })(),
         cercadas,
         cercadasRobadas,
         puntosCerco,
@@ -6286,8 +6400,17 @@ app.get('/objetos/viewport', { preHandler: requireAuth }, async (req: any, reply
   if (rows.length === 0 && await sembrarDondeMira(req.userId, caja).catch(() => false)) {
     ({ rows } = await mirar());
   }
+  // El dibujo y el cartel de los objetos de la campaña, si hay alguno a la
+  // vista. Va con los objetos y no en otra petición: así nunca llega un logo
+  // sin saber cómo pintarlo. Las apps viejas ignoran el campo.
+  const tipos: Record<string, { imagen: string; cartel: string; nombre: string }> = {};
+  const campana = await campanaGuardada().catch(() => null);
+  if (campana && rows.some((r: any) => r.tipo === campana.tipo)) {
+    tipos[campana.tipo] = { imagen: campana.imagen, cartel: campana.cartel, nombre: campana.nombre };
+  }
   return reply.send({
     objetos: rows.map((r: any) => ({ id: r.id, x: r.cell_x, y: r.cell_y, puntos: r.puntos, tipo: r.tipo })),
+    tipos,
   });
 });
 
@@ -6363,6 +6486,107 @@ app.post('/admin/ajustes', { preHandler: requireAdmin }, async (req: any, reply)
     ok: true, clave,
     modo: valor === 'si' ? 'todos' : (valor === 'no' ? 'apagado' : 'prueba'),
     corredor: valor.startsWith('prueba:') ? valor.slice('prueba:'.length) : '',
+  });
+});
+
+/** Campaña de marca: el logo que se esconde por la calle, sin sacar versión.
+ *
+ *  Halloween llevaba la calabaza, el fantasma y el cartel de Retos escritos
+ *  DENTRO de la app, y cada evento nuevo habría pedido pasar por las dos
+ *  tiendas. Desde la 1.11.13 la app pide aquí el dibujo de cada objeto (una
+ *  dirección https, como la imagen de los avisos), lo que dice el cartel al
+ *  pisarlo y la pantalla de Retos entera. Si algo falla, pinta la calabaza.
+ *
+ *  Se guarda en `ajustes_juego` como JSON (`campana`) y con su interruptor de
+ *  tres estados aparte (`campana_modo`: no / si / prueba:<nombre>), el mismo
+ *  que Halloween. OJO: las apps de antes de la 1.11.13 no saben nada de esto;
+ *  si ven objetos de un tipo que no conocen, pintan una calabaza. */
+type Campana = {
+  tipo: string;        // lo que va en objetos.tipo, p. ej. 'tienda-pepe'
+  nombre: string;      // 'el logo de Tienda Pepe'
+  imagen: string;      // https://… PNG con fondo transparente, cuadrado
+  cartel: string;      // al pisarlo: '¡TIENDA PEPE! +{puntos}'
+  fechas: string;      // Retos: 'DEL 10 AL 16 DE NOVIEMBRE'
+  titulo: string;      // Retos: 'CAZA EL LOGO DE TIENDA PEPE'
+  texto: string;       // Retos: cómo va
+  premio: string;      // Retos: qué se gana y dónde se recoge
+};
+
+async function campanaGuardada(): Promise<Campana | null> {
+  const { rows } = await db.query("SELECT valor FROM ajustes_juego WHERE clave = 'campana'");
+  if (!rows[0]) return null;
+  try { return JSON.parse(rows[0].valor); } catch { return null; }
+}
+
+/** La campaña, si a ESTE corredor le toca verla. */
+async function campanaPara(userId: string): Promise<Campana | null> {
+  const modo = await valorAjuste('campana_modo');
+  if (modo === 'no') return null;
+  let nombre: string | null = null;
+  if (modo.startsWith('prueba:')) {
+    const { rows } = await db.query('SELECT display_name FROM users WHERE id = $1', [userId]);
+    nombre = rows[0]?.display_name ?? null;
+  }
+  if (!ajusteLeToca(modo, nombre)) return null;
+  return campanaGuardada();
+}
+
+app.get('/app/evento', { preHandler: requireAuth }, async (req: any, reply) => {
+  return reply.send({ evento: await campanaPara(req.userId) });
+});
+
+app.get('/admin/campana', { preHandler: requireAdmin }, async (_req, reply) => {
+  const modo = await valorAjuste('campana_modo');
+  return reply.send({
+    campana: await campanaGuardada(),
+    modo: modo === 'si' ? 'todos' : (modo.startsWith('prueba:') ? 'prueba' : 'apagado'),
+    corredor: modo.startsWith('prueba:') ? modo.slice('prueba:'.length) : '',
+  });
+});
+
+app.post('/admin/campana', { preHandler: requireAdmin }, async (req: any, reply) => {
+  const b = req.body ?? {};
+  const txt = (v: any, max: number) => String(v ?? '').trim().slice(0, max);
+  const c: Campana = {
+    // Solo letras, números y guiones: va a la base de datos y a las URL.
+    tipo: txt(b.tipo, 40).toLowerCase().replace(/[^a-z0-9-]/g, '-'),
+    nombre: txt(b.nombre, 80), imagen: txt(b.imagen, 500), cartel: txt(b.cartel, 60),
+    fechas: txt(b.fechas, 60), titulo: txt(b.titulo, 80), texto: txt(b.texto, 600),
+    premio: txt(b.premio, 300),
+  };
+  if (!c.tipo || !c.nombre) return reply.status(400).send({ error: 'Faltan el identificador y el nombre' });
+  // Los tipos de Halloween tienen reglas propias (fantasmas, mensajes): una
+  // campaña que se llamara así las heredaría sin querer.
+  if (['calabaza', 'fantasma', 'zombi'].includes(c.tipo)) {
+    return reply.status(400).send({ error: 'Ese identificador es de Halloween, pon otro' });
+  }
+  if (c.imagen && !/^https:\/\//.test(c.imagen)) {
+    return reply.status(400).send({ error: 'La imagen tiene que ser una dirección https' });
+  }
+
+  let modo = 'no';
+  if (b.modo === 'todos') modo = 'si';
+  else if (b.modo === 'prueba') {
+    const quien = txt(b.corredor, 80);
+    if (!quien) return reply.status(400).send({ error: 'Para probarlo hace falta el nombre del corredor' });
+    const { rows } = await db.query(
+      'SELECT display_name FROM users WHERE LOWER(display_name) = LOWER($1)', [quien],
+    );
+    if (rows.length === 0) return reply.status(400).send({ error: `No hay ningún corredor que se llame "${quien}"` });
+    modo = `prueba:${rows[0].display_name}`;
+  }
+
+  for (const [clave, valor] of [['campana', JSON.stringify(c)], ['campana_modo', modo]]) {
+    await db.query(
+      `INSERT INTO ajustes_juego (clave, valor) VALUES ($1, $2)
+       ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor, cambiado_at = NOW()`,
+      [clave, valor],
+    );
+  }
+  return reply.send({
+    ok: true, campana: c,
+    modo: modo === 'si' ? 'todos' : (modo === 'no' ? 'apagado' : 'prueba'),
+    corredor: modo.startsWith('prueba:') ? modo.slice('prueba:'.length) : '',
   });
 });
 

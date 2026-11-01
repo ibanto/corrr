@@ -832,6 +832,30 @@ tope de la caja no es por velocidad sino por memoria. La cola va en
 
 Tras tocar esto: `npm run test:territorio`.
 
+## 9-quinquies. Campañas de marca sin sacar versión (preparado el 1-nov-2026, sale con la 1.11.13)
+
+Iban: «cada vez que saquemos una campaña no necesitemos versión nueva». Halloween llevaba
+la calabaza, el fantasma, el cartel al pisarla y la pantalla de Retos ESCRITOS en la app.
+Ahora, para un objeto que la app no lleva dentro (el logo de una tienda), todo sale del
+servidor:
+
+- **Panel → Juego → «Campaña de marca»**: identificador (`objetos.tipo`), nombre, dibujo
+  (https a un PNG cuadrado y transparente, como la imagen de los avisos), cartel al pisarlo
+  (`{puntos}`), y Retos: fechas, título, texto y premio. Interruptor de tres estados
+  (apagado / prueba para uno / todos). Se guarda en `ajustes_juego` (`campana` en JSON y
+  `campana_modo`). Y ahí mismo, sembrar logos cerca de un corredor y quitarlos.
+- **Servidor**: `GET /app/evento` (la campaña si le toca), `/objetos/viewport` añade
+  `tipos` con dibujo y cartel, y el desglose de `POST /runs` lleva `campana`
+  {nombre, cuantos, puntos}. La siembra, el ranking por tipo y el renacer al cogerlo ya
+  servían para cualquier tipo. Ojo: el logo cogido RENACE a hasta 5 km, como la calabaza.
+- **App**: `prepararTipos` (MapScreen) BAJA el dibujo antes de pintar los objetos y solo
+  lo usa si ha llegado entero (en Android el marcador se fotografía al nacer, §9); si no,
+  calabaza. Los objetos se ven con Halloween **o** con campaña. Retos enseña la campaña
+  si la hay, y si no, lo de siempre. `MODO=campana npm run mock` la recorre.
+- **Las apps de antes de la 1.11.13 no saben nada**: con Halloween apagado no ven los
+  logos; encendido, los pintan como calabazas. Antes de lanzar una campaña de verdad,
+  que la 1.11.13 esté en las dos tiendas (y valorar `MIN_APP_VERSION`, §9).
+
 ## 9-ter. El panel de administración
 
 Vive entero en la plantilla HTML de `apps/backend/src/routes/index.ts` (no hay
