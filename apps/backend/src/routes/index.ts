@@ -9,7 +9,7 @@ import * as dotenv from 'dotenv';
 import { hash, verify } from 'argon2';
 import { SignJWT, jwtVerify } from 'jose';
 import { Resend } from 'resend';
-import { randomBytes, createHmac, timingSafeEqual } from 'crypto';
+import { randomBytes, createHmac, createHash, timingSafeEqual } from 'crypto';
 import { SUPABASE_ROOT_CA } from '../db/supabase-ca.js';
 import { Dueno, SQL_TIRAS, tirasDesdeDuenos } from '../services/tiras.js';
 import { sembrar, sembrarFantasmas, recoger, Objeto } from '../services/objetos.js';
@@ -500,6 +500,13 @@ async function initDB() {
       cell_x INT NOT NULL,
       cell_y INT NOT NULL,
       PRIMARY KEY (cell_x, cell_y)
+    )
+  `).catch(() => {});
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS campana_logos (
+      tipo TEXT PRIMARY KEY,
+      png BYTEA NOT NULL,
+      subido_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `).catch(() => {});
   await db.query(`
@@ -2099,16 +2106,26 @@ sale el cartel de "prepárate" y la pestaña de mensajes de Halloween dice "pró
 <h2>Campa&ntilde;a de marca</h2>
 <p class="nota">Un logo escondido por la calle, <b>sin sacar versi&oacute;n</b>. Aqu&iacute; se escribe todo lo que
 ve el corredor: el dibujo del mapa, lo que dice el cartel al pisarlo y la pantalla de Retos. Solo lo ven las
-apps <b>1.11.13 o m&aacute;s nuevas</b>; las de antes pintan una calabaza. El dibujo es una direcci&oacute;n
-https a un PNG <b>cuadrado y con fondo transparente</b>. Primero se guarda (en prueba, para uno), luego se
-siembra abajo.</p>
+apps <b>1.11.13 o m&aacute;s nuevas</b>; las de antes pintan una calabaza. Solo la ve en Retos la gente
+de <b>la ciudad de la campa&ntilde;a</b>, y los logos se siembran y renacen <b>alrededor de la tienda</b>.
+El logo, mejor un PNG con el fondo transparente; si es rectangular se encaja en un cuadrado. Orden:
+subir el logo, guardar (en prueba, para uno) y sembrar.</p>
 <form class="form" id="fc">
   <label class="campo">Identificador (corto, sin espacios: tienda-pepe)
     <input id="c_tipo" placeholder="tienda-pepe"></label>
   <label class="campo">Nombre (c&oacute;mo se cuenta: el logo de Tienda Pepe)
     <input id="c_nombre" placeholder="el logo de Tienda Pepe"></label>
-  <label class="campo">Dibujo del mapa (https, PNG cuadrado y transparente)
-    <input id="c_imagen" placeholder="https://..."></label>
+  <label class="campo">El logo que se planta (PNG o JPG)
+    <input id="c_archivo" type="file" accept="image/png,image/jpeg"></label>
+  <input id="c_imagen" type="hidden">
+  <div id="c_logo_previo" style="display:none;background:#333;padding:8px;border-radius:8px;width:max-content">
+    <img id="c_logo_img" style="width:88px;height:88px;object-fit:contain"></div>
+  <label class="campo">Ciudad (solo la ve quien tenga esta ciudad en su perfil)
+    <input id="c_ciudad" placeholder="Murcia"></label>
+  <label class="campo">Ubicaci&oacute;n de la tienda (en Google Maps: clic derecho sobre la tienda y copiar los n&uacute;meros)
+    <input id="c_ubicacion" placeholder="37.9838, -1.1280"></label>
+  <label class="campo">Radio alrededor de la tienda, en km (los logos se siembran y renacen ah&iacute;)
+    <input id="c_km" type="number" min="0.3" max="10" step="0.1" value="2"></label>
   <label class="campo">Cartel al pisarlo ({puntos} se cambia por los puntos)
     <input id="c_cartel" placeholder="¡TIENDA PEPE! +{puntos}"></label>
   <label class="campo">Retos &middot; fechas
@@ -2127,8 +2144,6 @@ siembra abajo.</p>
   <input id="c_corredor" placeholder="Nombre del corredor que la prueba" style="display:none">
   <button class="btn" id="c_guardar" type="button">Guardar la campa&ntilde;a</button>
   <div id="c_msg" class="resultado" style="display:none"></div>
-  <label class="campo">Sembrar logos cerca de (nombre del corredor)
-    <input id="c_cerca" placeholder="ibanto"></label>
   <label class="campo">Cu&aacute;ntos logos
     <input id="c_cuantos" type="number" min="1" max="500" value="30"></label>
   <label class="campo">Puntos de cada logo
@@ -2137,7 +2152,7 @@ siembra abajo.</p>
     <input id="c_desde" type="datetime-local"></label>
   <label class="campo">Hasta
     <input id="c_hasta" type="datetime-local"></label>
-  <button class="btn" id="c_sembrar" type="button">Sembrar logos</button>
+  <button class="btn" id="c_sembrar" type="button">Sembrar logos alrededor de la tienda</button>
   <button class="mini" id="c_quitar" type="button">Quitar los logos sin coger</button>
 </form>
 </div>
@@ -2574,7 +2589,11 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
   }).catch(function () {});
   // Campaña de marca. Los campos se llaman igual que en el servidor sin el
   // "c_", así se rellenan y se leen en un bucle.
-  var CAMPOS_CAMPANA = ['tipo', 'nombre', 'imagen', 'cartel', 'fechas', 'titulo', 'texto', 'premio'];
+  var CAMPOS_CAMPANA = ['tipo', 'nombre', 'imagen', 'cartel', 'fechas', 'titulo', 'texto', 'premio', 'ciudad', 'km'];
+  function verLogo(url) {
+    document.getElementById('c_logo_previo').style.display = url ? '' : 'none';
+    if (url) document.getElementById('c_logo_img').src = url;
+  }
   function msgCampana(t, ok) {
     var m = document.getElementById('c_msg');
     m.style.display = 'block';
@@ -2585,6 +2604,9 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
   function pintarCampana(r) {
     var c = r.campana || {};
     CAMPOS_CAMPANA.forEach(function (k) { document.getElementById('c_' + k).value = c[k] || ''; });
+    if (!c.km) document.getElementById('c_km').value = '2';
+    document.getElementById('c_ubicacion').value = c.lat != null ? c.lat + ', ' + c.lng : '';
+    verLogo(c.imagen);
     document.getElementById('c_modo').value = r.modo || 'apagado';
     document.getElementById('c_corredor').value = r.corredor || '';
     document.getElementById('c_corredor').style.display = r.modo === 'prueba' ? '' : 'none';
@@ -2596,6 +2618,11 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
   document.getElementById('c_guardar').addEventListener('click', function () {
     var cuerpo = { modo: document.getElementById('c_modo').value, corredor: val('c_corredor') };
     CAMPOS_CAMPANA.forEach(function (k) { cuerpo[k] = val('c_' + k); });
+    // "37.98, -1.12" tal cual sale de Google Maps: dos números separados por coma.
+    var ub = val('c_ubicacion').split(',');
+    cuerpo.lat = ub.length === 2 ? ub[0].trim() : null;
+    cuerpo.lng = ub.length === 2 ? ub[1].trim() : null;
+    if (val('c_ubicacion') && ub.length !== 2) { msgCampana('✗ La ubicación son dos números separados por una coma', false); return; }
     if (cuerpo.modo === 'todos' && !confirm('¿Encender la campaña para TODO el mundo?')) return;
     api('/admin/campana', { method: 'POST', body: JSON.stringify(cuerpo) }).then(function (r) {
       pintarCampana(r);
@@ -2603,15 +2630,31 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
         : (r.modo === 'prueba' ? '✓ Guardada. Solo la ve ' + r.corredor + '.' : '✓ Guardada, apagada.'), true);
     }).catch(function (e) { msgCampana('✗ ' + e.message, false); });
   });
+  document.getElementById('c_archivo').addEventListener('change', function (ev) {
+    var f = ev.target.files && ev.target.files[0];
+    if (!f) return;
+    if (!val('c_tipo')) { msgCampana('✗ Pon primero el identificador', false); ev.target.value = ''; return; }
+    var lector = new FileReader();
+    lector.onload = function () {
+      msgCampana('Subiendo el logo...', true);
+      api('/admin/campana/logo', { method: 'POST', body: JSON.stringify({
+        tipo: val('c_tipo'), imagen: lector.result,
+      }) }).then(function (r) {
+        document.getElementById('c_imagen').value = r.url;
+        verLogo(r.url);
+        msgCampana('✓ Logo subido (' + r.kb + ' KB). Ahora pulsa «Guardar la campaña».', true);
+      }).catch(function (e) { msgCampana('✗ ' + e.message, false); });
+    };
+    lector.readAsDataURL(f);
+  });
   document.getElementById('c_sembrar').addEventListener('click', function () {
     var tipo = val('c_tipo');
     if (!tipo) { msgCampana('✗ Guarda primero la campaña con su identificador', false); return; }
-    if (!val('c_cerca')) { msgCampana('✗ Pon cerca de quién: una campaña es de una tienda, no de toda España', false); return; }
     var b = document.getElementById('c_sembrar');
     b.disabled = true;
     msgCampana('Sembrando... (no toques nada)', true);
     api('/admin/objetos', { method: 'POST', body: JSON.stringify({
-      tipo: tipo, fuente: 'calles', cerca: val('c_cerca'), todos: false,
+      tipo: tipo, fuente: 'calles', enCampana: true, todos: false,
       cuantos: Number(document.getElementById('c_cuantos').value),
       puntos: Number(document.getElementById('c_puntos').value),
       desde: val('c_desde') || null, hasta: val('c_hasta') || null,
@@ -4046,9 +4089,13 @@ app.post('/runs', {
       const radio = 500; // celdas = 5 km
       const desde = new Date(Date.now() + ESPERA_REAPARICION_MS);
       const hasta = objetoHasta(o);
+      // El logo de una campaña renace DENTRO de su zona, no a 5 km de donde
+      // estaba: si no, a fuerza de cogerlos acabarían fuera del barrio.
+      const campana = await campanaGuardada().catch(() => null);
+      const zona = campana?.tipo === o.tipo ? cajaDeCampana(campana) : null;
       const nuevas = await sembrar(client as any, {
         cuantos: 1, tipo: o.tipo, puntos: o.puntos, desde, hasta,
-        caja: { x0: o.x - radio, x1: o.x + radio, y0: o.y - radio, y1: o.y + radio },
+        caja: zona ?? { x0: o.x - radio, x1: o.x + radio, y0: o.y - radio, y1: o.y + radio },
       }).catch(() => [] as { x: number; y: number }[]);
       // Y la calabaza que nace trae sus fantasmas, con premios nuevos.
       if (o.tipo === 'calabaza' && nuevas.length > 0) {
@@ -6510,7 +6557,28 @@ type Campana = {
   titulo: string;      // Retos: 'CAZA EL LOGO DE TIENDA PEPE'
   texto: string;       // Retos: cómo va
   premio: string;      // Retos: qué se gana y dónde se recoge
+  ciudad: string;      // solo la ve quien tenga esta ciudad en su perfil
+  lat: number | null;  // la tienda, pegada desde Google Maps
+  lng: number | null;
+  km: number;          // radio donde se siembran (y renacen) los logos
 };
+
+/** La zona de la campaña en celdas: un cuadrado de `km` de radio alrededor de
+ *  la tienda. Ahí se siembran los logos y ahí renacen: a una tienda de Murcia
+ *  no le sirve que su logo acabe en Cartagena. */
+function cajaDeCampana(c: Campana | null) {
+  if (!c || c.lat == null || c.lng == null || !c.km) return null;
+  const dLat = c.km / 111;
+  const dLng = c.km / (111 * Math.cos((c.lat * Math.PI) / 180));
+  const sw = coordToCell(c.lat - dLat, c.lng - dLng);
+  const ne = coordToCell(c.lat + dLat, c.lng + dLng);
+  return { x0: sw.x, x1: ne.x, y0: sw.y, y1: ne.y };
+}
+
+/** El logo subido desde el panel. Se guarda en la base de datos (son unos
+ *  pocos KB) y se sirve con caché larga: cada versión lleva su `?v=` en la
+ *  dirección, así que al cambiarlo nadie se queda con el viejo. */
+const logosEnMemoria = new Map<string, Buffer>();
 
 async function campanaGuardada(): Promise<Campana | null> {
   const { rows } = await db.query("SELECT valor FROM ajustes_juego WHERE clave = 'campana'");
@@ -6528,8 +6596,62 @@ async function campanaPara(userId: string): Promise<Campana | null> {
     nombre = rows[0]?.display_name ?? null;
   }
   if (!ajusteLeToca(modo, nombre)) return null;
-  return campanaGuardada();
+  const c = await campanaGuardada();
+  // Una campaña es de una tienda y de una ciudad: al de Sevilla no le dice
+  // nada un premio que se recoge en Murcia. La comparación va por
+  // corrr_ciudad, como toda comparación de ciudad (§9, Valencia partida).
+  if (c?.ciudad) {
+    const { rows } = await db.query(
+      'SELECT 1 FROM users WHERE id = $1 AND corrr_ciudad(city) = corrr_ciudad($2)', [userId, c.ciudad],
+    );
+    if (rows.length === 0) return null;
+  }
+  return c;
 }
+
+app.get('/campana/logo/:archivo', async (req: any, reply) => {
+  const tipo = String(req.params.archivo).replace(/\.png$/, '');
+  let png = logosEnMemoria.get(tipo);
+  if (!png) {
+    const { rows } = await db.query('SELECT png FROM campana_logos WHERE tipo = $1', [tipo]);
+    if (!rows[0]) return reply.status(404).send({ error: 'No hay logo' });
+    png = rows[0].png as Buffer;
+    logosEnMemoria.set(tipo, png);
+  }
+  return reply
+    .header('Content-Type', 'image/png')
+    .header('Cache-Control', 'public, max-age=31536000, immutable')
+    .send(png);
+});
+
+app.post('/admin/campana/logo', { preHandler: requireAdmin }, async (req: any, reply) => {
+  const tipo = String(req.body?.tipo ?? '').trim().toLowerCase().replace(/[^a-z0-9-]/g, '-');
+  const dataUri = String(req.body?.imagen ?? '');
+  if (!tipo) return reply.status(400).send({ error: 'Pon primero el identificador' });
+  const coma = dataUri.indexOf(',');
+  if (coma < 0) return reply.status(400).send({ error: 'No llega ninguna imagen' });
+  let png: Buffer;
+  try {
+    // Cuadrado de 256 px con el fondo transparente alrededor: en el mapa se
+    // pinta a 44 px, y uno rectangular se deformaría o quedaría cortado.
+    png = await sharp(Buffer.from(dataUri.slice(coma + 1), 'base64'), { failOn: 'none' })
+      .ensureAlpha()
+      .resize(256, 256, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
+      .png()
+      .toBuffer();
+  } catch {
+    return reply.status(400).send({ error: 'Esa imagen no se puede leer. Prueba con un PNG o un JPG' });
+  }
+  await db.query(
+    `INSERT INTO campana_logos (tipo, png) VALUES ($1, $2)
+     ON CONFLICT (tipo) DO UPDATE SET png = EXCLUDED.png, subido_at = NOW()`,
+    [tipo, png],
+  );
+  logosEnMemoria.set(tipo, png);
+  const version = createHash('sha1').update(png).digest('hex').slice(0, 10);
+  const url = `https://${req.headers.host}/campana/logo/${tipo}.png?v=${version}`;
+  return reply.send({ ok: true, url, kb: Math.round(png.length / 1024) });
+});
 
 app.get('/app/evento', { preHandler: requireAuth }, async (req: any, reply) => {
   return reply.send({ evento: await campanaPara(req.userId) });
@@ -6552,8 +6674,14 @@ app.post('/admin/campana', { preHandler: requireAdmin }, async (req: any, reply)
     tipo: txt(b.tipo, 40).toLowerCase().replace(/[^a-z0-9-]/g, '-'),
     nombre: txt(b.nombre, 80), imagen: txt(b.imagen, 500), cartel: txt(b.cartel, 60),
     fechas: txt(b.fechas, 60), titulo: txt(b.titulo, 80), texto: txt(b.texto, 600),
-    premio: txt(b.premio, 300),
+    premio: txt(b.premio, 300), ciudad: txt(b.ciudad, 80),
+    lat: Number.isFinite(parseFloat(b.lat)) ? parseFloat(b.lat) : null,
+    lng: Number.isFinite(parseFloat(b.lng)) ? parseFloat(b.lng) : null,
+    km: Math.min(Math.max(Number(b.km) || 2, 0.3), 10),
   };
+  if ((c.lat == null) !== (c.lng == null) || (c.lat != null && (Math.abs(c.lat) > 90 || Math.abs(c.lng!) > 180))) {
+    return reply.status(400).send({ error: 'La ubicación no se entiende. Pégala tal cual sale en Google Maps: 37.98, -1.13' });
+  }
   if (!c.tipo || !c.nombre) return reply.status(400).send({ error: 'Faltan el identificador y el nombre' });
   // Los tipos de Halloween tienen reglas propias (fantasmas, mensajes): una
   // campaña que se llamara así las heredaría sin querer.
@@ -6824,7 +6952,15 @@ app.post('/admin/objetos', { preHandler: requireAdmin }, async (req: any, reply)
 
   let caja;
   let donde = '';
-  if (typeof cerca === 'string' && cerca.trim()) {
+  if (req.body?.enCampana === true) {
+    // Alrededor de la tienda de la campaña, con su radio.
+    const c = await campanaGuardada();
+    caja = cajaDeCampana(c);
+    if (!caja || c?.tipo !== elTipo) {
+      return reply.status(400).send({ error: 'Guarda antes la campaña con la ubicación de la tienda' });
+    }
+    donde = ` a ${c.km} km de la tienda`;
+  } else if (typeof cerca === 'string' && cerca.trim()) {
     const quien = cerca.trim();
     const { rows: usuarios } = await db.query(
       `SELECT id, display_name FROM users

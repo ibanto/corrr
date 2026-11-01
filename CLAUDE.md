@@ -843,11 +843,15 @@ servidor:
   (https a un PNG cuadrado y transparente, como la imagen de los avisos), cartel al pisarlo
   (`{puntos}`), y Retos: fechas, título, texto y premio. Interruptor de tres estados
   (apagado / prueba para uno / todos). Se guarda en `ajustes_juego` (`campana` en JSON y
-  `campana_modo`). Y ahí mismo, sembrar logos cerca de un corredor y quitarlos.
+  `campana_modo`). El logo se SUBE como archivo (`POST /admin/campana/logo`): sharp lo
+  encaja en 256×256 con fondo transparente, se guarda en `campana_logos` y se sirve en
+  `/campana/logo/<tipo>.png?v=<hash>` con caché de un año. Cada campaña lleva **ciudad**
+  (solo la ve en Retos quien tenga esa ciudad, por `corrr_ciudad`) y **ubicación de la
+  tienda + radio en km**: ahí se siembran los logos y ahí RENACEN. Una campaña a la vez.
 - **Servidor**: `GET /app/evento` (la campaña si le toca), `/objetos/viewport` añade
   `tipos` con dibujo y cartel, y el desglose de `POST /runs` lleva `campana`
   {nombre, cuantos, puntos}. La siembra, el ranking por tipo y el renacer al cogerlo ya
-  servían para cualquier tipo. Ojo: el logo cogido RENACE a hasta 5 km, como la calabaza.
+  servían para cualquier tipo.
 - **App**: `prepararTipos` (MapScreen) BAJA el dibujo antes de pintar los objetos y solo
   lo usa si ha llegado entero (en Android el marcador se fotografía al nacer, §9); si no,
   calabaza. Los objetos se ven con Halloween **o** con campaña. Retos enseña la campaña
