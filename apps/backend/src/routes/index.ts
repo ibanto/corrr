@@ -2107,7 +2107,7 @@ sale el cartel de "prepárate" y la pestaña de mensajes de Halloween dice "pró
 <p class="nota">Un logo escondido por la calle, <b>sin sacar versi&oacute;n</b>. Aqu&iacute; se escribe todo lo que
 ve el corredor: el dibujo del mapa, lo que dice el cartel al pisarlo y la pantalla de Retos. Solo lo ven las
 apps <b>1.11.13 o m&aacute;s nuevas</b>; las de antes pintan una calabaza. Solo la ve en Retos la gente
-de <b>la ciudad de la campa&ntilde;a</b>, y los logos se siembran y renacen <b>alrededor de la tienda</b>.
+de <b>la ciudad de la campa&ntilde;a</b>, y los logos se siembran y renacen <b>por toda esa ciudad</b>.
 El logo, mejor un PNG con el fondo transparente; si es rectangular se encaja en un cuadrado. Orden:
 subir el logo, guardar (en prueba, para uno) y sembrar.</p>
 <form class="form" id="fc">
@@ -2120,12 +2120,9 @@ subir el logo, guardar (en prueba, para uno) y sembrar.</p>
   <input id="c_imagen" type="hidden">
   <div id="c_logo_previo" style="display:none;background:#333;padding:8px;border-radius:8px;width:max-content">
     <img id="c_logo_img" style="width:88px;height:88px;object-fit:contain"></div>
-  <label class="campo">Ciudad (solo la ve quien tenga esta ciudad en su perfil)
-    <input id="c_ciudad" placeholder="Murcia"></label>
-  <label class="campo">Ubicaci&oacute;n de la tienda (en Google Maps: clic derecho sobre la tienda y copiar los n&uacute;meros)
-    <input id="c_ubicacion" placeholder="37.9838, -1.1280"></label>
-  <label class="campo">Radio alrededor de la tienda, en km (los logos se siembran y renacen ah&iacute;)
-    <input id="c_km" type="number" min="0.3" max="10" step="0.1" value="2"></label>
+  <label class="campo">Ciudad de la tienda (ah&iacute; se planta, y solo la ve quien sea de ah&iacute;)
+    <input id="c_ciudad" placeholder="Sevilla"></label>
+  <p class="nota" id="c_lugar"></p>
   <label class="campo">Cartel al pisarlo ({puntos} se cambia por los puntos)
     <input id="c_cartel" placeholder="¡TIENDA PEPE! +{puntos}"></label>
   <label class="campo">Retos &middot; fechas
@@ -2152,7 +2149,7 @@ subir el logo, guardar (en prueba, para uno) y sembrar.</p>
     <input id="c_desde" type="datetime-local"></label>
   <label class="campo">Hasta
     <input id="c_hasta" type="datetime-local"></label>
-  <button class="btn" id="c_sembrar" type="button">Sembrar logos alrededor de la tienda</button>
+  <button class="btn" id="c_sembrar" type="button">Sembrar logos por toda la ciudad</button>
   <button class="mini" id="c_quitar" type="button">Quitar los logos sin coger</button>
 </form>
 </div>
@@ -2589,7 +2586,7 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
   }).catch(function () {});
   // Campaña de marca. Los campos se llaman igual que en el servidor sin el
   // "c_", así se rellenan y se leen en un bucle.
-  var CAMPOS_CAMPANA = ['tipo', 'nombre', 'imagen', 'cartel', 'fechas', 'titulo', 'texto', 'premio', 'ciudad', 'km'];
+  var CAMPOS_CAMPANA = ['tipo', 'nombre', 'imagen', 'cartel', 'fechas', 'titulo', 'texto', 'premio', 'ciudad'];
   function verLogo(url) {
     document.getElementById('c_logo_previo').style.display = url ? '' : 'none';
     if (url) document.getElementById('c_logo_img').src = url;
@@ -2604,8 +2601,7 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
   function pintarCampana(r) {
     var c = r.campana || {};
     CAMPOS_CAMPANA.forEach(function (k) { document.getElementById('c_' + k).value = c[k] || ''; });
-    if (!c.km) document.getElementById('c_km').value = '2';
-    document.getElementById('c_ubicacion').value = c.lat != null ? c.lat + ', ' + c.lng : '';
+    document.getElementById('c_lugar').textContent = c.lugar ? 'Se planta en: ' + c.lugar : '';
     verLogo(c.imagen);
     document.getElementById('c_modo').value = r.modo || 'apagado';
     document.getElementById('c_corredor').value = r.corredor || '';
@@ -2618,11 +2614,6 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
   document.getElementById('c_guardar').addEventListener('click', function () {
     var cuerpo = { modo: document.getElementById('c_modo').value, corredor: val('c_corredor') };
     CAMPOS_CAMPANA.forEach(function (k) { cuerpo[k] = val('c_' + k); });
-    // "37.98, -1.12" tal cual sale de Google Maps: dos números separados por coma.
-    var ub = val('c_ubicacion').split(',');
-    cuerpo.lat = ub.length === 2 ? ub[0].trim() : null;
-    cuerpo.lng = ub.length === 2 ? ub[1].trim() : null;
-    if (val('c_ubicacion') && ub.length !== 2) { msgCampana('✗ La ubicación son dos números separados por una coma', false); return; }
     if (cuerpo.modo === 'todos' && !confirm('¿Encender la campaña para TODO el mundo?')) return;
     api('/admin/campana', { method: 'POST', body: JSON.stringify(cuerpo) }).then(function (r) {
       pintarCampana(r);
@@ -6557,22 +6548,36 @@ type Campana = {
   titulo: string;      // Retos: 'CAZA EL LOGO DE TIENDA PEPE'
   texto: string;       // Retos: cómo va
   premio: string;      // Retos: qué se gana y dónde se recoge
-  ciudad: string;      // solo la ve quien tenga esta ciudad en su perfil
-  lat: number | null;  // la tienda, pegada desde Google Maps
-  lng: number | null;
-  km: number;          // radio donde se siembran (y renacen) los logos
+  ciudad: string;      // la ciudad de la tienda: ahí se planta y solo la ve su gente
+  lugar: string;       // cómo la ha entendido OpenStreetMap: "Sevilla, Andalucía, España"
+  /** Los límites del municipio, sacados de OpenStreetMap al guardar. */
+  limites: { sur: number; norte: number; oeste: number; este: number } | null;
 };
 
-/** La zona de la campaña en celdas: un cuadrado de `km` de radio alrededor de
- *  la tienda. Ahí se siembran los logos y ahí renacen: a una tienda de Murcia
- *  no le sirve que su logo acabe en Cartagena. */
+/** La zona de la campaña en celdas: el municipio entero (Iban: «si la tienda
+ *  está en Sevilla se planta en toda Sevilla»). Ahí se siembran los logos y
+ *  ahí renacen. Se siembra sobre el mapa de calles, que va por longitud de
+ *  calle, así que la mayoría cae en el casco y pocos en las pedanías. */
 function cajaDeCampana(c: Campana | null) {
-  if (!c || c.lat == null || c.lng == null || !c.km) return null;
-  const dLat = c.km / 111;
-  const dLng = c.km / (111 * Math.cos((c.lat * Math.PI) / 180));
-  const sw = coordToCell(c.lat - dLat, c.lng - dLng);
-  const ne = coordToCell(c.lat + dLat, c.lng + dLng);
+  const l = c?.limites;
+  if (!l) return null;
+  const sw = coordToCell(l.sur, l.oeste);
+  const ne = coordToCell(l.norte, l.este);
   return { x0: sw.x, x1: ne.x, y0: sw.y, y1: ne.y };
+}
+
+/** Los límites de una ciudad de España, de Nominatim (OpenStreetMap, gratis).
+ *  Solo se llama al guardar la campaña desde el panel, nunca desde la app:
+ *  Nominatim pide no pasar de una petición por segundo. */
+async function limitesDeCiudad(ciudad: string): Promise<{ lugar: string; limites: Campana['limites'] } | null> {
+  const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(ciudad)}`
+    + '&countrycodes=es&format=jsonv2&limit=1&featureType=city';
+  const res = await fetch(url, { headers: { 'User-Agent': 'CORRR/1.0 (hola@corrr.es)' } });
+  if (!res.ok) return null;
+  const [r] = await res.json() as any[];
+  if (!r?.boundingbox) return null;
+  const [sur, norte, oeste, este] = r.boundingbox.map(Number);
+  return { lugar: r.display_name, limites: { sur, norte, oeste, este } };
 }
 
 /** El logo subido desde el panel. Se guarda en la base de datos (son unos
@@ -6674,14 +6679,13 @@ app.post('/admin/campana', { preHandler: requireAdmin }, async (req: any, reply)
     tipo: txt(b.tipo, 40).toLowerCase().replace(/[^a-z0-9-]/g, '-'),
     nombre: txt(b.nombre, 80), imagen: txt(b.imagen, 500), cartel: txt(b.cartel, 60),
     fechas: txt(b.fechas, 60), titulo: txt(b.titulo, 80), texto: txt(b.texto, 600),
-    premio: txt(b.premio, 300), ciudad: txt(b.ciudad, 80),
-    lat: Number.isFinite(parseFloat(b.lat)) ? parseFloat(b.lat) : null,
-    lng: Number.isFinite(parseFloat(b.lng)) ? parseFloat(b.lng) : null,
-    km: Math.min(Math.max(Number(b.km) || 2, 0.3), 10),
+    premio: txt(b.premio, 300), ciudad: txt(b.ciudad, 80), lugar: '', limites: null,
   };
-  if ((c.lat == null) !== (c.lng == null) || (c.lat != null && (Math.abs(c.lat) > 90 || Math.abs(c.lng!) > 180))) {
-    return reply.status(400).send({ error: 'La ubicación no se entiende. Pégala tal cual sale en Google Maps: 37.98, -1.13' });
-  }
+  if (!c.ciudad) return reply.status(400).send({ error: 'Falta la ciudad de la tienda' });
+  const sitio = await limitesDeCiudad(c.ciudad).catch(() => null);
+  if (!sitio) return reply.status(400).send({ error: `No encuentro "${c.ciudad}" en el mapa. Escríbela como sale en Google Maps` });
+  c.lugar = sitio.lugar;
+  c.limites = sitio.limites;
   if (!c.tipo || !c.nombre) return reply.status(400).send({ error: 'Faltan el identificador y el nombre' });
   // Los tipos de Halloween tienen reglas propias (fantasmas, mensajes): una
   // campaña que se llamara así las heredaría sin querer.
@@ -6957,9 +6961,9 @@ app.post('/admin/objetos', { preHandler: requireAdmin }, async (req: any, reply)
     const c = await campanaGuardada();
     caja = cajaDeCampana(c);
     if (!caja || c?.tipo !== elTipo) {
-      return reply.status(400).send({ error: 'Guarda antes la campaña con la ubicación de la tienda' });
+      return reply.status(400).send({ error: 'Guarda antes la campaña con su ciudad' });
     }
-    donde = ` a ${c.km} km de la tienda`;
+    donde = ` por toda ${c.ciudad}`;
   } else if (typeof cerca === 'string' && cerca.trim()) {
     const quien = cerca.trim();
     const { rows: usuarios } = await db.query(
