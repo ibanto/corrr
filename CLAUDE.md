@@ -851,6 +851,9 @@ servidor:
   (`limites`, y `lugar` para confirmar en el panel); ahí se siembran los logos y ahí
   RENACEN. Municipios como Murcia incluyen pedanías, pero el mapa de calles pesa por
   longitud de calle y casi todo cae en el casco. Una campaña a la vez.
+  **Los logos se cogen pasando a 2 cuadrados (20 m)**, no solo pisando el suyo
+  (`RADIO_LOGO` en services/objetos.ts): con las calabazas había que cruzar por mitad
+  de la calzada y la gente corre por la acera. Halloween sigue siendo pisar.
 - **Servidor**: `GET /app/evento` (la campaña si le toca), `/objetos/viewport` añade
   `tipos` con dibujo y cartel, y el desglose de `POST /runs` lleva `campana`
   {nombre, cuantos, puntos}. La siembra, el ranking por tipo y el renacer al cogerlo ya

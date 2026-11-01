@@ -2108,6 +2108,7 @@ sale el cartel de "prepárate" y la pestaña de mensajes de Halloween dice "pró
 ve el corredor: el dibujo del mapa, lo que dice el cartel al pisarlo y la pantalla de Retos. Solo lo ven las
 apps <b>1.11.13 o m&aacute;s nuevas</b>; las de antes pintan una calabaza. Solo la ve en Retos la gente
 de <b>la ciudad de la campa&ntilde;a</b>, y los logos se siembran y renacen <b>por toda esa ciudad</b>.
+Un logo se coge pasando <b>a 20 metros</b> (dos cuadrados): vale la acera de enfrente.
 El logo, mejor un PNG con el fondo transparente; si es rectangular se encaja en un cuadrado. Orden:
 subir el logo, guardar (en prueba, para uno) y sembrar.</p>
 <form class="form" id="fc">

@@ -28,6 +28,8 @@
  *  300 m: lo bastante cerca para cruzarte varias en una carrera, lo bastante
  *  lejos para que no salgan de dos en dos en la misma esquina. */
 const SEPARACION_CELDAS = 30;
+/** A cuántos cuadrados (de 10 m) se coge un logo de campaña al pasar. */
+const RADIO_LOGO = 2;
 
 export type Objeto = { id: number; x: number; y: number; puntos: number; tipo: string;
   /** Fin del evento al que pertenece; lo hereda el que nace en su lugar. */
@@ -169,7 +171,53 @@ export async function recoger(
       RETURNING o.id, o.cell_x, o.cell_y, o.puntos, o.tipo, o.hasta`,
     [userId, celdas.map(c => c.x), celdas.map(c => c.y), cuando.toISOString(), soloSiSuma],
   );
-  return rows.map((r: any) => ({
+  // Los logos de las campañas se cogen pasando CERCA, no solo pisando su
+  // cuadrado de 10 m. Con las calabazas pasaba que caían en mitad de la
+  // calzada: para cogerlas había que cruzar por medio de la carretera, y la
+  // gente corre por la acera (Iban, 1-nov). A dos cuadrados (20 m) cabe la
+  // acera de enfrente. Los de Halloween se quedan como estaban: el truco o
+  // trato de los fantasmas va de pisarlos, no de rozarlos.
+  // Al revés que con las calabazas: primero los logos libres que caen en la
+  // caja de la carrera (son pocos) y luego, para cada uno, si alguna celda
+  // pisada le queda a dos cuadrados. Ensanchar la carrera entera serían
+  // millones de celdas en una vuelta grande.
+  let logos: any[] = [];
+  if (pisadas.length > 0) {
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    for (const c of pisadas) {
+      if (c.x < x0) x0 = c.x; if (c.x > x1) x1 = c.x;
+      if (c.y < y0) y0 = c.y; if (c.y > y1) y1 = c.y;
+    }
+    const { rows: libres } = await client.query(
+      `SELECT id, cell_x, cell_y FROM objetos
+        WHERE tomado_por IS NULL AND tipo NOT IN ('calabaza', 'fantasma', 'zombi')
+          AND desde <= $5 AND (hasta IS NULL OR hasta > $5)
+          AND cell_x BETWEEN $1 AND $2 AND cell_y BETWEEN $3 AND $4`,
+      [x0 - RADIO_LOGO, x1 + RADIO_LOGO, y0 - RADIO_LOGO, y1 + RADIO_LOGO, cuando.toISOString()],
+    );
+    if (libres.length > 0) {
+      const pisada = new Set(pisadas.map(c => `${c.x},${c.y}`));
+      const cogidos = libres.filter((o: any) => {
+        for (let dx = -RADIO_LOGO; dx <= RADIO_LOGO; dx++) {
+          for (let dy = -RADIO_LOGO; dy <= RADIO_LOGO; dy++) {
+            if (pisada.has(`${o.cell_x + dx},${o.cell_y + dy}`)) return true;
+          }
+        }
+        return false;
+      }).map((o: any) => o.id);
+      if (cogidos.length > 0) {
+        // Otra vez con `tomado_por IS NULL`: si otra carrera se lo ha llevado
+        // entre medias, no se cuenta dos veces.
+        ({ rows: logos } = await client.query(
+          `UPDATE objetos SET tomado_por = $1, tomado_at = $3
+            WHERE id = ANY($2::int[]) AND tomado_por IS NULL
+            RETURNING id, cell_x, cell_y, puntos, tipo, hasta`,
+          [userId, cogidos, cuando.toISOString()],
+        ));
+      }
+    }
+  }
+  return [...rows, ...logos].map((r: any) => ({
     id: r.id, x: r.cell_x, y: r.cell_y, puntos: r.puntos, tipo: r.tipo,
     hasta: r.hasta ? new Date(r.hasta).toISOString() : null,
   }));
