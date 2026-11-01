@@ -10,6 +10,7 @@
  *
  *   node scripts/mock-api.mjs            # datos de sobra
  *   MODO=vacio node scripts/mock-api.mjs # todo a cero: cuenta recién hecha
+ *   MODO=campana node scripts/mock-api.mjs # campaña de marca: logos en vez de calabazas
  *
  * Cómo se usa, paso a paso, en el §3 del CLAUDE.md ("Probar la app contra
  * datos de mentira"). Al terminar imprime las rutas que la app pidió y este
@@ -22,6 +23,17 @@ const MODO = process.env.MODO || 'lleno';
 let avisoVisto = false;
 let notasVistas = false;   // el cartel sale una vez, como en el servidor de verdad
 const vacio = MODO === 'vacio';
+// Campaña de marca (1.11.13): Halloween apagado y logos que la app NO lleva
+// dentro. El dibujo viene de fuera, como vendrá el de verdad.
+const campana = MODO === 'campana';
+const EVENTO = {
+  tipo: 'tienda-prueba', nombre: 'el logo de Tienda Prueba',
+  imagen: 'https://raw.githubusercontent.com/ibanto/corrr/main/docs/logo.png',
+  cartel: '¡TIENDA PRUEBA! +{puntos}', fechas: 'DEL 10 AL 16 DE NOVIEMBRE',
+  titulo: 'CAZA EL LOGO DE TIENDA PRUEBA',
+  texto: 'Hay logos escondidos por tu barrio. Pisa uno corriendo y son 200 puntos.',
+  premio: 'Unas zapatillas para quien más coja. Se recogen en la tienda.',
+};
 const YO = '11111111-1111-1111-1111-111111111111';
 const RIVAL = '22222222-2222-2222-2222-222222222222';
 const ahora = () => new Date().toISOString();
@@ -90,7 +102,13 @@ const RUTAS = {
     tiras, owners: { [YO]: { avatar: null }, [RIVAL]: { avatar: null } } }),
   // Muchas y repartidas por un barrio entero: pocas y separadas nunca llegan a
   // taparse, así que no sirven para probar que se agrupan al alejar el mapa.
-  'GET /objetos/viewport': () => vacio ? { objetos: [] } : ({ objetos: [
+  'GET /objetos/viewport': () => vacio ? { objetos: [] } : campana ? ({
+    objetos: Array.from({ length: 20 }, (_, i) => ({
+      id: 300 + i, x: CX - 60 + ((i * 37) % 130), y: CY - 50 + ((i * 53) % 120),
+      puntos: 200, tipo: EVENTO.tipo,
+    })),
+    tipos: { [EVENTO.tipo]: { imagen: EVENTO.imagen, cartel: EVENTO.cartel, nombre: EVENTO.nombre } },
+  }) : ({ objetos: [
     ...Array.from({ length: 46 }, (_, i) => ({
       id: 100 + i,
       x: CX - 60 + ((i * 37) % 130),
@@ -107,7 +125,8 @@ const RUTAS = {
   'GET /objetos/ranking': () => vacio ? { ranking: [], mias: 0 } : ({ mias: 7, ranking: [
     { userId: RIVAL, name: 'Lucía M.', cuantos: 14, puntos: 700, mine: false },
     { userId: YO, name: 'Auditor', cuantos: 7, puntos: 350, mine: true }] }),
-  'GET /app/ajustes': () => ({ halloween: !vacio, halloween_para: null }),
+  'GET /app/ajustes': () => ({ halloween: !vacio && !campana, halloween_para: null }),
+  'GET /app/evento': () => ({ evento: campana ? EVENTO : null }),
   'GET /app/aviso': () => (vacio || avisoVisto) ? { aviso: null } : ({ aviso: { id: 9, titulo: 'Llega Halloween',
     texto: 'Del *23 de octubre* al *1 de noviembre* salen calabazas por toda la ciudad.',
     imagen: null, boton: 'Ver el mapa', enlace: null, etiqueta: 'Evento', sello: 'Nuevo', nota: '50 puntos\ncada una' } }),

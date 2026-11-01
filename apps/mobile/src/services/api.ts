@@ -163,6 +163,28 @@ interface ObjetoMapa {
   tipo: string;
 }
 
+/** Cómo se pinta un objeto que la app no lleva dentro (el logo de una campaña
+ *  de marca). Lo manda el servidor con los objetos; si falta, calabaza. */
+export interface TipoObjeto {
+  imagen: string;
+  /** Lo que dice el cartel al pisarlo; {puntos} se cambia por los puntos. */
+  cartel: string;
+  nombre: string;
+}
+
+/** La campaña de marca en marcha, tal y como se escribe en el panel. Con ella
+ *  la pantalla de Retos y el mapa cambian sin sacar versión. */
+export interface Evento {
+  tipo: string;
+  nombre: string;
+  imagen: string;
+  cartel: string;
+  fechas: string;
+  titulo: string;
+  texto: string;
+  premio: string;
+}
+
 /** Ficha pública de un corredor: lo que se ve al tocarlo en el ranking. */
 interface FichaCorredor {
   id: string;
@@ -575,11 +597,13 @@ class ApiService {
    *  "Ver más" desde Stats. Devuelve total para paginar correctamente. */
   /** Los objetos que hay a la vista. Si falla, el mapa se pinta sin ellos: son
    *  un extra, no pueden dejar a nadie sin ver su territorio. */
-  async getObjetos(north: number, south: number, east: number, west: number): Promise<ObjetoMapa[] | null> {
+  async getObjetos(north: number, south: number, east: number, west: number): Promise<{
+    objetos: ObjetoMapa[]; tipos: Record<string, TipoObjeto>;
+  } | null> {
     try {
       const qs = `north=${north}&south=${south}&east=${east}&west=${west}`;
-      const res = await this.request<{ objetos: ObjetoMapa[] }>(`/objetos/viewport?${qs}`);
-      return res?.objetos ?? [];
+      const res = await this.request<{ objetos: ObjetoMapa[]; tipos?: Record<string, TipoObjeto> }>(`/objetos/viewport?${qs}`);
+      return { objetos: res?.objetos ?? [], tipos: res?.tipos ?? {} };
     } catch {
       // null, NO lista vacía: "no he podido preguntar" no es "no hay ninguna".
       // Con la lista vacía, un fallo de red borraba del mapa calabazas que
@@ -619,6 +643,17 @@ class ApiService {
 
   /** Los interruptores del juego que se encienden desde el panel. Si falla,
    *  todo apagado: más vale no enseñar un evento que no existe. */
+  /** La campaña de marca que le toca a este corredor, o null si no hay.
+   *  undefined = no se ha podido preguntar (no es lo mismo que "no hay"). */
+  async getEvento(): Promise<Evento | null | undefined> {
+    try {
+      const res = await this.request<{ evento?: Evento | null }>('/app/evento');
+      return res?.evento ?? null;
+    } catch {
+      return undefined;
+    }
+  }
+
   async getAjustes(): Promise<{ halloween: boolean } | null> {
     try {
       const res = await this.request<{ halloween?: boolean }>('/app/ajustes');
@@ -633,10 +668,10 @@ class ApiService {
   }
 
   /** Quién lleva más calabazas, y cuántas llevo yo. */
-  async getRankingCalabazas(): Promise<{ mias: number; ranking: RankingObjeto[] }> {
+  async getRankingCalabazas(tipo = 'calabaza'): Promise<{ mias: number; ranking: RankingObjeto[] }> {
     try {
       const res = await this.request<{ mias?: number; ranking?: RankingObjeto[] }>(
-        '/objetos/ranking?tipo=calabaza',
+        `/objetos/ranking?tipo=${encodeURIComponent(tipo)}`,
       );
       return { mias: res?.mias ?? 0, ranking: res?.ranking ?? [] };
     } catch {

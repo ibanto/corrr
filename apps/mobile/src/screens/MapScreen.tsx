@@ -35,7 +35,7 @@ import { CHECK_TAUNTS_EVENT, RUN_TABS_EVENT } from '../services/notifications';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { colors, spacing, radius } from '../theme';
-import { api, RemoteZone, MapTerritory, ObjetoMapa, TauntInbox, CellRunPayload } from '../services/api';
+import { api, RemoteZone, MapTerritory, ObjetoMapa, TauntInbox, CellRunPayload, TipoObjeto } from '../services/api';
 import ZonePopup, { PopupType } from '../components/ZonePopup';
 import BuscadorCiudad from '../components/BuscadorCiudad';
 import ShareRunCard, { ShareRunData, ShareSteal } from '../components/ShareRunCard';
@@ -104,11 +104,32 @@ const CARRERA_PENDIENTE = '@corrr_carrera_pendiente';
  *  puntos: los tres fantasmas (nada, −1.000, +500) tienen que verse EXACTAMENTE
  *  iguales, o se acabó el truco o trato. */
 const DIBUJO: Record<string, any> = { calabaza: CALABAZA, fantasma: FANTASMA };
-const dibujoDe = (tipo: string) => DIBUJO[tipo] ?? CALABAZA;
+/** Los dibujos que manda el servidor (el logo de una campaña de marca), ya
+ *  DESCARGADOS. Solo entra aquí una imagen que ha llegado entera al móvil:
+ *  en Android el marcador se fotografía al nacer (§9) y uno con la imagen a
+ *  medio bajar se quedaría en blanco para siempre. Mientras no está, calabaza. */
+const DIBUJO_REMOTO: Record<string, { uri: string }> = {};
+const CARTEL_REMOTO: Record<string, string> = {};
+const dibujoDe = (tipo: string) => DIBUJO[tipo] ?? DIBUJO_REMOTO[tipo] ?? CALABAZA;
+
+/** Baja los dibujos nuevos ANTES de pintar los objetos que los usan. Con tope
+ *  de tiempo: un servidor de imágenes lento no puede dejar el mapa sin
+ *  calabazas. Lo que no llegue se pinta como calabaza y se reintenta la
+ *  próxima vez que se cargue el mapa. */
+async function prepararTipos(tipos: Record<string, TipoObjeto>): Promise<void> {
+  await Promise.all(Object.entries(tipos).map(async ([tipo, t]) => {
+    if (t.cartel) CARTEL_REMOTO[tipo] = t.cartel;
+    if (!t.imagen || DIBUJO_REMOTO[tipo]?.uri === t.imagen) return;
+    const ok = await conTiempo(Image.prefetch(t.imagen), 6000).catch(() => false);
+    if (ok) DIBUJO_REMOTO[tipo] = { uri: t.imagen };
+  }));
+}
 
 /** Lo que dice el cartel al pisar algo. El fantasma tiene tres finales y cada
  *  uno se cuenta con sus palabras: el susto no se lee igual que el premio. */
 function textoObjeto(o: { tipo: string; puntos: number }): string {
+  const remoto = CARTEL_REMOTO[o.tipo];
+  if (remoto) return remoto.replace('{puntos}', String(o.puntos));
   if (o.tipo !== 'fantasma') return `¡CALABAZA! +${o.puntos}`;
   if (o.puntos > 0) return `¡TRATO! +${o.puntos}`;
   if (o.puntos < 0) return `¡TRUCO! ${o.puntos}`;
@@ -509,8 +530,14 @@ function agruparObjetos(
     // El montón se pone en el medio de lo que lleva dentro —arrastrado hacia el
     // centro de su casilla— y enseña el dibujo de lo que más hay: un montón de
     // calabazas con cara de fantasma engaña.
-    let sx = 0, sy = 0, calabazas = 0;
-    for (const o of v) { sx += o.x; sy += o.y; if (o.tipo === 'calabaza') calabazas++; }
+    // Contando TODOS los tipos, no solo calabaza contra fantasma: un montón
+    // de logos de una campaña salía con cara de fantasma.
+    let sx = 0, sy = 0;
+    const porTipo: Record<string, number> = {};
+    for (const o of v) { sx += o.x; sy += o.y; porTipo[o.tipo] = (porTipo[o.tipo] ?? 0) + 1; }
+    // A igualdad gana la calabaza, como antes: el montón no delata al fantasma.
+    const tipo = Object.keys(porTipo).reduce((a, b) =>
+      (porTipo[b] > porTipo[a] || (porTipo[b] === porTipo[a] && b === 'calabaza')) ? b : a);
     const [cx, cy] = k.split(',').map(Number);
     const centroX = (cx + 0.5) * paso;
     const centroY = (cy + 0.5) * paso;
@@ -520,7 +547,7 @@ function agruparObjetos(
       clave: `g${k}`,
       lat: (mezcla(sy / v.length, centroY) + 0.5) * CELL_LAT_DEG,
       lng: (mezcla(sx / v.length, centroX) + 0.5) * CELL_LNG_DEG,
-      tipo: calabazas >= v.length - calabazas ? 'calabaza' : 'fantasma',
+      tipo,
       cuantos: v.length,
       solo: null,
     });
@@ -980,6 +1007,9 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
   // Halloween lo enciende el panel, no la fecha del teléfono: la versión con
   // las calabazas se publica semanas antes y Apple aprueba cuando quiere.
   const [halloweenActivo, setHalloweenActivo] = useState(false);
+  /** Hay una campaña de marca para este corredor: los objetos del mapa se ven
+   *  aunque Halloween esté apagado. */
+  const [campanaActiva, setCampanaActiva] = useState(false);
   // True mientras saveRun + loadCells están en vuelo después de pulsar STOP.
   // Mostramos LoadingScreen para que el usuario sienta que algo está pasando
   // entre pulsar STOP y aparecer el resumen.
@@ -994,6 +1024,8 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       calabazas?: number; puntosCalabazas?: number;
       /** Un número por cada fantasma pisado: lo que le tocó a cada uno. */
       fantasmas?: number[]; puntosFantasmas?: number;
+      /** Los logos de una campaña de marca cogidos por el camino. */
+      campana?: { nombre: string; cuantos: number; puntos: number } | null;
       cercadas?: number; puntosCerco?: number;
       tope?: number; topeAplicado?: boolean; puntosBrutos?: number;
     } | null;
@@ -1534,6 +1566,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     // Solo se cambia si hay respuesta: si no se ha podido preguntar, se deja
     // como estaba en vez de apagar el evento.
     api.getAjustes().then(a => { if (a) setHalloweenActivo(a.halloween); }).catch(() => {});
+    api.getEvento().then(e => { if (e !== undefined) setCampanaActiva(e !== null); }).catch(() => {});
     api.getCalabazasMias().then(setCalabazas).catch(() => {});
     try {
       const data = await api.getMyStats();
@@ -1663,8 +1696,9 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       ]);
       // Igual: si la petición falló (null), se conservan las que ya había.
       if (objs) {
-        objetosRef.current = objs;
-        setObjetos(objs);
+        await prepararTipos(objs.tipos);
+        objetosRef.current = objs.objetos;
+        setObjetos(objs.objetos);
       }
       const owners = t.owners;
       // Acumulamos las fotos en vez de reemplazarlas: al moverte por el mapa
@@ -3317,6 +3351,14 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
                       highlight
                     />
                   )}
+                  {runSummary.breakdown.campana && (
+                    <BreakdownRow
+                      label={`${runSummary.breakdown.campana.nombre} (${runSummary.breakdown.campana.cuantos})`}
+                      value={`+${runSummary.breakdown.campana.puntos}`}
+                      hint={runSummary.breakdown.topeAplicado ? 'por el camino · aparte del tope' : 'por el camino'}
+                      highlight
+                    />
+                  )}
                   {/* Los zombis van en su propia línea y en rojo. Sumados a las
                       calabazas darían un "Calabazas (2) -300" que no hay quien
                       entienda. */}
@@ -3663,7 +3705,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
           {/* `!zoomedOutTooMuch` además de vaciarlos al cargar: entre que se
               aleja el mapa y termina la recarga hay unos fotogramas en los que
               el territorio ya no está y ellos todavía sí. */}
-          {halloweenActivo && !zoomedOutTooMuch && gruposObjetos.map(g => (
+          {(halloweenActivo || campanaActiva) && !zoomedOutTooMuch && gruposObjetos.map(g => (
             <Marker
               key={`objeto-${g.clave}`}
               coordinate={{ latitude: g.lat, longitude: g.lng }}

@@ -4,7 +4,7 @@ import {
   AppState,
 } from 'react-native';
 import { colors, spacing, radius } from '../theme';
-import { api, RankingObjeto } from '../services/api';
+import { api, RankingObjeto, Evento } from '../services/api';
 
 /**
  * RetosScreen — hoy, el cartel de Halloween.
@@ -19,6 +19,11 @@ import { api, RankingObjeto } from '../services/api';
  *  semanas antes del 29 de octubre y Apple aprueba cuando le parece. Atar el
  *  evento a la fecha de publicación sería jugársela.
  *
+ *  Y desde la 1.11.13, una tercera que manda sobre las otras dos: la CAMPAÑA
+ *  DE MARCA. Si el panel tiene una encendida para esta persona, la pantalla
+ *  entera (dibujo, fechas, título, texto, premio) sale del servidor y una
+ *  campaña nueva ya no pide versión nueva.
+ *
  *  Los retos de verdad (semanales, mensuales, tienda de XP) siguen guardados
  *  en RetosScreen.legacy.tsx.
  */
@@ -32,8 +37,23 @@ export default function RetosScreen() {
   const [halloween, setHalloween] = useState(false);
   const [mias, setMias] = useState(0);
   const [ranking, setRanking] = useState<RankingObjeto[]>([]);
+  const [evento, setEvento] = useState<Evento | null>(null);
+  /** El dibujo de la campaña no se ha podido bajar: se pinta la calabaza en
+   *  vez de dejar un hueco. */
+  const [sinDibujo, setSinDibujo] = useState(false);
 
   const cargar = useCallback(async () => {
+    // La campaña primero: si hay una, es lo único que se enseña. Si no se ha
+    // podido preguntar (undefined), se deja la que hubiera.
+    const ev = await api.getEvento();
+    if (ev !== undefined) setEvento(ev);
+    if (ev) {
+      const r = await api.getRankingCalabazas(ev.tipo);
+      setMias(r.mias);
+      setRanking(r.ranking);
+      setCargando(false);
+      return;
+    }
     // Si no se ha podido preguntar (null), se deja la pantalla como estaba en
     // vez de dar por hecho que el evento está apagado.
     const ajustes = await api.getAjustes();
@@ -62,6 +82,52 @@ export default function RetosScreen() {
       <View style={styles.centro}>
         <ActivityIndicator size="large" color={colors.orange} />
       </View>
+    );
+  }
+
+  if (evento) {
+    return (
+      <ScrollView
+        style={styles.fondo}
+        contentContainerStyle={styles.contenido}
+        refreshControl={
+          <RefreshControl refreshing={false} onRefresh={cargar} tintColor={colors.orange} />
+        }
+      >
+        <Image
+          source={evento.imagen && !sinDibujo ? { uri: evento.imagen } : CALABAZA}
+          onError={() => setSinDibujo(true)}
+          style={styles.calabaza}
+          resizeMode="contain"
+        />
+        {!!evento.fechas && <Text style={styles.fechas}>{evento.fechas}</Text>}
+        <Text style={styles.titulo}>{evento.titulo || evento.nombre}</Text>
+        <View style={styles.tuyas}>
+          <Text style={styles.tuyasNumero}>{mias}</Text>
+          <Text style={styles.tuyasTexto}>{mias === 1 ? 'cogido' : 'cogidos'}</Text>
+        </View>
+        {!!evento.texto && <Text style={styles.parrafo}>{evento.texto}</Text>}
+        {!!evento.premio && (
+          <View style={styles.premio}>
+            <Text style={styles.premioTitulo}>EL PREMIO</Text>
+            <Text style={styles.avisoTexto}>{evento.premio}</Text>
+          </View>
+        )}
+        {ranking.length > 0 && (
+          <View style={styles.tabla}>
+            <Text style={styles.tablaTitulo}>QUIÉN VA GANANDO</Text>
+            {ranking.slice(0, 8).map((r, i) => (
+              <View key={r.userId} style={[styles.fila, r.mine && styles.filaMia]}>
+                <Text style={[styles.puesto, r.mine && styles.textoMio]}>{i + 1}</Text>
+                <Text style={[styles.nombre, r.mine && styles.textoMio]} numberOfLines={1}>
+                  {r.name}
+                </Text>
+                <Text style={[styles.cuantas, r.mine && styles.textoMio]}>{r.cuantos}</Text>
+              </View>
+            ))}
+          </View>
+        )}
+      </ScrollView>
     );
   }
 
@@ -196,6 +262,15 @@ const styles = StyleSheet.create({
     padding: spacing.md, marginTop: spacing.md, width: '100%',
   },
   zombi: { width: 70, height: 70 },
+  premio: {
+    backgroundColor: colors.bgCard, borderRadius: radius.lg,
+    borderWidth: 1, borderColor: colors.orange,
+    padding: spacing.md, marginTop: spacing.sm, width: '100%',
+  },
+  premioTitulo: {
+    color: colors.orange, fontSize: 13, fontWeight: '900',
+    letterSpacing: 1, marginBottom: 4,
+  },
   avisoTitulo: {
     color: colors.danger, fontSize: 13, fontWeight: '900',
     letterSpacing: 1, marginBottom: 4,
