@@ -172,9 +172,9 @@ export interface TipoObjeto {
   nombre: string;
 }
 
-/** La campaña de marca en marcha, tal y como se escribe en el panel. Con ella
- *  la pantalla de Retos y el mapa cambian sin sacar versión. */
-export interface Evento {
+/** Un reto de marca, tal y como se escribe en el panel. Con ellos la pantalla
+ *  de Retos y el mapa cambian sin sacar versión. */
+export interface Reto {
   tipo: string;
   nombre: string;
   imagen: string;
@@ -183,6 +183,10 @@ export interface Evento {
   titulo: string;
   texto: string;
   premio: string;
+  ciudad: string;
+  /** Sus logos solo los ve y los coge quien se apunta. */
+  apuntado: boolean;
+  apuntados: number;
 }
 
 /** El anuncio de "Próximamente" en Retos (lo decide el servidor). */
@@ -652,18 +656,26 @@ class ApiService {
    *  todo apagado: más vale no enseñar un evento que no existe. */
   /** La campaña de marca que le toca a este corredor, o null si no hay.
    *  undefined = no se ha podido preguntar (no es lo mismo que "no hay"). */
-  async getEvento(): Promise<Evento | null | undefined> {
-    return (await this.getRetos())?.evento;
-  }
-
-  /** La campaña y, si no hay, lo que anuncia "Próximamente". undefined = no se
+  /** Los retos de mi ciudad y lo que anuncia "Próximamente". undefined = no se
    *  ha podido preguntar. */
-  async getRetos(): Promise<{ evento: Evento | null; proximamente: Proximamente | null } | undefined> {
+  async getRetos(): Promise<{ retos: Reto[]; proximamente: Proximamente | null } | undefined> {
     try {
-      const res = await this.request<{ evento?: Evento | null; proximamente?: Proximamente | null }>('/app/evento');
-      return { evento: res?.evento ?? null, proximamente: res?.proximamente ?? null };
+      const res = await this.request<{ retos?: Reto[]; proximamente?: Proximamente | null }>('/app/retos');
+      return { retos: res?.retos ?? [], proximamente: res?.proximamente ?? null };
     } catch {
       return undefined;
+    }
+  }
+
+  /** Apuntarse o borrarse de un reto. false = no ha salido. */
+  async apuntarmeReto(tipo: string, apuntarme: boolean): Promise<boolean> {
+    try {
+      await this.request(`/app/retos/${encodeURIComponent(tipo)}/apuntarme`, {
+        method: apuntarme ? 'POST' : 'DELETE',
+      });
+      return true;
+    } catch {
+      return false;
     }
   }
 

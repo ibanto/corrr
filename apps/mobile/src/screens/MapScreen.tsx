@@ -31,6 +31,7 @@ import {
   Tira, CellBox, UnionedPolygon, cellsToStrips, stripsFingerprint, pushClipped, unionStripsToPolygons,
 } from '../map/territory';
 import { RUNS_IMPORTED_EVENT } from '../services/healthkit';
+import { RETOS_CAMBIADOS_EVENT } from './RetosScreen';
 import { CHECK_TAUNTS_EVENT, RUN_TABS_EVENT } from '../services/notifications';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -1558,6 +1559,11 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     return () => clearTimeout(mapLoadingSafety);
   }, []);
 
+  // Los logos se pintan si estoy apuntado a algún reto.
+  const comprobarRetos = () => {
+    api.getRetos().then(r => { if (r) setCampanaActiva(r.retos.some(x => x.apuntado)); }).catch(() => {});
+  };
+
   const loadUserXP = async () => {
     // Estas dos PRIMERO y sin esperar: son dos datos sueltos, y si van detrás
     // de las estadísticas se quedan colgando de la petición más pesada de la
@@ -1566,7 +1572,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     // Solo se cambia si hay respuesta: si no se ha podido preguntar, se deja
     // como estaba en vez de apagar el evento.
     api.getAjustes().then(a => { if (a) setHalloweenActivo(a.halloween); }).catch(() => {});
-    api.getEvento().then(e => { if (e !== undefined) setCampanaActiva(e !== null); }).catch(() => {});
+    comprobarRetos();
     api.getCalabazasMias().then(setCalabazas).catch(() => {});
     try {
       const data = await api.getMyStats();
@@ -1796,6 +1802,15 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
   refreshMapRef.current = refreshMap;
   useEffect(() => {
     const sub = DeviceEventEmitter.addListener(RUNS_IMPORTED_EVENT, () => {
+      if (!isRunningRef.current) refreshMapRef.current();
+    });
+    return () => sub.remove();
+  }, []);
+
+  // Al apuntarse o borrarse de un reto, sus logos salen o se van ya.
+  useEffect(() => {
+    const sub = DeviceEventEmitter.addListener(RETOS_CAMBIADOS_EVENT, () => {
+      comprobarRetos();
       if (!isRunningRef.current) refreshMapRef.current();
     });
     return () => sub.remove();

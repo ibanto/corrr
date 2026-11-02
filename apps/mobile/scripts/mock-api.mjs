@@ -34,6 +34,13 @@ const EVENTO = {
   texto: 'Hay logos escondidos por tu barrio. Pisa uno corriendo y son 200 puntos.',
   premio: 'Unas zapatillas para quien más coja. Se recogen en la tienda.',
 };
+// Dos retos para ver la lista; los apuntados se guardan mientras dure el mock.
+const RETOS = [
+  { ...EVENTO, ciudad: 'Madrid', apuntados: 12 },
+  { ...EVENTO, tipo: 'reto-panchito', nombre: 'el logo de Panchito', cartel: '¡PANCHITO! +{puntos}',
+    titulo: 'RETO PANCHITO', fechas: 'DEL 17 AL 23 DE NOVIEMBRE', ciudad: 'Madrid', apuntados: 3 },
+];
+const apuntado = new Set();
 const YO = '11111111-1111-1111-1111-111111111111';
 const RIVAL = '22222222-2222-2222-2222-222222222222';
 const ahora = () => new Date().toISOString();
@@ -103,11 +110,12 @@ const RUTAS = {
   // Muchas y repartidas por un barrio entero: pocas y separadas nunca llegan a
   // taparse, así que no sirven para probar que se agrupan al alejar el mapa.
   'GET /objetos/viewport': () => vacio ? { objetos: [] } : campana ? ({
-    objetos: Array.from({ length: 20 }, (_, i) => ({
-      id: 300 + i, x: CX - 60 + ((i * 37) % 130), y: CY - 50 + ((i * 53) % 120),
-      puntos: 200, tipo: EVENTO.tipo,
-    })),
-    tipos: { [EVENTO.tipo]: { imagen: EVENTO.imagen, cartel: EVENTO.cartel, nombre: EVENTO.nombre } },
+    // Solo los logos de los retos a los que me he apuntado.
+    objetos: RETOS.filter(r => apuntado.has(r.tipo)).flatMap((r, n) => Array.from({ length: 20 }, (_, i) => ({
+      id: 300 + n * 100 + i, x: CX - 60 + ((i * 37) % 130) + n * 7, y: CY - 50 + ((i * 53) % 120) + n * 5,
+      puntos: 200, tipo: r.tipo,
+    }))),
+    tipos: Object.fromEntries(RETOS.map(r => [r.tipo, { imagen: r.imagen, cartel: r.cartel, nombre: r.nombre }])),
   }) : ({ objetos: [
     ...Array.from({ length: 46 }, (_, i) => ({
       id: 100 + i,
@@ -127,7 +135,9 @@ const RUTAS = {
     { userId: YO, name: 'Auditor', cuantos: 7, puntos: 350, mine: true }] }),
   'GET /app/ajustes': () => ({ halloween: !vacio && !campana, halloween_para: null }),
   // Con MODO=vacio no hay anuncio: así se ve el «Próximamente» de siempre.
-  'GET /app/evento': () => ({ evento: campana ? EVENTO : null, proximamente: vacio ? null : {
+  'GET /app/retos': () => ({ retos: campana
+    ? RETOS.map(r => ({ ...r, apuntado: apuntado.has(r.tipo), apuntados: r.apuntados + (apuntado.has(r.tipo) ? 1 : 0) }))
+    : [], proximamente: vacio ? null : {
     titulo: 'GRAN RETO\nDE NAVIDAD', destacado: '¡CON PREMIO!', texto: 'Muy pronto, aquí. Ve calentando.' } }),
   'GET /app/aviso': () => (vacio || avisoVisto) ? { aviso: null } : ({ aviso: { id: 9, titulo: 'Llega Halloween',
     texto: 'Del *23 de octubre* al *1 de noviembre* salen calabazas por toda la ciudad.',
@@ -193,6 +203,8 @@ const DINAMICAS = [
       tope: 6920, topeAplicado: true, puntosBrutos: 7911,
     },
   })],
+  [/^POST \/app\/retos\/[^/]+\/apuntarme$/, (clave) => { apuntado.add(clave.split('/')[3]); return { ok: true }; }],
+  [/^DELETE \/app\/retos\/[^/]+\/apuntarme$/, (clave) => { apuntado.delete(clave.split('/')[3]); return { ok: true }; }],
   [/^POST \/app\/notificaciones\/vistas$/, () => { notasVistas = true; return { ok: true }; }],
   [/^POST \/app\/aviso\/\d+\/visto$/, () => { avisoVisto = true; return { ok: true }; }],
   [/^POST \//, () => ({ ok: true })],
@@ -213,7 +225,7 @@ createServer((req, res) => {
   if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
   if (!fn) { perdidas.add(clave); console.log('  ✗ SIN MOCK', clave); res.writeHead(404); return res.end('{}'); }
   console.log('  ·', clave);
-  let cuerpo; try { cuerpo = fn(); } catch (e) { console.log('   ERROR en el mock:', e.message); cuerpo = {}; }
+  let cuerpo; try { cuerpo = fn(clave); } catch (e) { console.log('   ERROR en el mock:', e.message); cuerpo = {}; }
   res.writeHead(200); res.end(JSON.stringify(cuerpo));
 }).listen(8787, '0.0.0.0', () => console.log(`mock-api en :8787 (modo ${MODO})`));
 

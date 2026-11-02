@@ -1,28 +1,29 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   View, Text, StyleSheet, Image, Dimensions, ScrollView, ActivityIndicator, RefreshControl,
-  AppState,
+  AppState, TouchableOpacity, DeviceEventEmitter,
 } from 'react-native';
 import { colors, spacing, radius } from '../theme';
-import { api, RankingObjeto, Evento, Proximamente } from '../services/api';
+import { api, RankingObjeto, Reto, Proximamente } from '../services/api';
 
 /**
- * RetosScreen — la CAMPAÑA DE MARCA si el panel tiene una encendida para esta
- * persona, y si no, "Próximamente".
+ * RetosScreen — la LISTA DE RETOS de mi ciudad, y si no hay ninguno,
+ * "Próximamente".
  *
- *  La campaña sale entera del servidor (dibujo, fechas, título, texto, premio):
- *  una campaña nueva no pide versión nueva. Lo que anuncia "Próximamente"
- *  (el gran reto de Navidad, en noviembre de 2026) también: es `PROXIMAMENTE`
- *  en el servidor. Si no manda nada, la imagen de siempre.
- *
- *  Hasta la 1.11.12 aquí estaba el cartel de Halloween, escrito dentro de la
- *  app. Se quitó al acabar el evento (Iban, 2-nov-2026): con las fechas y los
- *  textos metidos en la app, cada evento obligaba a sacar versión, y pasado el
- *  1 de noviembre solo podía decir cosas viejas.
+ *  Cada reto se escribe en el panel y sale entero del servidor (dibujo, fechas,
+ *  título, texto, premio): un reto nuevo no pide versión nueva. Se entra en él y
+ *  se pulsa ME APUNTO: sus logos solo los ve y los coge quien se apunta, para no
+ *  llenar el mapa de tiendas que no le importan a nadie (Iban, 2-nov-2026). Lo
+ *  que anuncia "Próximamente" también lo manda el servidor (`PROXIMAMENTE`). Si
+ *  no manda nada, la imagen de siempre.
  *
  *  Los retos de verdad (semanales, mensuales, tienda de XP) siguen guardados
  *  en RetosScreen.legacy.tsx.
  */
+
+/** Se emite (DeviceEventEmitter) al apuntarse o borrarse, para que el mapa, que
+ *  sigue montado detrás, pinte o quite esos logos sin esperar a moverse. */
+export const RETOS_CAMBIADOS_EVENT = 'corrr:retos-cambiados';
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 const CALABAZA = require('../../assets/calabaza.png');
@@ -30,33 +31,44 @@ const PROXIMAMENTE = require('../../assets/proximamente.png');
 /** Solo el grafiti de PROXIMAMENTE, sin el subtítulo: debajo va el anuncio. */
 const PROXIMAMENTE_TITULO = require('../../assets/proximamente-titulo.png');
 
+function LogoReto({ reto, estilo }: { reto: Reto; estilo: any }) {
+  // Si el dibujo no se puede bajar se pinta la calabaza, no un hueco.
+  const [sinDibujo, setSinDibujo] = useState(false);
+  return (
+    <Image
+      source={reto.imagen && !sinDibujo ? { uri: reto.imagen } : CALABAZA}
+      onError={() => setSinDibujo(true)}
+      style={estilo}
+      resizeMode="contain"
+    />
+  );
+}
+
 export default function RetosScreen() {
   const [cargando, setCargando] = useState(true);
   const [mias, setMias] = useState(0);
   const [ranking, setRanking] = useState<RankingObjeto[]>([]);
-  const [evento, setEvento] = useState<Evento | null>(null);
+  const [retos, setRetos] = useState<Reto[]>([]);
   const [proximamente, setProximamente] = useState<Proximamente | null>(null);
-  /** El dibujo de la campaña no se ha podido bajar: se pinta la calabaza en
-   *  vez de dejar un hueco. */
-  const [sinDibujo, setSinDibujo] = useState(false);
+  /** El reto en el que se ha entrado; null = la lista. */
+  const [abierto, setAbierto] = useState<string | null>(null);
+  const [enviando, setEnviando] = useState(false);
+  const [fallo, setFallo] = useState(false);
+
+  const reto = retos.find(r => r.tipo === abierto) ?? null;
 
   const cargar = useCallback(async () => {
     // Si no se ha podido preguntar (undefined), se deja lo que hubiera.
     const r = await api.getRetos();
     if (r) {
-      setEvento(r.evento);
+      setRetos(r.retos);
       setProximamente(r.proximamente);
-      if (r.evento) {
-        const rk = await api.getRankingCalabazas(r.evento.tipo);
-        setMias(rk.mias);
-        setRanking(rk.ranking);
-      }
     }
     setCargando(false);
   }, []);
 
-  // Al arrancar y cada vez que se vuelve a la app. La campaña se enciende
-  // desde el panel en cualquier momento y nadie reinicia la app para enterarse.
+  // Al arrancar y cada vez que se vuelve a la app. Un reto se enciende desde el
+  // panel en cualquier momento y nadie reinicia la app para enterarse.
   useEffect(() => {
     cargar();
     const sub = AppState.addEventListener('change', (estado) => {
@@ -64,6 +76,33 @@ export default function RetosScreen() {
     });
     return () => sub.remove();
   }, [cargar]);
+
+  const cargarRanking = useCallback(async (tipo: string) => {
+    const rk = await api.getRankingCalabazas(tipo);
+    setMias(rk.mias);
+    setRanking(rk.ranking);
+  }, []);
+
+  useEffect(() => {
+    if (!abierto) return;
+    setMias(0);
+    setRanking([]);
+    setFallo(false);
+    cargarRanking(abierto);
+  }, [abierto, cargarRanking]);
+
+  const cambiarApuntado = async (r: Reto) => {
+    setEnviando(true);
+    setFallo(false);
+    const ok = await api.apuntarmeReto(r.tipo, !r.apuntado);
+    if (ok) {
+      await Promise.all([cargar(), cargarRanking(r.tipo)]);
+      DeviceEventEmitter.emit(RETOS_CAMBIADOS_EVENT);
+    } else {
+      setFallo(true);
+    }
+    setEnviando(false);
+  };
 
   if (cargando) {
     return (
@@ -73,34 +112,54 @@ export default function RetosScreen() {
     );
   }
 
-  if (evento) {
+  if (reto) {
     return (
       <ScrollView
         style={styles.fondo}
         contentContainerStyle={styles.contenido}
         refreshControl={
-          <RefreshControl refreshing={false} onRefresh={cargar} tintColor={colors.orange} />
+          <RefreshControl
+            refreshing={false}
+            onRefresh={() => { cargar(); cargarRanking(reto.tipo); }}
+            tintColor={colors.orange}
+          />
         }
       >
-        <Image
-          source={evento.imagen && !sinDibujo ? { uri: evento.imagen } : CALABAZA}
-          onError={() => setSinDibujo(true)}
-          style={styles.calabaza}
-          resizeMode="contain"
-        />
-        {!!evento.fechas && <Text style={styles.fechas}>{evento.fechas}</Text>}
-        <Text style={styles.titulo}>{evento.titulo || evento.nombre}</Text>
-        <View style={styles.tuyas}>
-          <Text style={styles.tuyasNumero}>{mias}</Text>
-          <Text style={styles.tuyasTexto}>{mias === 1 ? 'cogido' : 'cogidos'}</Text>
-        </View>
-        {!!evento.texto && <Text style={styles.parrafo}>{evento.texto}</Text>}
-        {!!evento.premio && (
-          <View style={styles.premio}>
-            <Text style={styles.premioTitulo}>EL PREMIO</Text>
-            <Text style={styles.avisoTexto}>{evento.premio}</Text>
+        <TouchableOpacity style={styles.volver} onPress={() => setAbierto(null)} hitSlop={12}>
+          <Text style={styles.volverTexto}>‹ Retos</Text>
+        </TouchableOpacity>
+        <LogoReto reto={reto} estilo={styles.calabaza} />
+        {!!reto.fechas && <Text style={styles.fechas}>{reto.fechas}</Text>}
+        <Text style={styles.titulo}>{reto.titulo || reto.nombre}</Text>
+        {reto.apuntado && (
+          <View style={styles.tuyas}>
+            <Text style={styles.tuyasNumero}>{mias}</Text>
+            <Text style={styles.tuyasTexto}>{mias === 1 ? 'cogido' : 'cogidos'}</Text>
           </View>
         )}
+        {!!reto.texto && <Text style={styles.parrafo}>{reto.texto}</Text>}
+        {!!reto.premio && (
+          <View style={styles.premio}>
+            <Text style={styles.premioTitulo}>EL PREMIO</Text>
+            <Text style={styles.avisoTexto}>{reto.premio}</Text>
+          </View>
+        )}
+        <TouchableOpacity
+          style={[styles.boton, reto.apuntado && styles.botonSalir, enviando && styles.botonEnviando]}
+          onPress={() => cambiarApuntado(reto)}
+          disabled={enviando}
+        >
+          <Text style={[styles.botonTexto, reto.apuntado && styles.botonSalirTexto]}>
+            {reto.apuntado ? 'DESAPUNTARME' : 'ME APUNTO'}
+          </Text>
+        </TouchableOpacity>
+        <Text style={styles.nota}>
+          {fallo
+            ? 'No ha salido. Prueba otra vez.'
+            : reto.apuntado
+              ? 'Ya estás dentro: sus logos salen en tu mapa.'
+              : 'Sus logos solo salen en el mapa de quien se apunta.'}
+        </Text>
         {ranking.length > 0 && (
           <View style={styles.tabla}>
             <Text style={styles.tablaTitulo}>QUIÉN VA GANANDO</Text>
@@ -119,7 +178,36 @@ export default function RetosScreen() {
     );
   }
 
-  // Se puede deslizar hacia abajo para volver a preguntar si hay campaña.
+  if (retos.length > 0) {
+    return (
+      <ScrollView
+        style={styles.fondo}
+        contentContainerStyle={styles.lista}
+        refreshControl={
+          <RefreshControl refreshing={false} onRefresh={cargar} tintColor={colors.orange} />
+        }
+      >
+        <Text style={styles.tituloLista}>RETOS</Text>
+        {retos.map(r => (
+          <TouchableOpacity key={r.tipo} style={styles.tarjeta} onPress={() => setAbierto(r.tipo)}>
+            <LogoReto reto={r} estilo={styles.tarjetaLogo} />
+            <View style={styles.tarjetaTextos}>
+              <Text style={styles.tarjetaTitulo} numberOfLines={2}>{r.titulo || r.nombre}</Text>
+              {!!r.fechas && <Text style={styles.tarjetaFechas} numberOfLines={1}>{r.fechas}</Text>}
+              <Text style={styles.tarjetaCifra}>
+                {r.apuntados === 1 ? '1 apuntado' : `${r.apuntados} apuntados`}
+              </Text>
+            </View>
+            {r.apuntado && (
+              <View style={styles.sello}><Text style={styles.selloTexto}>DENTRO</Text></View>
+            )}
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
+    );
+  }
+
+  // Se puede deslizar hacia abajo para volver a preguntar si hay retos.
   const recargar = (
     <RefreshControl refreshing={false} onRefresh={cargar} tintColor={colors.orange} />
   );
@@ -162,6 +250,43 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     paddingTop: SCREEN_H * 0.06,
     paddingBottom: 40,
+  },
+
+  lista: { paddingHorizontal: spacing.lg, paddingTop: SCREEN_H * 0.06, paddingBottom: 40 },
+  tituloLista: {
+    color: colors.textPrimary, fontSize: 30, fontWeight: '900', letterSpacing: 1,
+    marginBottom: spacing.lg,
+  },
+  tarjeta: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.md,
+    backgroundColor: colors.bgCard, borderRadius: radius.lg,
+    borderWidth: 1, borderColor: colors.border, padding: spacing.md, marginBottom: spacing.sm,
+  },
+  tarjetaLogo: { width: 64, height: 64 },
+  tarjetaTextos: { flex: 1 },
+  tarjetaTitulo: { color: colors.textPrimary, fontSize: 16, fontWeight: '900' },
+  tarjetaFechas: {
+    color: colors.orange, fontSize: 11, fontWeight: '800', letterSpacing: 1, marginTop: 4,
+  },
+  tarjetaCifra: { color: colors.textSecondary, fontSize: 13, marginTop: 4 },
+  sello: {
+    backgroundColor: colors.orange, borderRadius: radius.sm,
+    paddingHorizontal: spacing.sm, paddingVertical: 4,
+  },
+  selloTexto: { color: '#000', fontSize: 11, fontWeight: '900', letterSpacing: 1 },
+  volver: { alignSelf: 'flex-start', marginBottom: spacing.sm },
+  volverTexto: { color: colors.orange, fontSize: 16, fontWeight: '800' },
+  boton: {
+    backgroundColor: colors.orange, borderRadius: radius.lg, alignSelf: 'stretch',
+    paddingVertical: 16, alignItems: 'center', marginTop: spacing.lg,
+  },
+  botonSalir: { backgroundColor: 'transparent', borderWidth: 1, borderColor: colors.border },
+  botonEnviando: { opacity: 0.5 },
+  botonTexto: { color: '#000', fontSize: 16, fontWeight: '900', letterSpacing: 1 },
+  botonSalirTexto: { color: colors.textSecondary },
+  nota: {
+    color: colors.textMuted, fontSize: 13, textAlign: 'center',
+    marginTop: spacing.sm, marginBottom: spacing.md,
   },
 
   proximo: { flexGrow: 1, alignItems: 'center', justifyContent: 'center' },
