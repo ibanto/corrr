@@ -38,8 +38,15 @@ AUTO-PAUSA y «Sin señal GPS» con vibración). Las dos, después de Halloween.
 1.11.10 **más de doce horas** después de publicar. No sirve para decidir cuándo
 anunciar; la ficha web sí (ahí sale "Versión 1.11.11" como actual con su fecha).
 
+**1.11.13 (Android vc89, iPhone build 35) — MONTADA el 2-nov, sin subir.**
+AAB en `apps/mobile/builds/corrr-v1.11.13-vc89.aab`, iPhone archivado como
+`CORRR-1.11.13-build35`. Lleva las campañas de marca (§9-quinquies) y Retos sin
+Halloween, con el anuncio de Navidad que manda el servidor. Notas y pasos en
+`store/notas-1.11.13.md`. Falta: la prueba en la calle de Iban (se tocó
+`MapScreen.tsx`) y subirla él a las dos tiendas.
+
 **El evento de Halloween va del viernes 23 de octubre al domingo 1 de
-noviembre** (§9-bis).
+noviembre** (§9-bis). **Ya acabó.**
 
 ### Lo siguiente que hay que hacer
 
@@ -861,7 +868,14 @@ servidor:
 - **App**: `prepararTipos` (MapScreen) BAJA el dibujo antes de pintar los objetos y solo
   lo usa si ha llegado entero (en Android el marcador se fotografía al nacer, §9); si no,
   calabaza. Los objetos se ven con Halloween **o** con campaña. Retos enseña la campaña
-  si la hay, y si no, lo de siempre. `MODO=campana npm run mock` la recorre.
+  si la hay, y si no, **«Próximamente»** con el ANUNCIO que mande el servidor:
+  `PROXIMAMENTE` en `routes/index.ts` (título, cinta naranja y una línea), que viaja en
+  `GET /app/evento`. Desde el 2-nov: «GRAN RETO DE NAVIDAD · ¡CON PREMIO!» (Iban). Para
+  cambiarlo, esa constante y un push; `null` deja la imagen de siempre
+  (`assets/proximamente.png`). El cartel de Halloween se QUITÓ de Retos el 2-nov (Iban:
+  «quitar de la app en retos lo de las calabazas»): ya no hay ninguna fecha ni texto de
+  evento escrito en la app. Las 1.11.11/1.11.12 instaladas lo siguen enseñando hasta que
+  actualicen. `MODO=campana npm run mock` la recorre; `MODO=vacio`, sin anuncio.
 - **Las apps de antes de la 1.11.13 no saben nada**: con Halloween apagado no ven los
   logos; encendido, los pintan como calabazas. Antes de lanzar una campaña de verdad,
   que la 1.11.13 esté en las dos tiendas (y valorar `MIN_APP_VERSION`, §9).

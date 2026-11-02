@@ -185,6 +185,13 @@ export interface Evento {
   premio: string;
 }
 
+/** El anuncio de "Próximamente" en Retos (lo decide el servidor). */
+export interface Proximamente {
+  titulo: string;
+  destacado: string;
+  texto: string;
+}
+
 /** Ficha pública de un corredor: lo que se ve al tocarlo en el ranking. */
 interface FichaCorredor {
   id: string;
@@ -646,9 +653,15 @@ class ApiService {
   /** La campaña de marca que le toca a este corredor, o null si no hay.
    *  undefined = no se ha podido preguntar (no es lo mismo que "no hay"). */
   async getEvento(): Promise<Evento | null | undefined> {
+    return (await this.getRetos())?.evento;
+  }
+
+  /** La campaña y, si no hay, lo que anuncia "Próximamente". undefined = no se
+   *  ha podido preguntar. */
+  async getRetos(): Promise<{ evento: Evento | null; proximamente: Proximamente | null } | undefined> {
     try {
-      const res = await this.request<{ evento?: Evento | null }>('/app/evento');
-      return res?.evento ?? null;
+      const res = await this.request<{ evento?: Evento | null; proximamente?: Proximamente | null }>('/app/evento');
+      return { evento: res?.evento ?? null, proximamente: res?.proximamente ?? null };
     } catch {
       return undefined;
     }

@@ -6659,8 +6659,19 @@ app.post('/admin/campana/logo', { preHandler: requireAdmin }, async (req: any, r
   return reply.send({ ok: true, url, kb: Math.round(png.length / 1024) });
 });
 
+/** Lo que anuncia Retos cuando no hay campaña (app 1.11.13 en adelante). Va
+ *  AQUÍ y no en la app: el cartel de Halloween iba escrito dentro de la app y,
+ *  pasado el 1 de noviembre, solo podía decir cosas viejas hasta sacar versión.
+ *  Para cambiarlo basta con esto y un push. `null` = el «Próximamente» de
+ *  siempre, sin anuncio. */
+const PROXIMAMENTE: { titulo: string; destacado: string; texto: string } | null = {
+  titulo: 'GRAN RETO\nDE NAVIDAD',
+  destacado: '¡CON PREMIO!',
+  texto: 'Muy pronto, aquí. Ve calentando.',
+};
+
 app.get('/app/evento', { preHandler: requireAuth }, async (req: any, reply) => {
-  return reply.send({ evento: await campanaPara(req.userId) });
+  return reply.send({ evento: await campanaPara(req.userId), proximamente: PROXIMAMENTE });
 });
 
 app.get('/admin/campana', { preHandler: requireAdmin }, async (_req, reply) => {

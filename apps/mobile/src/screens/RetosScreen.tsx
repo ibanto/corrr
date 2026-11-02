@@ -4,25 +4,21 @@ import {
   AppState,
 } from 'react-native';
 import { colors, spacing, radius } from '../theme';
-import { api, RankingObjeto, Evento } from '../services/api';
+import { api, RankingObjeto, Evento, Proximamente } from '../services/api';
 
 /**
- * RetosScreen — hoy, el cartel de Halloween.
+ * RetosScreen — la CAMPAÑA DE MARCA si el panel tiene una encendida para esta
+ * persona, y si no, "Próximamente".
  *
- * Tiene dos caras y las decide el SERVIDOR, no la fecha del teléfono ni la
- * versión instalada: el panel enciende Halloween cuando toca.
+ *  La campaña sale entera del servidor (dibujo, fechas, título, texto, premio):
+ *  una campaña nueva no pide versión nueva. Lo que anuncia "Próximamente"
+ *  (el gran reto de Navidad, en noviembre de 2026) también: es `PROXIMAMENTE`
+ *  en el servidor. Si no manda nada, la imagen de siempre.
  *
- *   · Apagado  → "prepárate": qué va a pasar y cuándo.
- *   · Encendido → el evento en marcha, con cuántas llevas y quién gana.
- *
- *  Se hace así porque la versión con las calabazas se sube a las tiendas
- *  semanas antes del 29 de octubre y Apple aprueba cuando le parece. Atar el
- *  evento a la fecha de publicación sería jugársela.
- *
- *  Y desde la 1.11.13, una tercera que manda sobre las otras dos: la CAMPAÑA
- *  DE MARCA. Si el panel tiene una encendida para esta persona, la pantalla
- *  entera (dibujo, fechas, título, texto, premio) sale del servidor y una
- *  campaña nueva ya no pide versión nueva.
+ *  Hasta la 1.11.12 aquí estaba el cartel de Halloween, escrito dentro de la
+ *  app. Se quitó al acabar el evento (Iban, 2-nov-2026): con las fechas y los
+ *  textos metidos en la app, cada evento obligaba a sacar versión, y pasado el
+ *  1 de noviembre solo podía decir cosas viejas.
  *
  *  Los retos de verdad (semanales, mensuales, tienda de XP) siguen guardados
  *  en RetosScreen.legacy.tsx.
@@ -30,45 +26,37 @@ import { api, RankingObjeto, Evento } from '../services/api';
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 const CALABAZA = require('../../assets/calabaza.png');
-const FANTASMA = require('../../assets/fantasma.png');
+const PROXIMAMENTE = require('../../assets/proximamente.png');
+/** Solo el grafiti de PROXIMAMENTE, sin el subtítulo: debajo va el anuncio. */
+const PROXIMAMENTE_TITULO = require('../../assets/proximamente-titulo.png');
 
 export default function RetosScreen() {
   const [cargando, setCargando] = useState(true);
-  const [halloween, setHalloween] = useState(false);
   const [mias, setMias] = useState(0);
   const [ranking, setRanking] = useState<RankingObjeto[]>([]);
   const [evento, setEvento] = useState<Evento | null>(null);
+  const [proximamente, setProximamente] = useState<Proximamente | null>(null);
   /** El dibujo de la campaña no se ha podido bajar: se pinta la calabaza en
    *  vez de dejar un hueco. */
   const [sinDibujo, setSinDibujo] = useState(false);
 
   const cargar = useCallback(async () => {
-    // La campaña primero: si hay una, es lo único que se enseña. Si no se ha
-    // podido preguntar (undefined), se deja la que hubiera.
-    const ev = await api.getEvento();
-    if (ev !== undefined) setEvento(ev);
-    if (ev) {
-      const r = await api.getRankingCalabazas(ev.tipo);
-      setMias(r.mias);
-      setRanking(r.ranking);
-      setCargando(false);
-      return;
-    }
-    // Si no se ha podido preguntar (null), se deja la pantalla como estaba en
-    // vez de dar por hecho que el evento está apagado.
-    const ajustes = await api.getAjustes();
-    const encendido = ajustes ? ajustes.halloween : halloween;
-    if (ajustes) setHalloween(ajustes.halloween);
-    if (encendido) {
-      const r = await api.getRankingCalabazas();
-      setMias(r.mias);
-      setRanking(r.ranking);
+    // Si no se ha podido preguntar (undefined), se deja lo que hubiera.
+    const r = await api.getRetos();
+    if (r) {
+      setEvento(r.evento);
+      setProximamente(r.proximamente);
+      if (r.evento) {
+        const rk = await api.getRankingCalabazas(r.evento.tipo);
+        setMias(rk.mias);
+        setRanking(rk.ranking);
+      }
     }
     setCargando(false);
-  }, [halloween]);
+  }, []);
 
-  // Al arrancar y cada vez que se vuelve a la app. El interruptor del panel
-  // se puede dar en cualquier momento y nadie reinicia la app para enterarse.
+  // Al arrancar y cada vez que se vuelve a la app. La campaña se enciende
+  // desde el panel en cualquier momento y nadie reinicia la app para enterarse.
   useEffect(() => {
     cargar();
     const sub = AppState.addEventListener('change', (estado) => {
@@ -131,114 +119,37 @@ export default function RetosScreen() {
     );
   }
 
-  return (
-    <ScrollView
-      style={styles.fondo}
-      contentContainerStyle={styles.contenido}
-      refreshControl={
-        <RefreshControl refreshing={false} onRefresh={cargar} tintColor={colors.orange} />
-      }
-    >
-      <Image source={CALABAZA} style={styles.calabaza} resizeMode="contain" />
+  // Se puede deslizar hacia abajo para volver a preguntar si hay campaña.
+  const recargar = (
+    <RefreshControl refreshing={false} onRefresh={cargar} tintColor={colors.orange} />
+  );
 
-      {/* Las fechas van escritas AQUÍ, dentro de la app: para cambiarlas hace
-          falta una versión nueva en las tiendas. El evento es del 23 de
-          octubre al 1 de noviembre; si alguna vez se mueve, esto se mueve con
-          él o la app contradice al cartel. */}
-      <Text style={styles.fechas}>
-        {halloween ? 'HASTA EL 1 DE NOVIEMBRE' : 'DEL 23 DE OCTUBRE AL 1 DE NOVIEMBRE'}
-      </Text>
-      <Text style={styles.titulo}>
-        {halloween ? 'HAY CALABAZAS\nEN LA CALLE' : 'ESTE HALLOWEEN,\nPREPÁRATE'}
-      </Text>
-
-      {halloween ? (
-        <>
-          <View style={styles.tuyas}>
-            <Text style={styles.tuyasNumero}>{mias}</Text>
-            <Text style={styles.tuyasTexto}>
-              {mias === 1 ? 'calabaza cogida' : 'calabazas cogidas'}
-            </Text>
-          </View>
-          <Text style={styles.parrafo}>
-            Sal a correr y píllalas. <Text style={styles.resalte}>200 puntos</Text> cada una, y cada
-            una te abre un mensaje nuevo para picar a tus rivales. Las que queden{' '}
-            <Text style={styles.resalte}>dentro de un círculo que cierres</Text> también son tuyas.
-          </Text>
-
-          {/* El zombi, con su dibujo al lado. Dos reglas y se acabó: resta, y
-              no se coge cerrando el círculo. Puesto aquí, debajo de lo bueno,
-              para que se lea como "y ojo, que además hay esto". */}
-          <View style={styles.aviso}>
-            <Image source={FANTASMA} style={styles.zombi} resizeMode="contain" />
-            <View style={{ flex: 1 }}>
-              <Text style={styles.avisoTitulo}>TRUCO O TRATO</Text>
-              <Text style={styles.avisoTexto}>
-                Alrededor de cada calabaza hay <Text style={styles.resalte}>2 o 3 fantasmas</Text>.
-                Pisa uno y te toca una de tres, al azar:
-              </Text>
-              <Text style={styles.avisoTexto}>
-                <Text style={styles.resalte}>+500</Text>  ·  <Text style={styles.malo}>−1.000</Text>
-                {'  ·  '}nada
-              </Text>
-              <Text style={styles.avisoTexto}>
-                Y <Text style={styles.malo}>se ven todos iguales</Text>, así que no hay forma de
-                saberlo. A estos <Text style={styles.malo}>no</Text> te los llevas cerrando el
-                círculo: hay que pisarlos. Una carrera nunca te deja por debajo de cero.
-              </Text>
-            </View>
-          </View>
-
-          {ranking.length > 0 && (
-            <View style={styles.tabla}>
-              <Text style={styles.tablaTitulo}>QUIÉN VA GANANDO</Text>
-              {ranking.slice(0, 8).map((r, i) => (
-                <View key={r.userId} style={[styles.fila, r.mine && styles.filaMia]}>
-                  <Text style={[styles.puesto, r.mine && styles.textoMio]}>{i + 1}</Text>
-                  <Text style={[styles.nombre, r.mine && styles.textoMio]} numberOfLines={1}>
-                    {r.name}
-                  </Text>
-                  <Text style={[styles.cuantas, r.mine && styles.textoMio]}>{r.cuantos}</Text>
-                </View>
-              ))}
+  if (proximamente) {
+    return (
+      <ScrollView
+        style={styles.fondoNegro}
+        contentContainerStyle={styles.proximo}
+        refreshControl={recargar}
+      >
+        <Image source={PROXIMAMENTE_TITULO} style={styles.proximamenteTitulo} resizeMode="contain" />
+        <View style={styles.anuncio}>
+          <Text style={styles.titulo}>{proximamente.titulo}</Text>
+          {!!proximamente.destacado && (
+            <View style={styles.cinta}>
+              <Text style={styles.cintaTexto}>{proximamente.destacado}</Text>
             </View>
           )}
-        </>
-      ) : (
-        <>
-          <Text style={styles.parrafo}>
-            Van a salir calabazas repartidas por toda la ciudad, en cualquier calle de verdad —
-            no hace falta que haya corrido nadie por ahí. Pisa una mientras corres y son{' '}
-            <Text style={styles.resalte}>200 puntos</Text>.
-          </Text>
-          <Text style={styles.parrafo}>
-            En cuanto alguien se come una, nace otra <Text style={styles.resalte}>en otro sitio</Text>.
-            Así que ya puedes ir olvidándote de dar vueltas a la misma manzana.
-          </Text>
-          <View style={styles.aviso}>
-            <Image source={FANTASMA} style={styles.zombi} resizeMode="contain" />
-            <View style={{ flex: 1 }}>
-              <Text style={styles.avisoTitulo}>Y HABRÁ TRUCO O TRATO</Text>
-              <Text style={styles.avisoTexto}>
-                Alrededor de cada calabaza habrá <Text style={styles.resalte}>2 o 3 fantasmas</Text>,
-                y pisar uno te dará <Text style={styles.resalte}>+500</Text>,{' '}
-                <Text style={styles.malo}>−1.000</Text> o nada. Se ven todos iguales, así que ir a
-                por una calabaza es una apuesta. Eso sí, una carrera nunca te deja por debajo de cero.
-              </Text>
-            </View>
-          </View>
+          {!!proximamente.texto && <Text style={styles.parrafo}>{proximamente.texto}</Text>}
+        </View>
+      </ScrollView>
+    );
+  }
 
-          <Text style={styles.parrafo}>
-            Cada calabaza que cojas te desbloquea{' '}
-            <Text style={styles.resalte}>un mensaje nuevo</Text> para picar a tus rivales. Hay diez,
-            y solo se consiguen así.
-          </Text>
-          <Text style={styles.parrafo}>
-            Al que más coja le ponemos el nombre en la app. Al resto, que les quiten lo corrido.
-          </Text>
-          <Text style={styles.pie}>Ya te avisaremos. Ve calentando.</Text>
-        </>
-      )}
+  // La misma imagen que había antes de Halloween: lleva dentro el icono,
+  // "PRÓXIMAMENTE" y el subtítulo.
+  return (
+    <ScrollView style={styles.fondo} contentContainerStyle={styles.proximo} refreshControl={recargar}>
+      <Image source={PROXIMAMENTE} style={styles.proximamente} resizeMode="contain" />
     </ScrollView>
   );
 }
@@ -253,15 +164,24 @@ const styles = StyleSheet.create({
     paddingBottom: 40,
   },
 
+  proximo: { flexGrow: 1, alignItems: 'center', justifyContent: 'center' },
+  proximamente: {
+    width: SCREEN_W,
+    height: SCREEN_H * 0.85, // deja un pequeño margen vertical para la barra de pestañas
+  },
+  // Negro puro como el fondo de la imagen, para que no se le vea el borde.
+  fondoNegro: { flex: 1, backgroundColor: '#000' },
+  proximamenteTitulo: { width: SCREEN_W, height: SCREEN_W * (570 / 853) },
+  anuncio: { alignItems: 'center', paddingHorizontal: spacing.lg, paddingBottom: 40 },
+  cinta: {
+    backgroundColor: colors.orange, borderRadius: radius.sm,
+    paddingHorizontal: spacing.md, paddingVertical: 6,
+    marginBottom: spacing.lg, transform: [{ rotate: '-2deg' }],
+  },
+  cintaTexto: { color: '#000', fontSize: 20, fontWeight: '900', letterSpacing: 1 },
+
   calabaza: { width: SCREEN_W * 0.5, height: SCREEN_W * 0.5 },
 
-  aviso: {
-    flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
-    backgroundColor: colors.bgCard, borderRadius: radius.lg,
-    borderWidth: 1, borderColor: colors.danger,
-    padding: spacing.md, marginTop: spacing.md, width: '100%',
-  },
-  zombi: { width: 70, height: 70 },
   premio: {
     backgroundColor: colors.bgCard, borderRadius: radius.lg,
     borderWidth: 1, borderColor: colors.orange,
@@ -271,12 +191,7 @@ const styles = StyleSheet.create({
     color: colors.orange, fontSize: 13, fontWeight: '900',
     letterSpacing: 1, marginBottom: 4,
   },
-  avisoTitulo: {
-    color: colors.danger, fontSize: 13, fontWeight: '900',
-    letterSpacing: 1, marginBottom: 4,
-  },
   avisoTexto: { color: colors.textSecondary, fontSize: 14, lineHeight: 20, marginTop: 2 },
-  malo: { color: colors.danger, fontWeight: '700' },
   fechas: {
     color: colors.orange, fontSize: 12, fontWeight: '800',
     letterSpacing: 2, marginTop: spacing.sm,
@@ -290,11 +205,6 @@ const styles = StyleSheet.create({
   parrafo: {
     color: colors.textSecondary, fontSize: 15, lineHeight: 23,
     textAlign: 'center', marginBottom: spacing.md,
-  },
-  resalte: { color: colors.orange, fontWeight: '800' },
-  pie: {
-    color: colors.textMuted, fontSize: 13, fontStyle: 'italic',
-    marginTop: spacing.sm, textAlign: 'center',
   },
 
   tuyas: {

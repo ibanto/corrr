@@ -126,7 +126,9 @@ const RUTAS = {
     { userId: RIVAL, name: 'Lucía M.', cuantos: 14, puntos: 700, mine: false },
     { userId: YO, name: 'Auditor', cuantos: 7, puntos: 350, mine: true }] }),
   'GET /app/ajustes': () => ({ halloween: !vacio && !campana, halloween_para: null }),
-  'GET /app/evento': () => ({ evento: campana ? EVENTO : null }),
+  // Con MODO=vacio no hay anuncio: así se ve el «Próximamente» de siempre.
+  'GET /app/evento': () => ({ evento: campana ? EVENTO : null, proximamente: vacio ? null : {
+    titulo: 'GRAN RETO\nDE NAVIDAD', destacado: '¡CON PREMIO!', texto: 'Muy pronto, aquí. Ve calentando.' } }),
   'GET /app/aviso': () => (vacio || avisoVisto) ? { aviso: null } : ({ aviso: { id: 9, titulo: 'Llega Halloween',
     texto: 'Del *23 de octubre* al *1 de noviembre* salen calabazas por toda la ciudad.',
     imagen: null, boton: 'Ver el mapa', enlace: null, etiqueta: 'Evento', sello: 'Nuevo', nota: '50 puntos\ncada una' } }),
