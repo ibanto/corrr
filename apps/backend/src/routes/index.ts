@@ -2079,6 +2079,8 @@ Sale UNA vez por persona; para repetirlo, se crea otro. Solo lo ven las apps 1.1
 </section>
 
 <section id="p-juego" role="tabpanel" hidden>
+<details class="caja" id="hist_halloween">
+<summary><b>Hist&oacute;rico: Halloween 2026</b> &mdash; acab&oacute; el 1 de noviembre. El interruptor sigue aqu&iacute; dentro: no se apaga hasta que la 1.11.13 est&eacute; en las dos tiendas.</summary>
 <div class="caja">
 <h2>Marcador del evento</h2>
 <p class="nota">Todo lo de aquí es del evento que est&aacute; en marcha. Lo de las pruebas de octubre
@@ -2102,6 +2104,7 @@ sale el cartel de "prepárate" y la pestaña de mensajes de Halloween dice "pró
   <div id="hw_msg" class="resultado" style="display:none"></div>
 </form>
 </div>
+</details>
 <div class="caja">
 <h2>Campa&ntilde;a de marca</h2>
 <p class="nota">Un logo escondido por la calle, <b>sin sacar versi&oacute;n</b>. Aqu&iacute; se escribe todo lo que
