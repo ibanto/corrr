@@ -12,7 +12,7 @@ import { Resend } from 'resend';
 import { randomBytes, createHmac, createHash, timingSafeEqual } from 'crypto';
 import { SUPABASE_ROOT_CA } from '../db/supabase-ca.js';
 import { Dueno, SQL_TIRAS, tirasDesdeDuenos } from '../services/tiras.js';
-import { sembrar, sembrarFantasmas, recoger, Objeto } from '../services/objetos.js';
+import { sembrar, sembrarFantasmas, recoger, Objeto, LOGO_ES_SUYO } from '../services/objetos.js';
 import {
   celdasEncerradas, cajaDe, cajaDeTrabajo, gruposDeCeldas,
   MAX_CELDAS_CERCO, MAX_CAJA_CERCO, Celda,
@@ -510,12 +510,39 @@ async function initDB() {
     )
   `).catch(() => {});
   await db.query(`
+    CREATE TABLE IF NOT EXISTS campanas (
+      tipo TEXT PRIMARY KEY,
+      datos JSONB NOT NULL,
+      modo TEXT NOT NULL DEFAULT 'no',
+      creada_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `).catch(() => {});
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS campana_apuntados (
+      tipo TEXT NOT NULL REFERENCES campanas(tipo) ON DELETE CASCADE,
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      apuntado_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (tipo, user_id)
+    )
+  `).catch(() => {});
+  await db.query(`
     CREATE TABLE IF NOT EXISTS ajustes_juego (
       clave TEXT PRIMARY KEY,
       valor TEXT NOT NULL,
       cambiado_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `).catch(() => {});
+  // La campaña única de antes (1-nov-2026) pasa a ser un reto más de la lista.
+  // Se borra de ajustes_juego al pasarla: si no, reviviría en cada arranque
+  // aunque se elimine desde el panel.
+  await db.query(`
+    INSERT INTO campanas (tipo, datos, modo)
+    SELECT v.valor::jsonb->>'tipo', v.valor::jsonb,
+           COALESCE((SELECT valor FROM ajustes_juego WHERE clave = 'campana_modo'), 'no')
+      FROM ajustes_juego v WHERE v.clave = 'campana'
+    ON CONFLICT (tipo) DO NOTHING
+  `).then(() => db.query(`DELETE FROM ajustes_juego WHERE clave IN ('campana', 'campana_modo')`))
+    .catch(() => {});
   await db.query(`
     CREATE TABLE IF NOT EXISTS objetos (
       id SERIAL PRIMARY KEY,
@@ -1906,6 +1933,14 @@ app.get('/admin/panel', {
   .mini:hover{border-color:var(--apagado);}
   /* Lo que borra, en rojo: que se vea antes de pulsarlo. */
   .aviso .mini[data-borrar]{color:var(--rojo);border-color:rgba(244,67,54,.4);}
+  #c_lista summary{cursor:pointer;display:flex;align-items:center;gap:12px;}
+  #c_lista summary img{width:44px;height:44px;object-fit:contain;background:#333;border-radius:8px;}
+  #c_lista .c_cifras{color:var(--apagado);font-size:13px;font-weight:400;}
+  #c_lista .c_estado{margin-left:auto;font-size:12px;font-weight:700;color:var(--apagado);white-space:nowrap;}
+  #c_lista .c_estado.todos{color:var(--naranja);}
+  #c_lista form{margin-top:16px;}
+  .c_borrar{margin-top:20px;padding-top:16px;border-top:1px solid var(--borde);}
+  #c_eliminar{color:var(--rojo);border-color:rgba(244,67,54,.4);}
 
   /* Formularios. */
   .form{display:grid;gap:10px;max-width:560px;}
@@ -1987,6 +2022,7 @@ app.get('/admin/panel', {
     <button class="pestana" role="tab" aria-selected="false" data-pestana="gente">Gente</button>
     <button class="pestana" role="tab" aria-selected="false" data-pestana="avisos">Avisos</button>
     <button class="pestana" role="tab" aria-selected="false" data-pestana="juego">Juego</button>
+    <button class="pestana" role="tab" aria-selected="false" data-pestana="campanas">Campa&ntilde;as</button>
     <button class="pestana" role="tab" aria-selected="false" data-pestana="correos">Correos</button>
     <button class="pestana" role="tab" aria-selected="false" data-pestana="herramientas">Herramientas</button>
   </nav>
@@ -2080,7 +2116,7 @@ Sale UNA vez por persona; para repetirlo, se crea otro. Solo lo ven las apps 1.1
 
 <section id="p-juego" role="tabpanel" hidden>
 <details class="caja" id="hist_halloween">
-<summary><b>Hist&oacute;rico: Halloween 2026</b> &mdash; acab&oacute; el 1 de noviembre. El interruptor sigue aqu&iacute; dentro: no se apaga hasta que la 1.11.13 est&eacute; en las dos tiendas.</summary>
+<summary><b>Hist&oacute;rico: Halloween 2026</b> &mdash; acab&oacute; el 1 de noviembre. Aqu&iacute; dentro siguen el interruptor (no se apaga hasta que la 1.11.13 est&eacute; en las dos tiendas), el marcador y la siembra de calabazas.</summary>
 <div class="caja">
 <h2>Marcador del evento</h2>
 <p class="nota">Todo lo de aquí es del evento que est&aacute; en marcha. Lo de las pruebas de octubre
@@ -2102,59 +2138,6 @@ sale el cartel de "prepárate" y la pestaña de mensajes de Halloween dice "pró
   <input id="hw_corredor" placeholder="Nombre del corredor que lo prueba" style="display:none">
   <button class="btn" id="hw_guardar" type="button">Guardar</button>
   <div id="hw_msg" class="resultado" style="display:none"></div>
-</form>
-</div>
-</details>
-<div class="caja">
-<h2>Campa&ntilde;a de marca</h2>
-<p class="nota">Un logo escondido por la calle, <b>sin sacar versi&oacute;n</b>. Aqu&iacute; se escribe todo lo que
-ve el corredor: el dibujo del mapa, lo que dice el cartel al pisarlo y la pantalla de Retos. Solo lo ven las
-apps <b>1.11.13 o m&aacute;s nuevas</b>; las de antes pintan una calabaza. Solo la ve en Retos la gente
-de <b>la ciudad de la campa&ntilde;a</b>, y los logos se siembran y renacen <b>por toda esa ciudad</b>.
-Un logo se coge pasando <b>a 20 metros</b> (dos cuadrados): vale la acera de enfrente.
-El logo, mejor un PNG con el fondo transparente; si es rectangular se encaja en un cuadrado. Orden:
-subir el logo, guardar (en prueba, para uno) y sembrar.</p>
-<form class="form" id="fc">
-  <label class="campo">Identificador (corto, sin espacios: tienda-pepe)
-    <input id="c_tipo" placeholder="tienda-pepe"></label>
-  <label class="campo">Nombre (c&oacute;mo se cuenta: el logo de Tienda Pepe)
-    <input id="c_nombre" placeholder="el logo de Tienda Pepe"></label>
-  <label class="campo">El logo que se planta (PNG o JPG)
-    <input id="c_archivo" type="file" accept="image/png,image/jpeg"></label>
-  <input id="c_imagen" type="hidden">
-  <div id="c_logo_previo" style="display:none;background:#333;padding:8px;border-radius:8px;width:max-content">
-    <img id="c_logo_img" style="width:88px;height:88px;object-fit:contain"></div>
-  <label class="campo">Ciudad de la tienda (ah&iacute; se planta, y solo la ve quien sea de ah&iacute;)
-    <input id="c_ciudad" placeholder="Sevilla"></label>
-  <p class="nota" id="c_lugar"></p>
-  <label class="campo">Cartel al pisarlo ({puntos} se cambia por los puntos)
-    <input id="c_cartel" placeholder="¡TIENDA PEPE! +{puntos}"></label>
-  <label class="campo">Retos &middot; fechas
-    <input id="c_fechas" placeholder="DEL 10 AL 16 DE NOVIEMBRE"></label>
-  <label class="campo">Retos &middot; t&iacute;tulo
-    <input id="c_titulo" placeholder="CAZA EL LOGO DE TIENDA PEPE"></label>
-  <label class="campo">Retos &middot; c&oacute;mo va
-    <textarea id="c_texto" rows="3"></textarea></label>
-  <label class="campo">Retos &middot; el premio y d&oacute;nde se recoge
-    <textarea id="c_premio" rows="2"></textarea></label>
-  <select id="c_modo">
-    <option value="apagado">Apagado &mdash; nadie la ve</option>
-    <option value="prueba">Solo para un corredor, para probarla</option>
-    <option value="todos">Encendida para todo el mundo</option>
-  </select>
-  <input id="c_corredor" placeholder="Nombre del corredor que la prueba" style="display:none">
-  <button class="btn" id="c_guardar" type="button">Guardar la campa&ntilde;a</button>
-  <div id="c_msg" class="resultado" style="display:none"></div>
-  <label class="campo">Cu&aacute;ntos logos
-    <input id="c_cuantos" type="number" min="1" max="500" value="30"></label>
-  <label class="campo">Puntos de cada logo
-    <input id="c_puntos" type="number" min="1" max="1000" value="200"></label>
-  <label class="campo">Desde
-    <input id="c_desde" type="datetime-local"></label>
-  <label class="campo">Hasta
-    <input id="c_hasta" type="datetime-local"></label>
-  <button class="btn" id="c_sembrar" type="button">Sembrar logos por toda la ciudad</button>
-  <button class="mini" id="c_quitar" type="button">Quitar los logos sin coger</button>
 </form>
 </div>
 <div class="caja">
@@ -2194,6 +2177,65 @@ que tenga territorio, que es como hay que sembrar un evento.</p>
   <button class="btn" id="o_todos" type="button" style="background:#7B2FBE">Sembrar en TODAS las ciudades</button>
   <button class="mini" id="o_quitar" type="button">Quitar las que queden sin coger</button>
   <div id="o_msg" class="resultado" style="display:none"></div>
+</form>
+</div>
+</details>
+</section>
+
+<section id="p-campanas" role="tabpanel" hidden>
+<div class="caja">
+<h2>Campa&ntilde;as</h2>
+<p class="nota">Cada campa&ntilde;a sale como un reto en la pantalla de Retos de la app, para la gente de <b>su ciudad</b>.
+Los logos solo los ve y los coge quien pulsa <b>Me apunto</b>, y se cogen pasando <b>a 20 metros</b>. Orden: subir el logo,
+guardar (en prueba, para uno), sembrar y, cuando est&eacute; bien, encender. El logo, mejor un PNG con el fondo transparente.</p>
+<button class="btn" id="c_nueva" type="button">Nueva campa&ntilde;a</button>
+</div>
+<div id="c_lista"></div>
+<div id="c_guardado" hidden>
+<form class="form" id="fc">
+  <label class="campo">Identificador (corto, sin espacios: tienda-pepe)
+    <input id="c_tipo" placeholder="tienda-pepe"></label>
+  <label class="campo">Nombre (c&oacute;mo se cuenta: el logo de Tienda Pepe)
+    <input id="c_nombre" placeholder="el logo de Tienda Pepe"></label>
+  <label class="campo">El logo que se planta (PNG o JPG)
+    <input id="c_archivo" type="file" accept="image/png,image/jpeg"></label>
+  <input id="c_imagen" type="hidden">
+  <div id="c_logo_previo" style="display:none;background:#333;padding:8px;border-radius:8px;width:max-content">
+    <img id="c_logo_img" style="width:88px;height:88px;object-fit:contain"></div>
+  <label class="campo">Ciudad de la tienda (ah&iacute; se planta, y solo sale en la lista de quien sea de ah&iacute;)
+    <input id="c_ciudad" placeholder="Sevilla"></label>
+  <p class="nota" id="c_lugar"></p>
+  <label class="campo">Cartel al pisarlo ({puntos} se cambia por los puntos)
+    <input id="c_cartel" placeholder="¡TIENDA PEPE! +{puntos}"></label>
+  <label class="campo">Retos &middot; fechas
+    <input id="c_fechas" placeholder="DEL 10 AL 16 DE NOVIEMBRE"></label>
+  <label class="campo">Retos &middot; t&iacute;tulo
+    <input id="c_titulo" placeholder="CAZA EL LOGO DE TIENDA PEPE"></label>
+  <label class="campo">Retos &middot; c&oacute;mo va
+    <textarea id="c_texto" rows="3"></textarea></label>
+  <label class="campo">Retos &middot; el premio y d&oacute;nde se recoge
+    <textarea id="c_premio" rows="2"></textarea></label>
+  <select id="c_modo">
+    <option value="apagado">Apagada &mdash; nadie la ve</option>
+    <option value="prueba">Solo para un corredor, para probarla</option>
+    <option value="todos">Encendida para su ciudad</option>
+  </select>
+  <input id="c_corredor" placeholder="Nombre del corredor que la prueba" style="display:none">
+  <button class="btn" id="c_guardar" type="button">Guardar la campa&ntilde;a</button>
+  <div id="c_msg" class="resultado" style="display:none"></div>
+  <label class="campo">Cu&aacute;ntos logos
+    <input id="c_cuantos" type="number" min="1" max="500" value="30"></label>
+  <label class="campo">Puntos de cada logo
+    <input id="c_puntos" type="number" min="1" max="1000" value="200"></label>
+  <label class="campo">Desde
+    <input id="c_desde" type="datetime-local"></label>
+  <label class="campo">Hasta
+    <input id="c_hasta" type="datetime-local"></label>
+  <button class="btn" id="c_sembrar" type="button">Sembrar logos por toda la ciudad</button>
+  <div class="c_borrar">
+    <button class="mini" id="c_quitar" type="button">Quitar logos</button>
+    <button class="mini" id="c_eliminar" type="button">Eliminar campa&ntilde;a</button>
+  </div>
 </form>
 </div>
 </section>
@@ -2602,27 +2644,100 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
     m.style.borderLeftColor = ok ? '#4caf50' : '#f44336';
     m.textContent = t;
   }
-  function pintarCampana(r) {
+  // La lista va en desplegables, primero las encendidas. El formulario es uno
+  // solo: se mete dentro del desplegable que se abre.
+  var retosPanel = [];
+  var ORDEN_MODO = { todos: 0, prueba: 1, apagado: 2 };
+  var TEXTO_MODO = { todos: 'ENCENDIDA', prueba: 'EN PRUEBA', apagado: 'APAGADA' };
+  function fechaLocal(d) {
+    var dos = function (n) { return (n < 10 ? '0' : '') + n; };
+    return d.getFullYear() + '-' + dos(d.getMonth() + 1) + '-' + dos(d.getDate()) + 'T' + dos(d.getHours()) + ':' + dos(d.getMinutes());
+  }
+  function rellenarCampana(r) {
     var c = r.campana || {};
     CAMPOS_CAMPANA.forEach(function (k) { document.getElementById('c_' + k).value = c[k] || ''; });
+    // El identificador es el que llevan sus logos y sus apuntados: no se cambia.
+    document.getElementById('c_tipo').readOnly = !!c.tipo;
+    document.getElementById('c_archivo').value = '';
     document.getElementById('c_lugar').textContent = c.lugar ? 'Se planta en: ' + c.lugar : '';
     verLogo(c.imagen);
     document.getElementById('c_modo').value = r.modo || 'apagado';
     document.getElementById('c_corredor').value = r.corredor || '';
     document.getElementById('c_corredor').style.display = r.modo === 'prueba' ? '' : 'none';
+    document.getElementById('c_desde').value = fechaLocal(new Date());
+    document.getElementById('c_hasta').value = fechaLocal(new Date(Date.now() + 7 * 24 * 3600 * 1000));
+    document.getElementById('c_eliminar').style.display = c.tipo ? '' : 'none';
+    document.getElementById('c_quitar').style.display = c.tipo ? '' : 'none';
+    document.getElementById('c_msg').style.display = 'none';
   }
-  api('/admin/campana').then(pintarCampana).catch(function () {});
+  function abrirCampana(detalle, r) {
+    [].forEach.call(document.querySelectorAll('#c_lista details'), function (d) {
+      if (d !== detalle) d.open = false;
+    });
+    detalle.appendChild(document.getElementById('fc'));
+    rellenarCampana(r);
+  }
+  function filaCampana(r) {
+    var c = r.campana || {};
+    var d = document.createElement('details');
+    d.className = 'caja';
+    d.dataset.tipo = c.tipo || '';
+    d.innerHTML = '<summary>'
+      + (c.imagen ? '<img src="' + esc(c.imagen) + '" alt="">' : '')
+      + '<span><b>' + esc(c.nombre || 'Nueva campaña') + '</b>'
+      + (c.tipo ? '<br><span class="c_cifras">' + esc(c.ciudad) + ' · ' + r.apuntados + (r.apuntados === 1 ? ' apuntado · ' : ' apuntados · ')
+        + r.libres + ' logos en el mapa · ' + r.cogidos + ' cogidos</span>' : '') + '</span>'
+      + (c.tipo ? '<span class="c_estado ' + r.modo + '">' + TEXTO_MODO[r.modo] + '</span>' : '')
+      + '</summary>';
+    // El aviso se escribe nada más repintar y el toggle llega después: sin esta
+    // marca, abrir el desplegable borraría el «✓ Guardada» recién puesto.
+    d.addEventListener('toggle', function () {
+      if (!d.open) { delete d.dataset.yaAbierto; return; }
+      if (!d.dataset.yaAbierto) abrirCampana(d, r);
+    });
+    return d;
+  }
+  function pintarLista(abrir) {
+    var lista = document.getElementById('c_lista');
+    document.getElementById('c_guardado').appendChild(document.getElementById('fc'));
+    lista.innerHTML = '';
+    retosPanel.slice().sort(function (a, b) { return ORDEN_MODO[a.modo] - ORDEN_MODO[b.modo]; })
+      .forEach(function (r) {
+        var d = filaCampana(r);
+        lista.appendChild(d);
+        if (abrir && r.campana.tipo === abrir) {
+          d.dataset.yaAbierto = '1';
+          abrirCampana(d, r);
+          d.open = true;
+        }
+      });
+  }
+  function cargarCampanasPanel(abrir) {
+    return api('/admin/campanas').then(function (r) {
+      retosPanel = r.retos;
+      pintarLista(abrir);
+    });
+  }
+  cargarCampanasPanel().catch(function () {});
+  document.getElementById('c_nueva').addEventListener('click', function () {
+    var lista = document.getElementById('c_lista');
+    var ya = lista.querySelector('details[data-tipo=""]');
+    var d = ya || filaCampana({ modo: 'apagado' });
+    if (!ya) lista.insertBefore(d, lista.firstChild);
+    d.open = true;
+  });
   document.getElementById('c_modo').addEventListener('change', function (ev) {
     document.getElementById('c_corredor').style.display = ev.target.value === 'prueba' ? '' : 'none';
   });
   document.getElementById('c_guardar').addEventListener('click', function () {
     var cuerpo = { modo: document.getElementById('c_modo').value, corredor: val('c_corredor') };
     CAMPOS_CAMPANA.forEach(function (k) { cuerpo[k] = val('c_' + k); });
-    if (cuerpo.modo === 'todos' && !confirm('¿Encender la campaña para TODO el mundo?')) return;
+    if (cuerpo.modo === 'todos' && !confirm('¿Encender la campaña para toda su ciudad?')) return;
     api('/admin/campana', { method: 'POST', body: JSON.stringify(cuerpo) }).then(function (r) {
-      pintarCampana(r);
-      msgCampana(r.modo === 'todos' ? '✓ Guardada y encendida para todos.'
-        : (r.modo === 'prueba' ? '✓ Guardada. Solo la ve ' + r.corredor + '.' : '✓ Guardada, apagada.'), true);
+      return cargarCampanasPanel(r.campana.tipo).then(function () {
+        msgCampana(r.modo === 'todos' ? '✓ Guardada y encendida para su ciudad.'
+          : (r.modo === 'prueba' ? '✓ Guardada. Solo la ve ' + r.corredor + '.' : '✓ Guardada, apagada.'), true);
+      });
     }).catch(function (e) { msgCampana('✗ ' + e.message, false); });
   });
   document.getElementById('c_archivo').addEventListener('change', function (ev) {
@@ -2655,14 +2770,23 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
       desde: val('c_desde') || null, hasta: val('c_hasta') || null,
     }) }).then(function (r) {
       b.disabled = false;
-      msgCampana('✓ Sembrados ' + r.puestas + ' logos de ' + r.puntos + ' puntos' + (r.donde || ''), true);
+      cargarCampanasPanel(tipo).then(function () {
+        msgCampana('✓ Sembrados ' + r.puestas + ' logos de ' + r.puntos + ' puntos' + (r.donde || ''), true);
+      });
     }).catch(function (e) { b.disabled = false; msgCampana('✗ ' + e.message, false); });
   });
   document.getElementById('c_quitar').addEventListener('click', function () {
     var tipo = val('c_tipo');
     if (!tipo || !confirm('¿Quitar del mapa los logos de ' + tipo + ' sin coger? Los ya cogidos se quedan.')) return;
     api('/admin/objetos?tipo=' + encodeURIComponent(tipo), { method: 'DELETE' }).then(function (r) {
-      msgCampana('✓ Quitados ' + r.quitadas + ' logos.', true);
+      return cargarCampanasPanel(tipo).then(function () { msgCampana('✓ Quitados ' + r.quitadas + ' logos.', true); });
+    }).catch(function (e) { msgCampana('✗ ' + e.message, false); });
+  });
+  document.getElementById('c_eliminar').addEventListener('click', function () {
+    var tipo = val('c_tipo');
+    if (!tipo || !confirm('¿Eliminar la campaña ' + tipo + '? Se borran el reto, sus apuntados, su logo y los logos sin coger del mapa. No se puede deshacer.')) return;
+    api('/admin/campana?tipo=' + encodeURIComponent(tipo), { method: 'DELETE' }).then(function () {
+      return cargarCampanasPanel();
     }).catch(function (e) { msgCampana('✗ ' + e.message, false); });
   });
 
@@ -4086,8 +4210,7 @@ app.post('/runs', {
       const hasta = objetoHasta(o);
       // El logo de una campaña renace DENTRO de su zona, no a 5 km de donde
       // estaba: si no, a fuerza de cogerlos acabarían fuera del barrio.
-      const campana = await campanaGuardada().catch(() => null);
-      const zona = campana?.tipo === o.tipo ? cajaDeCampana(campana) : null;
+      const zona = cajaDeCampana(await campanaDe(o.tipo).catch(() => null));
       const nuevas = await sembrar(client as any, {
         cuantos: 1, tipo: o.tipo, puntos: o.puntos, desde, hasta,
         caja: zona ?? { x0: o.x - radio, x1: o.x + radio, y0: o.y - radio, y1: o.y + radio },
@@ -4149,9 +4272,11 @@ app.post('/runs', {
         campana: await (async () => {
           const suyos = objetos.filter((o: Objeto) => !['calabaza', 'fantasma', 'zombi'].includes(o.tipo));
           if (suyos.length === 0) return null;
-          const c = await campanaGuardada().catch(() => null);
+          // Con varios retos a la vez, una carrera puede coger logos de más de uno.
+          const unoSolo = suyos.every((o: Objeto) => o.tipo === suyos[0].tipo);
+          const c = unoSolo ? await campanaDe(suyos[0].tipo).catch(() => null) : null;
           return {
-            nombre: c && c.tipo === suyos[0].tipo ? c.nombre : 'Logos',
+            nombre: c ? c.nombre : 'Logos',
             cuantos: suyos.length,
             puntos: suyos.reduce((n: number, o: Objeto) => n + o.puntos, 0),
           };
@@ -6434,21 +6559,26 @@ app.get('/objetos/viewport', { preHandler: requireAuth }, async (req: any, reply
     `SELECT id, cell_x, cell_y, puntos, tipo FROM objetos
       WHERE tomado_por IS NULL AND desde <= NOW() AND (hasta IS NULL OR hasta > NOW())
         AND cell_x BETWEEN $1 AND $2 AND cell_y BETWEEN $3 AND $4
+        AND (tipo IN ('calabaza', 'fantasma', 'zombi') OR ${LOGO_ES_SUYO('objetos.', '$5')})
       LIMIT 500`,
-    [caja.x0, caja.x1, caja.y0, caja.y1]);
+    [caja.x0, caja.x1, caja.y0, caja.y1, req.userId]);
   let { rows } = await mirar();
   // Si aquí no hay nada, puede que sea la primera persona que mira este trozo
   // de mapa. Se siembra y se vuelve a mirar, para que le salgan YA.
   if (rows.length === 0 && await sembrarDondeMira(req.userId, caja).catch(() => false)) {
     ({ rows } = await mirar());
   }
-  // El dibujo y el cartel de los objetos de la campaña, si hay alguno a la
+  // El dibujo y el cartel de los logos de los retos, si hay alguno a la
   // vista. Va con los objetos y no en otra petición: así nunca llega un logo
   // sin saber cómo pintarlo. Las apps viejas ignoran el campo.
   const tipos: Record<string, { imagen: string; cartel: string; nombre: string }> = {};
-  const campana = await campanaGuardada().catch(() => null);
-  if (campana && rows.some((r: any) => r.tipo === campana.tipo)) {
-    tipos[campana.tipo] = { imagen: campana.imagen, cartel: campana.cartel, nombre: campana.nombre };
+  const deMarca = [...new Set(rows.map((r: any) => r.tipo as string))]
+    .filter(t => !['calabaza', 'fantasma', 'zombi'].includes(t));
+  if (deMarca.length > 0) {
+    const { rows: suyas } = await db.query('SELECT datos FROM campanas WHERE tipo = ANY($1)', [deMarca]);
+    for (const { datos: c } of suyas) {
+      tipos[c.tipo] = { imagen: c.imagen, cartel: c.cartel, nombre: c.nombre };
+    }
   }
   return reply.send({
     objetos: rows.map((r: any) => ({ id: r.id, x: r.cell_x, y: r.cell_y, puntos: r.puntos, tipo: r.tipo })),
@@ -6539,10 +6669,10 @@ app.post('/admin/ajustes', { preHandler: requireAdmin }, async (req: any, reply)
  *  dirección https, como la imagen de los avisos), lo que dice el cartel al
  *  pisarlo y la pantalla de Retos entera. Si algo falla, pinta la calabaza.
  *
- *  Se guarda en `ajustes_juego` como JSON (`campana`) y con su interruptor de
- *  tres estados aparte (`campana_modo`: no / si / prueba:<nombre>), el mismo
- *  que Halloween. OJO: las apps de antes de la 1.11.13 no saben nada de esto;
- *  si ven objetos de un tipo que no conocen, pintan una calabaza. */
+ *  Puede haber varias a la vez (Iban, 2-nov): cada una es una fila de `campanas`
+ *  con su interruptor (`modo`: no / si / prueba:<nombre>), y en la app salen como
+ *  una lista de retos. Sus logos solo los ve y los coge quien se apunta
+ *  (`campana_apuntados`, LOGO_ES_SUYO). */
 type Campana = {
   tipo: string;        // lo que va en objetos.tipo, p. ej. 'tienda-pepe'
   nombre: string;      // 'el logo de Tienda Pepe'
@@ -6589,33 +6719,32 @@ async function limitesDeCiudad(ciudad: string): Promise<{ lugar: string; limites
  *  dirección, así que al cambiarlo nadie se queda con el viejo. */
 const logosEnMemoria = new Map<string, Buffer>();
 
-async function campanaGuardada(): Promise<Campana | null> {
-  const { rows } = await db.query("SELECT valor FROM ajustes_juego WHERE clave = 'campana'");
-  if (!rows[0]) return null;
-  try { return JSON.parse(rows[0].valor); } catch { return null; }
+async function campanaDe(tipo: string): Promise<Campana | null> {
+  const { rows } = await db.query('SELECT datos FROM campanas WHERE tipo = $1', [tipo]);
+  return rows[0]?.datos ?? null;
 }
 
-/** La campaña, si a ESTE corredor le toca verla. */
-async function campanaPara(userId: string): Promise<Campana | null> {
-  const modo = await valorAjuste('campana_modo');
-  if (modo === 'no') return null;
-  let nombre: string | null = null;
-  if (modo.startsWith('prueba:')) {
-    const { rows } = await db.query('SELECT display_name FROM users WHERE id = $1', [userId]);
-    nombre = rows[0]?.display_name ?? null;
-  }
-  if (!ajusteLeToca(modo, nombre)) return null;
-  const c = await campanaGuardada();
-  // Una campaña es de una tienda y de una ciudad: al de Sevilla no le dice
-  // nada un premio que se recoge en Murcia. La comparación va por
-  // corrr_ciudad, como toda comparación de ciudad (§9, Valencia partida).
-  if (c?.ciudad) {
-    const { rows } = await db.query(
-      'SELECT 1 FROM users WHERE id = $1 AND corrr_ciudad(city) = corrr_ciudad($2)', [userId, c.ciudad],
-    );
-    if (rows.length === 0) return null;
-  }
-  return c;
+/** Los retos que ESTE corredor ve en la app: los encendidos de su ciudad y los
+ *  que ya tiene apuntados aunque se haya mudado, para que pueda borrarse. La
+ *  comparación va por corrr_ciudad, como toda comparación de ciudad (§9,
+ *  Valencia partida). El que prueba un reto lo ve aunque sea de otra ciudad. */
+async function retosPara(userId: string) {
+  const { rows: yo } = await db.query('SELECT display_name, city FROM users WHERE id = $1', [userId]);
+  const { rows } = await db.query(
+    `SELECT c.datos, c.modo,
+            (corrr_ciudad(c.datos->>'ciudad') = corrr_ciudad($2)) AS de_aqui,
+            EXISTS (SELECT 1 FROM campana_apuntados a WHERE a.tipo = c.tipo AND a.user_id = $1) AS apuntado,
+            (SELECT COUNT(*)::int FROM campana_apuntados a WHERE a.tipo = c.tipo) AS apuntados
+       FROM campanas c WHERE c.modo <> 'no' ORDER BY c.creada_at DESC`,
+    [userId, yo[0]?.city ?? null],
+  );
+  return rows
+    .filter((r: any) => ajusteLeToca(r.modo, yo[0]?.display_name ?? null)
+      && (r.modo !== 'si' || r.de_aqui === true || r.apuntado))
+    .map((r: any) => {
+      const { limites: _limites, lugar: _lugar, ...c } = r.datos;
+      return { ...c, apuntado: r.apuntado, apuntados: r.apuntados };
+    });
 }
 
 app.get('/campana/logo/:archivo', async (req: any, reply) => {
@@ -6673,17 +6802,62 @@ const PROXIMAMENTE: { titulo: string; destacado: string; texto: string } | null 
   texto: 'Muy pronto, aquí. Ve calentando.',
 };
 
-app.get('/app/evento', { preHandler: requireAuth }, async (req: any, reply) => {
-  return reply.send({ evento: await campanaPara(req.userId), proximamente: PROXIMAMENTE });
+/** Las apps con la campaña única, sin botón de apuntarse. Como hay que apuntarse
+ *  para ver los logos, para ellas no hay campaña; sí el anuncio. */
+app.get('/app/evento', { preHandler: requireAuth }, async (_req: any, reply) => {
+  return reply.send({ evento: null, proximamente: PROXIMAMENTE });
 });
 
-app.get('/admin/campana', { preHandler: requireAdmin }, async (_req, reply) => {
-  const modo = await valorAjuste('campana_modo');
-  return reply.send({
-    campana: await campanaGuardada(),
-    modo: modo === 'si' ? 'todos' : (modo.startsWith('prueba:') ? 'prueba' : 'apagado'),
-    corredor: modo.startsWith('prueba:') ? modo.slice('prueba:'.length) : '',
-  });
+app.get('/app/retos', { preHandler: requireAuth }, async (req: any, reply) => {
+  return reply.send({ retos: await retosPara(req.userId), proximamente: PROXIMAMENTE });
+});
+
+app.post('/app/retos/:tipo/apuntarme', { preHandler: requireAuth }, async (req: any, reply) => {
+  const tipo = String(req.params.tipo);
+  // Solo a lo que le sale en la lista: una dirección a mano no apunta a nadie a
+  // un reto apagado o de otra ciudad.
+  if (!(await retosPara(req.userId)).some((r: any) => r.tipo === tipo)) {
+    return reply.status(404).send({ error: 'Ese reto no está disponible' });
+  }
+  await db.query(
+    'INSERT INTO campana_apuntados (tipo, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+    [tipo, req.userId],
+  );
+  return reply.send({ ok: true });
+});
+
+/** Lo cogido se queda en `objetos`: quien vuelve a apuntarse lo recupera. */
+app.delete('/app/retos/:tipo/apuntarme', { preHandler: requireAuth }, async (req: any, reply) => {
+  await db.query('DELETE FROM campana_apuntados WHERE tipo = $1 AND user_id = $2', [String(req.params.tipo), req.userId]);
+  return reply.send({ ok: true });
+});
+
+app.get('/admin/campanas', { preHandler: requireAdmin }, async (_req, reply) => {
+  const { rows } = await db.query(
+    `SELECT c.datos, c.modo,
+            (SELECT COUNT(*)::int FROM campana_apuntados a WHERE a.tipo = c.tipo) AS apuntados,
+            (SELECT COUNT(*)::int FROM objetos o WHERE o.tipo = c.tipo AND o.tomado_por IS NULL
+               AND (o.hasta IS NULL OR o.hasta > NOW())) AS libres,
+            (SELECT COUNT(*)::int FROM objetos o WHERE o.tipo = c.tipo AND o.tomado_por IS NOT NULL) AS cogidos
+       FROM campanas c ORDER BY c.creada_at DESC`,
+  );
+  return reply.send({ retos: rows.map((r: any) => ({
+    campana: r.datos,
+    modo: r.modo === 'si' ? 'todos' : (r.modo.startsWith('prueba:') ? 'prueba' : 'apagado'),
+    corredor: r.modo.startsWith('prueba:') ? r.modo.slice('prueba:'.length) : '',
+    apuntados: r.apuntados, libres: r.libres, cogidos: r.cogidos,
+  })) });
+});
+
+/** Borra el reto, sus apuntados y los logos sin coger. Los cogidos se quedan,
+ *  como en cualquier evento: son puntos que ya se han contado. */
+app.delete('/admin/campana', { preHandler: requireAdmin }, async (req: any, reply) => {
+  const tipo = String(req.query?.tipo ?? '');
+  await db.query('DELETE FROM objetos WHERE tipo = $1 AND tomado_por IS NULL', [tipo]);
+  await db.query('DELETE FROM campana_logos WHERE tipo = $1', [tipo]);
+  logosEnMemoria.delete(tipo);
+  const { rowCount } = await db.query('DELETE FROM campanas WHERE tipo = $1', [tipo]);
+  return reply.send({ ok: true, borrados: rowCount ?? 0 });
 });
 
 app.post('/admin/campana', { preHandler: requireAdmin }, async (req: any, reply) => {
@@ -6723,13 +6897,11 @@ app.post('/admin/campana', { preHandler: requireAdmin }, async (req: any, reply)
     modo = `prueba:${rows[0].display_name}`;
   }
 
-  for (const [clave, valor] of [['campana', JSON.stringify(c)], ['campana_modo', modo]]) {
-    await db.query(
-      `INSERT INTO ajustes_juego (clave, valor) VALUES ($1, $2)
-       ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor, cambiado_at = NOW()`,
-      [clave, valor],
-    );
-  }
+  await db.query(
+    `INSERT INTO campanas (tipo, datos, modo) VALUES ($1, $2, $3)
+     ON CONFLICT (tipo) DO UPDATE SET datos = EXCLUDED.datos, modo = EXCLUDED.modo`,
+    [c.tipo, JSON.stringify(c), modo],
+  );
   return reply.send({
     ok: true, campana: c,
     modo: modo === 'si' ? 'todos' : (modo === 'no' ? 'apagado' : 'prueba'),
@@ -6762,6 +6934,9 @@ app.get('/objetos/ranking', { preHandler: requireAuth }, async (req: any, reply)
     `SELECT u.id, u.display_name, COUNT(*)::int AS cuantos, SUM(o.puntos)::int AS puntos
        FROM objetos o JOIN users u ON u.id = o.tomado_por
       WHERE o.tipo = $1 AND o.tomado_por IS NOT NULL AND ${DE_ESTE_EVENTO('o.')}
+        -- En un reto solo compiten los apuntados; quien se borra sale de la tabla.
+        AND (o.tipo IN ('calabaza', 'fantasma', 'zombi') OR EXISTS (
+          SELECT 1 FROM campana_apuntados a WHERE a.tipo = o.tipo AND a.user_id = o.tomado_por))
       GROUP BY u.id, u.display_name
       ORDER BY cuantos DESC, puntos DESC
       LIMIT 20`,
@@ -6972,10 +7147,10 @@ app.post('/admin/objetos', { preHandler: requireAdmin }, async (req: any, reply)
   let caja;
   let donde = '';
   if (req.body?.enCampana === true) {
-    // Alrededor de la tienda de la campaña, con su radio.
-    const c = await campanaGuardada();
+    // Por toda la ciudad del reto.
+    const c = await campanaDe(elTipo);
     caja = cajaDeCampana(c);
-    if (!caja || c?.tipo !== elTipo) {
+    if (!caja || !c) {
       return reply.status(400).send({ error: 'Guarda antes la campaña con su ciudad' });
     }
     donde = ` por toda ${c.ciudad}`;

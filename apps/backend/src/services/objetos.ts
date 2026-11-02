@@ -128,6 +128,13 @@ export async function sembrar(
   return nuevas;
 }
 
+/** Un logo solo existe para quien se ha apuntado a su reto, y mientras el reto
+ *  siga encendido. Vale para verlo en el mapa y para cogerlo: quien no se ha
+ *  apuntado pasa por encima y no pasa nada. */
+export const LOGO_ES_SUYO = (alias: string, usuario: string) =>
+  `EXISTS (SELECT 1 FROM campana_apuntados a JOIN campanas c ON c.tipo = a.tipo
+            WHERE a.tipo = ${alias}tipo AND a.user_id = ${usuario} AND c.modo <> 'no')`;
+
 /** Los objetos libres que caen dentro de las celdas de una carrera, marcados
  *  como recogidos por ese corredor. Devuelve los que se ha llevado.
  *
@@ -164,6 +171,7 @@ export async function recoger(
         SET tomado_por = $1, tomado_at = $4
       WHERE o.tomado_por IS NULL
         AND o.desde <= $4 AND (o.hasta IS NULL OR o.hasta > $4)
+        AND (o.tipo IN ('calabaza', 'fantasma', 'zombi') OR ${LOGO_ES_SUYO('o.', '$1')})
         AND EXISTS (
           SELECT 1 FROM unnest($2::int[], $3::int[], $5::boolean[]) AS t(x, y, solo_suma)
            WHERE t.x = o.cell_x AND t.y = o.cell_y
@@ -192,8 +200,9 @@ export async function recoger(
       `SELECT id, cell_x, cell_y FROM objetos
         WHERE tomado_por IS NULL AND tipo NOT IN ('calabaza', 'fantasma', 'zombi')
           AND desde <= $5 AND (hasta IS NULL OR hasta > $5)
-          AND cell_x BETWEEN $1 AND $2 AND cell_y BETWEEN $3 AND $4`,
-      [x0 - RADIO_LOGO, x1 + RADIO_LOGO, y0 - RADIO_LOGO, y1 + RADIO_LOGO, cuando.toISOString()],
+          AND cell_x BETWEEN $1 AND $2 AND cell_y BETWEEN $3 AND $4
+          AND ${LOGO_ES_SUYO('objetos.', '$6')}`,
+      [x0 - RADIO_LOGO, x1 + RADIO_LOGO, y0 - RADIO_LOGO, y1 + RADIO_LOGO, cuando.toISOString(), userId],
     );
     if (libres.length > 0) {
       const pisada = new Set(pisadas.map(c => `${c.x},${c.y}`));
