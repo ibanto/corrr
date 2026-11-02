@@ -6,7 +6,7 @@ Instrucciones para Claude trabajando en este repo. Léelo entero antes de tocar 
 
 ## 0. Dónde estamos (leer esto primero)
 
-*Al día a 22-oct-2026, noche. Si algo de aquí abajo contradice a este apartado, manda este.*
+*Al día a 2-nov-2026, mediodía (la parte de la 1.11.11/1.11.12 es del 26-oct). Si algo de aquí abajo contradice a este apartado, manda este. Iban sigue el 2-nov desde OTRO perfil de Claude: todo lo de hoy está aquí y en `REDES/agenda.md` («Traspaso del 2-nov»).*
 
 **En las tiendas**: **1.11.11 publicada y ANUNCIADA en las dos** (Android
 vc87, iPhone build 34). 54 personas. Ya no queda nada de la subida.
@@ -38,20 +38,65 @@ AUTO-PAUSA y «Sin señal GPS» con vibración). Las dos, después de Halloween.
 1.11.10 **más de doce horas** después de publicar. No sirve para decidir cuándo
 anunciar; la ficha web sí (ahí sale "Versión 1.11.11" como actual con su fecha).
 
-**1.11.13 (Android vc89, iPhone build 35) — MONTADA el 2-nov, sin subir.**
-AAB en `apps/mobile/builds/corrr-v1.11.13-vc89.aab`, iPhone archivado como
-`CORRR-1.11.13-build35`. Lleva las campañas de marca (§9-quinquies) y Retos sin
-Halloween, con el anuncio de Navidad que manda el servidor. Notas y pasos en
-`store/notas-1.11.13.md`. Falta: la prueba en la calle de Iban (se tocó
-`MapScreen.tsx`) y subirla él a las dos tiendas.
+**1.11.14 (Android vc91, iPhone build 37) — MONTADA el 2-nov, sin subir.**
+Sustituye a la 1.11.13 (vc89/vc90, builds 35/36), que solo llegó a prueba: esa no se
+publica. AAB en `apps/mobile/builds/corrr-v1.11.14-vc91.aab`, iPhone archivado como
+`CORRR-1.11.14-build37` (Xcode → Organizer: «CORRR 1.11.14 (37)»). Lleva el ranking con
+España / Mi ciudad con buscador / Amigos y la lista de retos con ME APUNTO (§9-quinquies) y Retos sin Halloween, con el anuncio de
+Navidad que manda el servidor. Commit `9ef6e21`, subido; el servidor ya lo
+tiene desplegado (`/health` → `9ef6e21`). Notas de las dos tiendas y pasos en
+`store/notas-1.11.14.md`.
 
-**El evento de Halloween va del viernes 23 de octubre al domingo 1 de
-noviembre** (§9-bis). **Ya acabó.**
+Comprobado el 2-nov: el AAB por dentro (versión 1.11.13, firma SHA-256 de
+siempre, servidor de producción y no el de pruebas, la imagen nueva), el
+archivo del iPhone (1.11.13 (35), misma firma que la build 34, servidor de
+producción) y la app arrancando en un simulador de **iOS 27.2** en Release.
+Retos probado en el emulador contra `mock-api` en los tres casos (anuncio de
+Navidad, sin anuncio y con campaña). **Sin ver todavía**: el anuncio contra el
+servidor de VERDAD (`/app/evento` pide sesión); se verá en TestFlight.
 
-### Lo siguiente que hay que hacer
+**El evento de Halloween fue del 23-oct al 1-nov** (§9-bis). **Ya acabó**
+(~02:00 del 2-nov). Marcador final: 113 calabazas, 197 fantasmas; 1.º KarolK
+(42 calabazas), 2.º carlos (26), 3.º Oriol15 (19). Publicado en redes el 2-nov
+con sus nombres (Iban lo pidió).
 
-**EL EVENTO ESTÁ EN MARCHA.** La noche del 22 se hicieron los tres primeros
-pasos, comprobados uno a uno:
+### Lo siguiente que hay que hacer (2-nov)
+
+1. **Subir la 1.11.13** — lo hace Iban, en este orden:
+   - iPhone a TestFlight: Organizer → «CORRR 1.11.14 (37)» → Distribute App.
+   - **Prueba en la calle** con los dos móviles (`docs/prueba-gps.md`): se tocó
+     `MapScreen.tsx`. Mirar también Retos: tiene que salir el anuncio de Navidad.
+   - Play Console (producción) con el AAB, y App Store Connect. Antes de Apple:
+     panel → «¿Está viva?» (cuenta de revisión, §15). Google tiene la
+     publicación gestionada: aprobada NO es publicada, hay que pulsar
+     «Publicar 1 cambio».
+   - Publicada cada tienda → anunciarla (`LATEST_*`, §4 punto 5).
+2. **NO apagar el interruptor de Halloween** hasta que la 1.11.13 esté en las
+   dos tiendas: las 1.11.11/1.11.12 instaladas enseñan en Retos el cartel de
+   Halloween escrito en la app; encendido dice «HAY CALABAZAS… HASTA EL 1 DE
+   NOVIEMBRE» con el marcador final, y apagado diría «ESTE HALLOWEEN,
+   PREPÁRATE», que es peor. Las calabazas ya caducaron y la siembra automática
+   solo actúa con el evento vivo, así que encendido no siembra nada.
+3. **El anuncio de Retos** («GRAN RETO DE NAVIDAD · ¡CON PREMIO!») está en
+   `PROXIMAMENTE` de `routes/index.ts`. **Ese reto de Navidad NO existe
+   todavía**: falta decidir con Iban qué es, fechas y premio (lo natural es
+   montarlo como campaña desde el panel, §9-quinquies: al encenderla, Retos la
+   enseña en lugar del anuncio). Después de Navidad, cambiar o quitar
+   (`null`) ese anuncio con un push.
+4. **Nombrar en la app al que más calabazas cogió** (KarolK): panel → Juego →
+   *Marcador del evento*, o un aviso desde la pestaña Avisos. Es botón de
+   Iban; sin hacer el 2-nov a mediodía.
+5. **`MIN_APP_VERSION`** sigue en `1.11.11` en Railway desde el 22-oct. El
+   plan era bajarla a `1.0.0` el 2-nov, pero **no se ha tocado**: bajarla deja
+   volver a apps viejas que piden el mapa en el formato viejo, que gasta más
+   cuota de Supabase (§9, «El mapa se comía la cuota»). Decidirlo con Iban;
+   si se cambia, **de madrugada** y pulsando «Deploy» en Railway.
+6. **Lo primero de §14** (ya es «después de Halloween»): devolver la carrera
+   que se pierde cuando Android mata la app.
+
+#### Lo que se hizo la noche del 22 (histórico)
+
+La noche del 22 se hicieron los tres primeros pasos, comprobados uno a uno:
 
 1. ✅ **Sembrado** con el botón morado: **1.123 calabazas y 2.800 fantasmas**
    repartidas por ~47 zonas, del 23-oct al 1-nov, 200 puntos cada una. Salen
@@ -71,8 +116,9 @@ aparecen a las 2 de la madrugada del viernes, no a medianoche, y el evento
 acaba sobre las 2 de la madrugada del 2-nov. Se decidió dejarlo: son dos
 horas en las que no corre nadie.
 
-**El 2 de noviembre**: nombrar al que más cogió (panel → Juego → *Marcador del
-evento*) y **bajar `MIN_APP_VERSION` a `1.0.0`**.
+**El 2 de noviembre** (plan de entonces; cómo quedó, en los puntos 4 y 5 de
+arriba): nombrar al que más cogió (panel → Juego → *Marcador del evento*) y
+bajar `MIN_APP_VERSION` a `1.0.0`.
 
 ### Ya funcionando en producción (servidor, sin build)
 
@@ -401,7 +447,7 @@ verdad, compilar en **Release** (lleva el código dentro y no necesita nada):
 | Editar perfil | `EditProfileScreen.tsx` | Form con dropdowns (zapatillas, año, sexo, distancia, frecuencia) |
 | Stats | `StatsScreen.tsx` | Lista de carreras + botón "ver más" → AllRunsScreen |
 | Todas las carreras | `AllRunsScreen.tsx` | Modal paginado (30/página) |
-| Ranking | `RankingScreen.tsx` | Tabs: Global / Ciudad / Amigos |
+| Ranking | `RankingScreen.tsx` | Tabs: España / Mi ciudad (con buscador de ciudades) / Amigos |
 | Retos | `RetosScreen.tsx` | Placeholder "Próximamente". El antiguo está en `RetosScreen.legacy.tsx`. |
 | Onboarding | `OnboardingScreen.tsx` | Login + register + Strava OAuth signup |
 
@@ -876,6 +922,18 @@ servidor:
   «quitar de la app en retos lo de las calabazas»): ya no hay ninguna fecha ni texto de
   evento escrito en la app. Las 1.11.11/1.11.12 instaladas lo siguen enseñando hasta que
   actualicen. `MODO=campana npm run mock` la recorre; `MODO=vacio`, sin anuncio.
+- **Varios retos con «Me apunto» (Iban, 2-nov; servidor subido, app desde la 1.11.14)**: la
+  campaña única pasa a tabla `campanas` (`tipo`, `datos` JSONB, `modo`) y quien se apunta a
+  `campana_apuntados`. Lo de ajustes_juego (`campana`, `campana_modo`) se migra una vez al
+  arrancar y se borra. Panel: pestaña **Campañas**, un desplegable por reto con **Quitar
+  logos** y **Eliminar campaña** (borra el reto, sus apuntados, su logo y los logos sin coger;
+  los cogidos se quedan). App: `GET /app/retos` (lista de su ciudad; el que prueba la ve aunque
+  sea de otra), `POST`/`DELETE /app/retos/:tipo/apuntarme`; Retos es lista → ficha con ME APUNTO
+  / DESAPUNTARME y el mapa se refresca con `RETOS_CAMBIADOS_EVENT`. **Sin apuntarse, un logo
+  ni se ve ni se coge** (`LOGO_ES_SUYO`, en `/objetos/viewport` y en `recoger`), y en la
+  clasificación solo salen los apuntados. Si el reto se apaga, sus logos dejan de existir para
+  todos. **Los cercos no dan logos**: solo pasar a 20 m. `/app/evento` devuelve `evento: null`:
+  la vc89 / build 35 no tiene botón, así que no ve retos ni logos.
 - **Las apps de antes de la 1.11.13 no saben nada**: con Halloween apagado no ven los
   logos; encendido, los pintan como calabazas. Antes de lanzar una campaña de verdad,
   que la 1.11.13 esté en las dos tiendas (y valorar `MIN_APP_VERSION`, §9).

@@ -1,4 +1,6 @@
-# Notas de la versión 1.11.13 (Android vc89 · iPhone build 35)
+# Notas de la versión 1.11.13 (Android vc90 · iPhone build 36)
+
+La vc89 y la build 35 no llevan los retos con «Me apunto»: **no publicarlas**.
 
 Sale en **las dos tiendas**. En iPhone es la primera desde la 1.11.11, así que
 lleva también los arreglos de la carrera de la 1.11.12 de Android.
@@ -11,8 +13,8 @@ los dos sitios, y si cambias una, acordarse de la otra.
   no, «Próximamente» con el anuncio que mande el servidor (`PROXIMAMENTE` en
   `routes/index.ts`; hoy, «GRAN RETO DE NAVIDAD · ¡CON PREMIO!»). Cambiar ese
   anuncio ya no pide versión nueva.
-- **Campañas de marca desde el panel** (CLAUDE.md §9-quinquies): logo, cartel y
-  Retos vienen del servidor.
+- **Lista de retos con ME APUNTO y DESAPUNTARME** (CLAUDE.md §9-quinquies): los
+  retos se escriben en el panel, y sus logos solo los ve y los coge quien se apunta.
 - Solo iPhone: los tres arreglos de la carrera de la 1.11.12 (carrera viva al
   volver a la app, GPS al pulsar INICIAR, copia pendiente que no se manda dos
   veces).
@@ -29,8 +31,8 @@ Android, Google o Strava (§15 del CLAUDE.md).
 ```
 Retos ya no habla de Halloween: anuncia el gran reto de Navidad, con premio.
 
-Preparada para las campañas de marca: el logo, el cartel y la pantalla de
-Retos vienen del servidor, sin sacar versión cada vez.
+Lista de retos: entra en uno y pulsa ME APUNTO para ver sus logos en el mapa.
+Con DESAPUNTARME desaparecen.
 ```
 
 ---

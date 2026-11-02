@@ -87,9 +87,13 @@ const RUTAS = {
     { user_id: '77777777-7777-7777-7777-777777777777', display_name: 'Leire', city: 'Donostia', total_points: 7400, total_zones: 25 },
     { user_id: '88888888-8888-8888-8888-888888888888', display_name: 'Rocío', city: 'Sevilla', total_points: 6100, total_zones: 19 },
     { user_id: '99999999-9999-9999-9999-999999999999', display_name: 'Jon', city: 'Vigo', total_points: 2200, total_zones: 8 }],
-  'GET /ranking/city': () => vacio ? [] : [
-    { user_id: RIVAL, display_name: 'Lucía M.', city: 'Bilbao', total_points: 28480, total_zones: 87 },
-    { user_id: YO, display_name: 'Auditor', city: 'Bilbao', total_points: 18540, total_zones: 41 }],
+  'GET /ranking/city': (_clave, url) => {
+    const city = new URL(url, 'http://x').searchParams.get('city');
+    return vacio ? [] : city === 'Bilbao' ? [
+      { user_id: RIVAL, display_name: 'Lucía M.', city, total_points: 28480, total_zones: 87 },
+      { user_id: YO, display_name: 'Auditor', city, total_points: 18540, total_zones: 41 }] : [
+      { user_id: '33333333-3333-3333-3333-333333333333', display_name: 'Dani', city, total_points: 30200, total_zones: 90 }];
+  },
   'GET /ranking/podium': () => vacio ? null : ({ weekStart: '2026-09-26', city: 'Bilbao',
     week:    { spain: [{ userId: RIVAL, name: 'Lucía M.', city: 'Bilbao', points: 3200, avatar: null }], city: [] },
     allTime: { spain: [{ userId: RIVAL, name: 'Lucía M.', city: 'Bilbao', points: 28480, avatar: null }], city: [] } }),
@@ -225,7 +229,7 @@ createServer((req, res) => {
   if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
   if (!fn) { perdidas.add(clave); console.log('  ✗ SIN MOCK', clave); res.writeHead(404); return res.end('{}'); }
   console.log('  ·', clave);
-  let cuerpo; try { cuerpo = fn(clave); } catch (e) { console.log('   ERROR en el mock:', e.message); cuerpo = {}; }
+  let cuerpo; try { cuerpo = fn(clave, req.url); } catch (e) { console.log('   ERROR en el mock:', e.message); cuerpo = {}; }
   res.writeHead(200); res.end(JSON.stringify(cuerpo));
 }).listen(8787, '0.0.0.0', () => console.log(`mock-api en :8787 (modo ${MODO})`));
 

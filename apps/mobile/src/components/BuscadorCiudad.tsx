@@ -30,8 +30,24 @@ interface Props {
 }
 
 /** Sin acentos ni mayúsculas, para que "coruña" encuentre "A Coruña". */
-const plano = (t: string) =>
+export const plano = (t: string) =>
   t.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+
+/** Las ciudades donde CORRR tiene gente, ordenadas. Una ciudad puede venir
+ *  escrita de dos formas ("València" y "Valencia"): se queda la primera y las
+ *  demás se descartan al compararlas sin acentos, igual que hace el servidor. */
+export async function ciudadesConGente(): Promise<string[]> {
+  const filas = await api.getCitiesRanking();
+  const vistas = new Set<string>();
+  const limpias: string[] = [];
+  for (const f of filas) {
+    const c = (f.city || '').trim();
+    if (!c || vistas.has(plano(c))) continue;
+    vistas.add(plano(c));
+    limpias.push(c);
+  }
+  return limpias.sort((a, b) => a.localeCompare(b, 'es'));
+}
 
 export default function BuscadorCiudad({ visible, onClose, onIr }: Props) {
   const [texto, setTexto] = useState('');
@@ -44,21 +60,8 @@ export default function BuscadorCiudad({ visible, onClose, onIr }: Props) {
     setTexto('');
     setError(null);
     if (ciudades.length > 0) return;
-    api.getCitiesRanking()
-      .then(filas => {
-        // Una ciudad puede venir escrita de dos formas ("València" y
-        // "Valencia"): se queda la primera y las demás se descartan al
-        // compararlas sin acentos, igual que hace el servidor.
-        const vistas = new Set<string>();
-        const limpias: string[] = [];
-        for (const f of filas) {
-          const c = (f.city || '').trim();
-          if (!c || vistas.has(plano(c))) continue;
-          vistas.add(plano(c));
-          limpias.push(c);
-        }
-        setCiudades(limpias.sort((a, b) => a.localeCompare(b, 'es')));
-      })
+    ciudadesConGente()
+      .then(setCiudades)
       .catch(() => {});
   }, [visible]);
 

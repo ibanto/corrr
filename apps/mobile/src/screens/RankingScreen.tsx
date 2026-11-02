@@ -10,14 +10,18 @@ import {
   Alert,
   Animated,
   PanResponder,
+  TextInput,
+  Keyboard,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, radius } from '../theme';
 import FichaCorredor from '../components/FichaCorredor';
+import { ciudadesConGente, plano } from '../components/BuscadorCiudad';
 import { api, RankingEntry, FriendRequest, Friend } from '../services/api';
 
 type Tab = 'Nacional' | 'Ciudad' | 'Amigos';
+const NOMBRE_TAB: Record<Tab, string> = { Nacional: 'España', Ciudad: 'Mi ciudad', Amigos: 'Amigos' };
 
 interface Props {
   user: { id: string; username: string; email: string; city?: string } | null;
@@ -189,8 +193,13 @@ export default function RankingScreen({ user, pendingCount = 0, onPendingCountCh
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [trend, setTrend] = useState(0);
-  const [citiesData, setCitiesData] = useState<RankingEntry[]>([]);
-  const [citiesLoading, setCitiesLoading] = useState(false);
+  /** La ciudad que se está mirando en la pestaña Mi ciudad; null = la mía. */
+  const [ciudadVista, setCiudadVista] = useState<string | null>(null);
+  const [ciudades, setCiudades] = useState<string[]>([]);
+  /** La guardada al entrar se queda vieja si se cambia en el Perfil o si la puso
+   *  el GPS después: la que vale es la del servidor. */
+  const [miCiudad, setMiCiudad] = useState<string | null>(user?.city ?? null);
+  const [textoCiudad, setTextoCiudad] = useState('');
   const [friends, setFriends] = useState<Friend[]>([]);
   const [pendingRequests, setPendingRequests] = useState<FriendRequest[]>([]);
   const [friendsLoading, setFriendsLoading] = useState(false);
@@ -201,7 +210,7 @@ export default function RankingScreen({ user, pendingCount = 0, onPendingCountCh
     if (currentTab === 'Nacional') {
       res = await api.getRanking();
     } else if (currentTab === 'Ciudad') {
-      const city = user?.city;
+      const city = ciudadVista ?? miCiudad;
       if (city) {
         res = await api.getRankingByCity(city);
       } else {
@@ -230,15 +239,6 @@ export default function RankingScreen({ user, pendingCount = 0, onPendingCountCh
 
     setLoading(false);
     setRefreshing(false);
-  };
-
-  const loadCities = async (silent = false) => {
-    if (!silent) setCitiesLoading(true);
-    try {
-      const res = await api.getCitiesRanking();
-      setCitiesData(res);
-    } catch {}
-    setCitiesLoading(false);
   };
 
   const loadFriends = async () => {
@@ -287,9 +287,27 @@ export default function RankingScreen({ user, pendingCount = 0, onPendingCountCh
 
   useEffect(() => {
     if (tab === 'Amigos') loadFriends();
-    else if (tab === 'Ciudad') loadCities();
     else load(false, tab);
+  }, [tab, ciudadVista, miCiudad]);
+
+  useEffect(() => {
+    api.getProfile().then(p => { if (p?.city) setMiCiudad(p.city); }).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (tab === 'Ciudad' && ciudades.length === 0) ciudadesConGente().then(setCiudades).catch(() => {});
   }, [tab]);
+
+  const qCiudad = plano(textoCiudad);
+  const ciudadesFiltradas = qCiudad ? ciudades.filter(c => plano(c).includes(qCiudad)) : [];
+  const ciudadActual = ciudadVista ?? miCiudad;
+  const verOtraCiudad = !!ciudadVista && !!miCiudad && plano(ciudadVista) !== plano(miCiudad);
+
+  const elegirCiudad = (c: string | null) => {
+    Keyboard.dismiss();
+    setTextoCiudad('');
+    setCiudadVista(c);
+  };
 
   const sendFriendRequest = async (item: RankingEntry) => {
     if (!item.userId) return;
@@ -366,7 +384,7 @@ export default function RankingScreen({ user, pendingCount = 0, onPendingCountCh
             onPress={() => setTab(t)}
           >
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-              <Text style={[styles.tabText, tab === t && styles.tabTextActive]}>{t}</Text>
+              <Text style={[styles.tabText, tab === t && styles.tabTextActive]}>{NOMBRE_TAB[t]}</Text>
               {t === 'Amigos' && pendingCount > 0 && (
                 <View style={styles.tabBadge}>
                   <Text style={styles.tabBadgeText}>{pendingCount}</Text>
@@ -377,7 +395,56 @@ export default function RankingScreen({ user, pendingCount = 0, onPendingCountCh
         ))}
       </View>
 
-      {tab === 'Amigos' ? (
+      {tab === 'Ciudad' && (
+        <View style={styles.zonaCiudad}>
+          <View style={styles.cajaCiudad}>
+            <Ionicons name="search" size={18} color={colors.textSecondary} />
+            <TextInput
+              style={styles.inputCiudad}
+              value={textoCiudad}
+              onChangeText={setTextoCiudad}
+              placeholder="Buscar otra ciudad"
+              placeholderTextColor={colors.textMuted}
+              autoCorrect={false}
+              returnKeyType="search"
+            />
+            {textoCiudad.length > 0 && (
+              <TouchableOpacity onPress={() => setTextoCiudad('')}>
+                <Ionicons name="close-circle" size={18} color={colors.textMuted} />
+              </TouchableOpacity>
+            )}
+          </View>
+          {!qCiudad && !!ciudadActual && (
+            <View style={styles.ciudadVista}>
+              <Text style={styles.ciudadVistaNombre} numberOfLines={1}>{ciudadActual}</Text>
+              {verOtraCiudad && (
+                <TouchableOpacity onPress={() => elegirCiudad(null)} hitSlop={10}>
+                  <Text style={styles.volverMiCiudad}>Volver a {miCiudad}</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
+        </View>
+      )}
+
+      {tab === 'Ciudad' && !!qCiudad ? (
+        <FlatList
+          data={ciudadesFiltradas}
+          keyExtractor={c => c}
+          contentContainerStyle={styles.list}
+          keyboardShouldPersistTaps="handled"
+          renderItem={({ item: c }) => (
+            <TouchableOpacity style={styles.filaCiudad} onPress={() => elegirCiudad(c)}>
+              <Ionicons name="location" size={16} color={colors.orange} />
+              <Text style={styles.filaCiudadNombre} numberOfLines={1}>{c}</Text>
+              <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
+            </TouchableOpacity>
+          )}
+          ListEmptyComponent={
+            <Text style={styles.sinCiudad}>Aún no hay nadie de CORRR en esa ciudad.</Text>
+          }
+        />
+      ) : tab === 'Amigos' ? (
         friendsLoading ? (
           <View style={styles.centered}>
             <ActivityIndicator color={colors.orange} size="large" />
@@ -445,64 +512,6 @@ export default function RankingScreen({ user, pendingCount = 0, onPendingCountCh
             }
           />
         )
-      ) : tab === 'Ciudad' ? (
-        citiesLoading ? (
-          <View style={styles.centered}>
-            <ActivityIndicator color={colors.orange} size="large" />
-          </View>
-        ) : citiesData.length === 0 ? (
-          <View style={styles.centered}>
-            <Text style={styles.emptyTitle}>Sin resultados</Text>
-            <Text style={styles.emptyText}>Aún no hay ciudades con corredores.</Text>
-          </View>
-        ) : (
-          <FlatList
-            data={citiesData}
-            keyExtractor={item => `${item.city}-${item.userId}`}
-            contentContainerStyle={styles.list}
-            refreshControl={
-              <RefreshControl
-                refreshing={refreshing}
-                onRefresh={() => { setRefreshing(true); loadCities(true).then(() => setRefreshing(false)); }}
-                tintColor={colors.orange}
-              />
-            }
-            ItemSeparatorComponent={() => <View style={styles.separator} />}
-            renderItem={({ item }) => {
-              const isMyCity = user?.city && item.city.toLowerCase() === user.city.toLowerCase();
-              return (
-                <SwipeableRankingRow item={item} onAddFriend={() => sendFriendRequest(item)}>
-                  <View style={[styles.row, styles.rowSolid, isMyCity && styles.rowHighlight]}>
-                    <View style={[styles.cityBadge, isMyCity && styles.cityBadgeMine]}>
-                      <Text style={styles.cityBadgeText}>{item.city.charAt(0).toUpperCase()}</Text>
-                    </View>
-                    <View style={styles.userInfo}>
-                      <Text style={[styles.cityName, isMyCity && styles.usernameHighlight]}>{item.city}</Text>
-                      <View style={styles.cityLeaderRow}>
-                        <Ionicons name="trophy" size={12} color={colors.orange} />
-                        <Text style={styles.cityLeaderName}>{item.username}</Text>
-                      </View>
-                    </View>
-                    <View style={styles.rightCell}>
-                      <Text style={[styles.points, isMyCity && styles.pointsHighlight]}>
-                        {item.points.toLocaleString('es-ES')}
-                      </Text>
-                      <Text style={styles.pointsLabel}>pts · {item.zones} zonas</Text>
-                    </View>
-                  </View>
-                </SwipeableRankingRow>
-              );
-            }}
-            ListHeaderComponent={
-              <Text style={styles.citiesSubtitle}>Líder por ciudad</Text>
-            }
-            ListFooterComponent={
-              <View style={styles.footer}>
-                <Text style={styles.footerText}>🔄 Actualiza cada hora</Text>
-              </View>
-            }
-          />
-        )
       ) : loading ? (
         <View style={styles.centered}>
           <ActivityIndicator color={colors.orange} size="large" />
@@ -510,7 +519,9 @@ export default function RankingScreen({ user, pendingCount = 0, onPendingCountCh
       ) : data.length === 0 ? (
         <View style={styles.centered}>
           <Text style={styles.emptyTitle}>Sin resultados</Text>
-          <Text style={styles.emptyText}>Aún no hay corredores.</Text>
+          <Text style={styles.emptyText}>
+            {tab === 'Ciudad' && !ciudadActual ? 'Busca una ciudad para ver su ranking.' : 'Aún no hay corredores.'}
+          </Text>
         </View>
       ) : (
         <FlatList
@@ -686,19 +697,26 @@ const styles = StyleSheet.create({
     letterSpacing: 1, marginBottom: spacing.sm, marginTop: spacing.sm,
   },
   // Cities tab
-  citiesSubtitle: {
-    fontSize: 12, fontWeight: '800', color: colors.textSecondary,
-    letterSpacing: 1, marginBottom: spacing.sm, textTransform: 'uppercase',
+  zonaCiudad: { paddingHorizontal: spacing.md, marginBottom: spacing.sm },
+  cajaCiudad: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
+    paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
+    backgroundColor: colors.bgCard, borderRadius: radius.md,
+    borderWidth: 1, borderColor: colors.border,
   },
-  cityBadge: {
-    width: 40, height: 40, borderRadius: 12, backgroundColor: colors.bgCardAlt,
-    alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: colors.border,
+  inputCiudad: { flex: 1, color: colors.textPrimary, fontSize: 15, padding: 0 },
+  ciudadVista: {
+    flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between',
+    gap: spacing.sm, marginTop: spacing.md,
   },
-  cityBadgeMine: { backgroundColor: `${colors.orange}20`, borderColor: `${colors.orange}40` },
-  cityBadgeText: { fontSize: 18, fontWeight: '800', color: colors.textPrimary },
-  cityName: { fontSize: 15, fontWeight: '700', color: colors.textPrimary },
-  cityLeaderRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 },
-  cityLeaderName: { fontSize: 12, color: colors.orange, fontWeight: '600' },
+  ciudadVistaNombre: { flex: 1, color: colors.textPrimary, fontSize: 18, fontWeight: '900' },
+  volverMiCiudad: { color: colors.orange, fontSize: 13, fontWeight: '700' },
+  filaCiudad: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingVertical: spacing.md,
+    borderBottomWidth: 1, borderBottomColor: colors.border,
+  },
+  filaCiudadNombre: { flex: 1, color: colors.textPrimary, fontSize: 16, fontWeight: '600' },
+  sinCiudad: { color: colors.textSecondary, fontSize: 14, textAlign: 'center', marginTop: spacing.lg },
   tabBadge: {
     backgroundColor: '#FB0E01', borderRadius: 8,
     minWidth: 16, height: 16, alignItems: 'center', justifyContent: 'center',
