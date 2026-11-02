@@ -2652,7 +2652,7 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
     var dos = function (n) { return (n < 10 ? '0' : '') + n; };
     return d.getFullYear() + '-' + dos(d.getMonth() + 1) + '-' + dos(d.getDate()) + 'T' + dos(d.getHours()) + ':' + dos(d.getMinutes());
   }
-  function rellenarCampana(r) {
+  function rellenarCampana(r, conservarFechas) {
     var c = r.campana || {};
     CAMPOS_CAMPANA.forEach(function (k) { document.getElementById('c_' + k).value = c[k] || ''; });
     // El identificador es el que llevan sus logos y sus apuntados: no se cambia.
@@ -2661,18 +2661,20 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
     document.getElementById('c_lugar').textContent = c.lugar ? 'Se planta en: ' + c.lugar : '';
     verLogo(c.imagen);
     document.getElementById('c_modo').value = r.modo || 'apagado';
-    document.getElementById('c_desde').value = fechaLocal(new Date());
-    document.getElementById('c_hasta').value = fechaLocal(new Date(Date.now() + 7 * 24 * 3600 * 1000));
+    if (!conservarFechas) {
+      document.getElementById('c_desde').value = fechaLocal(new Date());
+      document.getElementById('c_hasta').value = fechaLocal(new Date(Date.now() + 7 * 24 * 3600 * 1000));
+    }
     document.getElementById('c_eliminar').style.display = c.tipo ? '' : 'none';
     document.getElementById('c_quitar').style.display = c.tipo ? '' : 'none';
     document.getElementById('c_msg').style.display = 'none';
   }
-  function abrirCampana(detalle, r) {
+  function abrirCampana(detalle, r, conservarFechas) {
     [].forEach.call(document.querySelectorAll('#c_lista details'), function (d) {
       if (d !== detalle) d.open = false;
     });
     detalle.appendChild(document.getElementById('fc'));
-    rellenarCampana(r);
+    rellenarCampana(r, conservarFechas);
   }
   function filaCampana(r) {
     var c = r.campana || {};
@@ -2704,7 +2706,7 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
         lista.appendChild(d);
         if (abrir && r.campana.tipo === abrir) {
           d.dataset.yaAbierto = '1';
-          abrirCampana(d, r);
+          abrirCampana(d, r, true);
           d.open = true;
         }
       });
@@ -2723,11 +2725,19 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
     if (!ya) lista.insertBefore(d, lista.firstChild);
     d.open = true;
   });
-  document.getElementById('c_guardar').addEventListener('click', function () {
+  // Guarda lo que hay escrito en el formulario. También antes de sembrar: la
+  // siembra va a la ciudad GUARDADA, y si no, al cambiar la ciudad y darle a
+  // sembrar los logos seguían cayendo en la de antes.
+  function guardarCampana() {
     var cuerpo = { modo: document.getElementById('c_modo').value };
     CAMPOS_CAMPANA.forEach(function (k) { cuerpo[k] = val('c_' + k); });
-    if (cuerpo.modo === 'todos' && !confirm('¿Encender la campaña para toda su ciudad?')) return;
-    api('/admin/campana', { method: 'POST', body: JSON.stringify(cuerpo) }).then(function (r) {
+    if (cuerpo.modo === 'todos' && !confirm('¿Encender la campaña para toda su ciudad?')) return null;
+    return api('/admin/campana', { method: 'POST', body: JSON.stringify(cuerpo) });
+  }
+  document.getElementById('c_guardar').addEventListener('click', function () {
+    var guardando = guardarCampana();
+    if (!guardando) return;
+    guardando.then(function (r) {
       return cargarCampanasPanel(r.campana.tipo).then(function () {
         msgCampana(r.modo === 'todos' ? '✓ Guardada y encendida para su ciudad.'
           : (r.modo === 'prueba' ? '✓ Guardada. Solo la ve ' + r.corredor + '.' : '✓ Guardada, apagada.'), true);
@@ -2753,19 +2763,28 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
   });
   document.getElementById('c_sembrar').addEventListener('click', function () {
     var tipo = val('c_tipo');
-    if (!tipo) { msgCampana('✗ Guarda primero la campaña con su identificador', false); return; }
+    if (!tipo) { msgCampana('✗ Falta el identificador', false); return; }
+    var antes = retosPanel.filter(function (x) { return x.campana.tipo === tipo; })[0];
+    var guardando = guardarCampana();
+    if (!guardando) return;
     var b = document.getElementById('c_sembrar');
     b.disabled = true;
     msgCampana('Sembrando... (no toques nada)', true);
-    api('/admin/objetos', { method: 'POST', body: JSON.stringify({
-      tipo: tipo, fuente: 'calles', enCampana: true, todos: false,
-      cuantos: Number(document.getElementById('c_cuantos').value),
-      puntos: Number(document.getElementById('c_puntos').value),
-      desde: val('c_desde') || null, hasta: val('c_hasta') || null,
-    }) }).then(function (r) {
-      b.disabled = false;
-      cargarCampanasPanel(tipo).then(function () {
-        msgCampana('✓ Sembrados ' + r.puestas + ' logos de ' + r.puntos + ' puntos' + (r.donde || ''), true);
+    guardando.then(function (g) {
+      return api('/admin/objetos', { method: 'POST', body: JSON.stringify({
+        tipo: g.campana.tipo, fuente: 'calles', enCampana: true, todos: false,
+        cuantos: Number(document.getElementById('c_cuantos').value),
+        puntos: Number(document.getElementById('c_puntos').value),
+        desde: val('c_desde') || null, hasta: val('c_hasta') || null,
+      }) }).then(function (r) {
+        return cargarCampanasPanel(g.campana.tipo).then(function () {
+          b.disabled = false;
+          if (!r.puestas) { msgCampana('✗ No ha cabido ningún logo' + (r.donde || '') + '. Allí no hay calles cargadas ni nadie ha corrido.', false); return; }
+          // Los de la ciudad anterior no se tocan solos: los quita el botón.
+          var cambio = antes && antes.libres > 0 && antes.campana.ciudad !== g.campana.ciudad;
+          msgCampana('✓ Sembrados ' + r.puestas + ' logos de ' + r.puntos + ' puntos' + (r.donde || '')
+            + (cambio ? '. Ojo: siguen los ' + antes.libres + ' de ' + antes.campana.ciudad + '.' : ''), true);
+        });
       });
     }).catch(function (e) { b.disabled = false; msgCampana('✗ ' + e.message, false); });
   });
