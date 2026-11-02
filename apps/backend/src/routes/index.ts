@@ -2217,10 +2217,9 @@ guardar (en prueba, para uno), sembrar y, cuando est&eacute; bien, encender. El 
     <textarea id="c_premio" rows="2"></textarea></label>
   <select id="c_modo">
     <option value="apagado">Apagada &mdash; nadie la ve</option>
-    <option value="prueba">Solo para un corredor, para probarla</option>
+    <option value="prueba">Solo para Ibanto, para probarla</option>
     <option value="todos">Encendida para su ciudad</option>
   </select>
-  <input id="c_corredor" placeholder="Nombre del corredor que la prueba" style="display:none">
   <button class="btn" id="c_guardar" type="button">Guardar la campa&ntilde;a</button>
   <div id="c_msg" class="resultado" style="display:none"></div>
   <label class="campo">Cu&aacute;ntos logos
@@ -2662,8 +2661,6 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
     document.getElementById('c_lugar').textContent = c.lugar ? 'Se planta en: ' + c.lugar : '';
     verLogo(c.imagen);
     document.getElementById('c_modo').value = r.modo || 'apagado';
-    document.getElementById('c_corredor').value = r.corredor || '';
-    document.getElementById('c_corredor').style.display = r.modo === 'prueba' ? '' : 'none';
     document.getElementById('c_desde').value = fechaLocal(new Date());
     document.getElementById('c_hasta').value = fechaLocal(new Date(Date.now() + 7 * 24 * 3600 * 1000));
     document.getElementById('c_eliminar').style.display = c.tipo ? '' : 'none';
@@ -2726,11 +2723,8 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
     if (!ya) lista.insertBefore(d, lista.firstChild);
     d.open = true;
   });
-  document.getElementById('c_modo').addEventListener('change', function (ev) {
-    document.getElementById('c_corredor').style.display = ev.target.value === 'prueba' ? '' : 'none';
-  });
   document.getElementById('c_guardar').addEventListener('click', function () {
-    var cuerpo = { modo: document.getElementById('c_modo').value, corredor: val('c_corredor') };
+    var cuerpo = { modo: document.getElementById('c_modo').value };
     CAMPOS_CAMPANA.forEach(function (k) { cuerpo[k] = val('c_' + k); });
     if (cuerpo.modo === 'todos' && !confirm('¿Encender la campaña para toda su ciudad?')) return;
     api('/admin/campana', { method: 'POST', body: JSON.stringify(cuerpo) }).then(function (r) {
@@ -6673,6 +6667,8 @@ app.post('/admin/ajustes', { preHandler: requireAdmin }, async (req: any, reply)
  *  con su interruptor (`modo`: no / si / prueba:<nombre>), y en la app salen como
  *  una lista de retos. Sus logos solo los ve y los coge quien se apunta
  *  (`campana_apuntados`, LOGO_ES_SUYO). */
+const ADMIN_CORREDOR = 'Ibanto';
+
 type Campana = {
   tipo: string;        // lo que va en objetos.tipo, p. ej. 'tienda-pepe'
   nombre: string;      // 'el logo de Tienda Pepe'
@@ -6888,12 +6884,12 @@ app.post('/admin/campana', { preHandler: requireAdmin }, async (req: any, reply)
   let modo = 'no';
   if (b.modo === 'todos') modo = 'si';
   else if (b.modo === 'prueba') {
-    const quien = txt(b.corredor, 80);
-    if (!quien) return reply.status(400).send({ error: 'Para probarlo hace falta el nombre del corredor' });
+    // Las campañas las prueba siempre el administrador, y en cualquier ciudad:
+    // retosPara no le mira la ciudad a quien prueba.
     const { rows } = await db.query(
-      'SELECT display_name FROM users WHERE LOWER(display_name) = LOWER($1)', [quien],
+      'SELECT display_name FROM users WHERE LOWER(display_name) = LOWER($1)', [ADMIN_CORREDOR],
     );
-    if (rows.length === 0) return reply.status(400).send({ error: `No hay ningún corredor que se llame "${quien}"` });
+    if (rows.length === 0) return reply.status(400).send({ error: `No encuentro a ${ADMIN_CORREDOR}` });
     modo = `prueba:${rows[0].display_name}`;
   }
 
