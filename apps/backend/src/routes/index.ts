@@ -2348,6 +2348,16 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
   function esc(t) { return String(t == null ? '' : t).replace(/[&<>"]/g, function (c) {
     return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
   var val = function (id) { return document.getElementById(id).value.trim(); };
+  // Un campo de fecha y hora da la hora SIN zona horaria (2026-11-05T21:39).
+  // El servidor va en UTC y la leía como hora de Londres: los logos y las
+  // calabazas salían una hora tarde en invierno y dos en verano (5-nov-2026).
+  // El navegador sí sabe que es hora de España, así que la pasa él a UTC.
+  var horaServidor = function (id) {
+    var v = val(id);
+    if (!v) return null;
+    var d = new Date(v);
+    return isNaN(d.getTime()) ? null : d.toISOString();
+  };
   // Rayas de obra de la esquina, las mismas que pinta la app.
   for (var k = 0; k < 9; k++) {
     var r = document.createElement('i');
@@ -2775,7 +2785,7 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
         tipo: g.campana.tipo, fuente: 'calles', enCampana: true, todos: false,
         cuantos: Number(document.getElementById('c_cuantos').value),
         puntos: Number(document.getElementById('c_puntos').value),
-        desde: val('c_desde') || null, hasta: val('c_hasta') || null,
+        desde: horaServidor('c_desde'), hasta: horaServidor('c_hasta'),
       }) }).then(function (r) {
         return cargarCampanasPanel(g.campana.tipo).then(function () {
           b.disabled = false;
@@ -2857,8 +2867,8 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
       todos: !!todas,
       cuantos: Number(document.getElementById('o_cuantas').value),
       puntos: Number(document.getElementById('o_puntos').value),
-      desde: val('o_desde') || null,
-      hasta: val('o_hasta') || null,
+      desde: horaServidor('o_desde'),
+      hasta: horaServidor('o_hasta'),
     };
     var desdeCuando = Date.now();
     var base = todas ? 'Sembrando por todas las ciudades' : 'Sembrando';
