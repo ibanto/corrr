@@ -67,7 +67,7 @@ Y el ranking cambia: España, tu ciudad y tus amigos. Con un buscador para cotil
 Y arreglos por dentro para que no se pierda ninguna carrera.
 ```
 
-Después de que cada tienda la publique: Android `LATEST_APP_VERSION` = 1.11.13 ·
-`LATEST_APP_VC` = 89; iPhone `LATEST_IOS_VERSION` = 1.11.13 · `LATEST_IOS_BUILD`
-= 35 (Railway, o el valor por defecto en `routes/index.ts` y push).
+Después de que cada tienda la publique: Android `LATEST_APP_VERSION` = 1.11.14 ·
+`LATEST_APP_VC` = 91; iPhone `LATEST_IOS_VERSION` = 1.11.14 · `LATEST_IOS_BUILD`
+= 37 (Railway, o el valor por defecto en `routes/index.ts` y push).
 **`MIN_APP_VERSION` NO se toca** con gente corriendo (§9).

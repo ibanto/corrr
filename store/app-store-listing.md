@@ -43,61 +43,49 @@ Reglas de Apple que conviene no olvidar:
 
 ## Descripción (4000 caracteres máx.)
 
+*Rehecha el 5-nov-2026 para la 1.11.14: sin Strava (la conexión está apagada) y con el ranking nuevo y los Retos. La que había en la tienda era la de Halloween, con fechas.*
+
 ```
 CORRR convierte cada carrera en una batalla por el territorio de tu ciudad.
 
-Cada calle que pisas se pinta de tu color. Y lo que es tuyo, otro corredor
-puede quitártelo.
+Cada calle que pisas se pinta de tu color. Y lo que es tuyo, otro corredor puede quitártelo.
 
 
 SAL A CORRER Y CONQUISTA
 
-Empieza a correr y traza tu ruta por las calles. Cuando cierras un circuito
-—vuelves sobre tus pasos— todo el terreno que has encerrado pasa a ser tuyo.
-Cuanto más grande el área, más puntos.
+Empieza a correr y traza tu ruta por las calles. Cuando cierras un circuito, todo el terreno que has encerrado pasa a ser tuyo. Cuanto más grande el área, más puntos.
 
 
 ROBA A TUS RIVALES
 
-Si tu ruta pisa la zona de otro corredor, se la quitas. Y cuando alguien te
-roba a ti, te llega un aviso al instante con el nombre del culpable. Puedes
-devolvérsela con un mensaje de los diez que hay para picarse.
+Si tu ruta pisa la zona de otro corredor, se la quitas. Y cuando alguien te roba a ti, te llega un aviso con el nombre del culpable. Puedes contestarle con uno de los mensajes para picarse.
 
 
 COMPITE EN EL RANKING
 
-Escala posiciones en el ranking de tu ciudad y en el nacional. Cada zona
-conquistada y cada kilómetro suman. Quien domina más territorio, manda.
+España, tu ciudad y tus amigos. Y un buscador para cotillear el ranking de cualquier otra ciudad. Cada zona conquistada y cada kilómetro suman.
+
+
+RETOS
+
+En la pestaña Retos están los retos especiales de tu ciudad. Te apuntas y sales a por ellos.
 
 
 PRESUME DE LO TUYO
 
-Al terminar cada carrera puedes compartir una tarjeta con lo que has
-conquistado y a quién se lo has robado, lista para tus historias.
-
-
-IMPORTA DESDE STRAVA
-
-Conecta tu cuenta e importa tus carreras automáticamente. Tu histórico se
-convierte en territorio.
-
-
-ESTADÍSTICAS COMPLETAS
-
-Kilómetros, carreras, zonas, puntos y racha de días seguidos. Tu progreso
-semana a semana.
+Al terminar cada carrera puedes compartir una tarjeta con lo que has conquistado y a quién se lo has robado, lista para tus historias.
 
 
 QUÉ INCLUYE
 
-- Mapa en tiempo real con GPS de alta precisión
+- Mapa en tiempo real con GPS
 - Conquista de territorio cerrando circuitos
 - Robo de zonas entre corredores
 - Avisos cuando alguien te quita territorio
-- Mensajes para picarse con tus rivales
-- Ranking nacional y por ciudad
+- Ranking de España, de tu ciudad y de tus amigos
+- Retos en tu ciudad
 - Tarjetas para compartir en redes
-- Integración con Strava
+- Estadísticas de tus carreras
 - Funciona con la pantalla apagada
 
 
@@ -109,8 +97,7 @@ CORRR es gratis. Sal a correr y demuestra quién manda en tu barrio.
 ## Texto promocional (170 caracteres máx.)
 
 ```
-Nuevo: comparte tus conquistas en historias y pícate con quien te robe
-territorio. Además, mejoras importantes de precisión del GPS.
+Nuevo ranking: España, tu ciudad y tus amigos. Y en Retos, lo que viene: el gran reto de Navidad, con premio.
 ```
 
 *Campo que Play no tiene. Se puede cambiar SIN pasar por revisión, así que

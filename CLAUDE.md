@@ -38,7 +38,7 @@ AUTO-PAUSA y «Sin señal GPS» con vibración). Las dos, después de Halloween.
 1.11.10 **más de doce horas** después de publicar. No sirve para decidir cuándo
 anunciar; la ficha web sí (ahí sale "Versión 1.11.11" como actual con su fecha).
 
-**1.11.14 (Android vc91, iPhone build 37) — MONTADA el 2-nov, sin subir.**
+**1.11.14 (Android vc91, iPhone build 37) — MONTADA el 2-nov. iPhone en TestFlight y probado en la calle el 5-nov: OK. Falta probar el Android.**
 Sustituye a la 1.11.13 (vc89/vc90, builds 35/36), que solo llegó a prueba: esa no se
 publica. AAB en `apps/mobile/builds/corrr-v1.11.14-vc91.aab`, iPhone archivado como
 `CORRR-1.11.14-build37` (Xcode → Organizer: «CORRR 1.11.14 (37)»). Lleva el ranking con
@@ -55,6 +55,13 @@ Retos probado en el emulador contra `mock-api` en los tres casos (anuncio de
 Navidad, sin anuncio y con campaña). **Sin ver todavía**: el anuncio contra el
 servidor de VERDAD (`/app/evento` pide sesión); se verá en TestFlight.
 
+**Prueba del iPhone, 5-nov (Iban, desde TestFlight): todo bien.** 17 minutos con
+la pantalla apagada, y al pulsar STOP sale el resumen. Creó una campaña en el panel: ME APUNTO
+y DESAPUNTARME funcionan, y al borrarla Retos enseña «Próximamente · Gran reto de
+Navidad» (o sea, el anuncio visto ya contra el servidor de verdad). El ranking
+enseña Mi ciudad con su buscador. **Falta la prueba en el Android**: subir la vc91
+a la prueba interna de Play Console y hacer la misma prueba en la calle.
+
 **El evento de Halloween fue del 23-oct al 1-nov** (§9-bis). **Ya acabó**
 (~02:00 del 2-nov). Marcador final: 113 calabazas, 197 fantasmas; 1.º KarolK
 (42 calabazas), 2.º carlos (26), 3.º Oriol15 (19). Publicado en redes el 2-nov
@@ -62,7 +69,7 @@ con sus nombres (Iban lo pidió).
 
 ### Lo siguiente que hay que hacer (2-nov)
 
-1. **Subir la 1.11.13** — lo hace Iban, en este orden:
+1. **Subir la 1.11.14** — lo hace Iban, en este orden:
    - iPhone a TestFlight: Organizer → «CORRR 1.11.14 (37)» → Distribute App.
    - **Prueba en la calle** con los dos móviles (`docs/prueba-gps.md`): se tocó
      `MapScreen.tsx`. Mirar también Retos: tiene que salir el anuncio de Navidad.
@@ -71,7 +78,7 @@ con sus nombres (Iban lo pidió).
      publicación gestionada: aprobada NO es publicada, hay que pulsar
      «Publicar 1 cambio».
    - Publicada cada tienda → anunciarla (`LATEST_*`, §4 punto 5).
-2. **NO apagar el interruptor de Halloween** hasta que la 1.11.13 esté en las
+2. **NO apagar el interruptor de Halloween** hasta que la 1.11.14 esté en las
    dos tiendas: las 1.11.11/1.11.12 instaladas enseñan en Retos el cartel de
    Halloween escrito en la app; encendido dice «HAY CALABAZAS… HASTA EL 1 DE
    NOVIEMBRE» con el marcador final, y apagado diría «ESTE HALLOWEEN,
@@ -934,6 +941,13 @@ servidor:
   clasificación solo salen los apuntados. Si el reto se apaga, sus logos dejan de existir para
   todos. **Los cercos no dan logos**: solo pasar a 20 m. `/app/evento` devuelve `evento: null`:
   la vc89 / build 35 no tiene botón, así que no ve retos ni logos.
+- **La hora de «Desde» y «Hasta» (arreglado el 5-nov-2026, commit `81c3f0c`)**: el campo de
+  fecha del panel da la hora SIN zona (`2026-11-05T21:39`) y el servidor, en UTC, la leía como
+  hora de Londres. La primera campaña de prueba de Iban (LA TIENDA) se sembró a las 21:39 y los
+  logos no salían: estaban programados para las 22:39 de España. Es el mismo fallo que hizo
+  empezar Halloween a las 2 de la madrugada. Ahora el panel pasa la hora a UTC en el navegador
+  (`horaServidor`) al sembrar logos y calabazas. **Lo sembrado antes del arreglo conserva su
+  hora corrida**: para corregirlo, «Quitar logos» y volver a sembrar.
 - **Las apps de antes de la 1.11.13 no saben nada**: con Halloween apagado no ven los
   logos; encendido, los pintan como calabazas. Antes de lanzar una campaña de verdad,
   que la 1.11.13 esté en las dos tiendas (y valorar `MIN_APP_VERSION`, §9).
