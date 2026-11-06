@@ -83,7 +83,8 @@ con sus nombres (Iban lo pidió).
    Halloween escrito en la app; encendido dice «HAY CALABAZAS… HASTA EL 1 DE
    NOVIEMBRE» con el marcador final, y apagado diría «ESTE HALLOWEEN,
    PREPÁRATE», que es peor. Las calabazas ya caducaron y la siembra automática
-   solo actúa con el evento vivo, así que encendido no siembra nada.
+   solo actúa con el evento vivo, así que encendido no siembra nada. Desde el
+   6-nov los logos de campaña se cogen con Halloween apagado o encendido, da igual.
 3. **El anuncio de Retos** («GRAN RETO DE NAVIDAD · ¡CON PREMIO!») está en
    `PROXIMAMENTE` de `routes/index.ts`. **Ese reto de Navidad NO existe
    todavía**: falta decidir con Iban qué es, fechas y premio (lo natural es
@@ -948,6 +949,34 @@ servidor:
   empezar Halloween a las 2 de la madrugada. Ahora el panel pasa la hora a UTC en el navegador
   (`horaServidor`) al sembrar logos y calabazas. **Lo sembrado antes del arreglo conserva su
   hora corrida**: para corregirlo, «Quitar logos» y volver a sembrar.
+- **Varias ciudades, varios probadores y logos sin Halloween (6-nov-2026)**, pedido por Iban:
+  - **Los logos ya no dependen del interruptor de Halloween.** Hasta entonces `POST /runs` solo
+    llamaba a `recoger` si a ese corredor le tocaba Halloween: con el interruptor apagado los
+    logos se veían en el mapa y NO se cogían. Ahora `recoger` lleva un `conHalloween`: las
+    calabazas, fantasmas y zombis siguen yendo por el interruptor, y los logos por su reto
+    (`LOGO_ES_SUYO`). Se puede apagar Halloween sin tocar las campañas.
+  - **Ciudades**: el campo del panel admite varias separadas por comas («Barcelona, Badalona»,
+    diez como mucho). Cada una se busca en Nominatim al guardar (las que ya estaban guardadas no
+    se vuelven a pedir; entre peticiones nuevas, 1,1 s) y va a `datos.zonas[]` {ciudad, lugar,
+    limites}; `ciudad`, `lugar` y `limites` se quedan con la primera por compatibilidad, y las
+    campañas guardadas antes (sin `zonas`) siguen valiendo (`cajasDeCampana`). El reto lo ve en
+    Retos quien sea de CUALQUIERA de ellas; «Sembrar» pone `cuantos` EN CADA ciudad y el panel
+    dice cuántos han cabido en cada una (`vacias`: las que no tienen calles cargadas ni nadie
+    ha corrido → `npm run calles`); un logo cogido renace en la ciudad donde estaba. OJO: la
+    zona es el RECTÁNGULO que da OpenStreetMap, no el término municipal: el de Barcelona mete
+    L'Hospitalet y Sant Adrià.
+  - **Prueba para varios**: el modo «En prueba» lleva un campo con nombres de la app o correos
+    separados por comas (vacío = Ibanto; veinte como mucho). Se guarda como
+    `prueba:Nombre1,Nombre2` y `ajusteLeToca` entiende la lista (también valdría para
+    Halloween). Es para que el cliente pruebe la campaña antes de encenderla: la ve en Retos
+    aunque sea de otra ciudad, se apunta y sale a correr.
+  - **«Hasta» con la fecha de los logos ya puestos**: `/admin/campanas` devuelve el `hasta`
+    de los logos libres y el panel lo propone al abrir la campaña, con una nota. Si se siembra
+    más con OTRA fecha de fin, `DE_ESTE_EVENTO` deja de contar lo cogido antes y el ranking del
+    reto empieza de cero.
+  - `npm run test:campanas` (`scripts/campanas-check.mjs`): un Postgres en memoria (PGlite,
+    solo devDependency; el Dockerfile instala `--omit=dev`) con las consultas tal cual están en
+    el código. El panel se probó además en el navegador con un servidor simulado.
 - **Las apps de antes de la 1.11.13 no saben nada**: con Halloween apagado no ven los
   logos; encendido, los pintan como calabazas. Antes de lanzar una campaña de verdad,
   que la 1.11.13 esté en las dos tiendas (y valorar `MIN_APP_VERSION`, §9).

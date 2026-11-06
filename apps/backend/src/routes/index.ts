@@ -2185,9 +2185,9 @@ que tenga territorio, que es como hay que sembrar un evento.</p>
 <section id="p-campanas" role="tabpanel" hidden>
 <div class="caja">
 <h2>Campa&ntilde;as</h2>
-<p class="nota">Cada campa&ntilde;a sale como un reto en la pantalla de Retos de la app, para la gente de <b>su ciudad</b>.
+<p class="nota">Cada campa&ntilde;a sale como un reto en la pantalla de Retos de la app, para la gente de <b>sus ciudades</b>.
 Los logos solo los ve y los coge quien pulsa <b>Me apunto</b>, y se cogen pasando <b>a 20 metros</b>. Orden: subir el logo,
-guardar (en prueba, para uno), sembrar y, cuando est&eacute; bien, encender. El logo, mejor un PNG con el fondo transparente.</p>
+guardar en prueba (para ti y, si quiere, el cliente), sembrar y, cuando est&eacute; bien, encender. El logo, mejor un PNG con el fondo transparente.</p>
 <button class="btn" id="c_nueva" type="button">Nueva campa&ntilde;a</button>
 </div>
 <div id="c_lista"></div>
@@ -2202,8 +2202,8 @@ guardar (en prueba, para uno), sembrar y, cuando est&eacute; bien, encender. El 
   <input id="c_imagen" type="hidden">
   <div id="c_logo_previo" style="display:none;background:#333;padding:8px;border-radius:8px;width:max-content">
     <img id="c_logo_img" style="width:88px;height:88px;object-fit:contain"></div>
-  <label class="campo">Ciudad de la tienda (ah&iacute; se planta, y solo sale en la lista de quien sea de ah&iacute;)
-    <input id="c_ciudad" placeholder="Sevilla"></label>
+  <label class="campo">Ciudades, una o varias separadas por comas (ah&iacute; se planta, y solo sale en la lista de quien sea de ah&iacute;)
+    <input id="c_ciudad" placeholder="Barcelona, Badalona"></label>
   <p class="nota" id="c_lugar"></p>
   <label class="campo">Cartel al pisarlo ({puntos} se cambia por los puntos)
     <input id="c_cartel" placeholder="¡TIENDA PEPE! +{puntos}"></label>
@@ -2217,12 +2217,14 @@ guardar (en prueba, para uno), sembrar y, cuando est&eacute; bien, encender. El 
     <textarea id="c_premio" rows="2"></textarea></label>
   <select id="c_modo">
     <option value="apagado">Apagada &mdash; nadie la ve</option>
-    <option value="prueba">Solo para Ibanto, para probarla</option>
-    <option value="todos">Encendida para su ciudad</option>
+    <option value="prueba">En prueba &mdash; solo la ven los de abajo</option>
+    <option value="todos">Encendida para sus ciudades</option>
   </select>
+  <label class="campo" id="c_probadores_campo">Qui&eacute;n la prueba: su nombre en la app o su correo, separados por comas (la ven aunque sean de otra ciudad)
+    <input id="c_probadores" placeholder="Ibanto, nombre_del_cliente"></label>
   <button class="btn" id="c_guardar" type="button">Guardar la campa&ntilde;a</button>
   <div id="c_msg" class="resultado" style="display:none"></div>
-  <label class="campo">Cu&aacute;ntos logos
+  <label class="campo">Cu&aacute;ntos logos (en cada ciudad)
     <input id="c_cuantos" type="number" min="1" max="500" value="30"></label>
   <label class="campo">Puntos de cada logo
     <input id="c_puntos" type="number" min="1" max="1000" value="200"></label>
@@ -2230,7 +2232,8 @@ guardar (en prueba, para uno), sembrar y, cuando est&eacute; bien, encender. El 
     <input id="c_desde" type="datetime-local"></label>
   <label class="campo">Hasta
     <input id="c_hasta" type="datetime-local"></label>
-  <button class="btn" id="c_sembrar" type="button">Sembrar logos por toda la ciudad</button>
+  <p class="nota" id="c_hasta_nota"></p>
+  <button class="btn" id="c_sembrar" type="button">Sembrar logos por sus ciudades</button>
   <div class="c_borrar">
     <button class="mini" id="c_quitar" type="button">Quitar logos</button>
     <button class="mini" id="c_eliminar" type="button">Eliminar campa&ntilde;a</button>
@@ -2668,17 +2671,34 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
     // El identificador es el que llevan sus logos y sus apuntados: no se cambia.
     document.getElementById('c_tipo').readOnly = !!c.tipo;
     document.getElementById('c_archivo').value = '';
-    document.getElementById('c_lugar').textContent = c.lugar ? 'Se planta en: ' + c.lugar : '';
+    var zonas = c.zonas && c.zonas.length ? c.zonas : (c.lugar ? [{ lugar: c.lugar }] : []);
+    document.getElementById('c_lugar').innerHTML = zonas.length
+      ? 'Se planta en:' + zonas.map(function (z) { return '<br>&middot; ' + esc(z.lugar); }).join('') : '';
     verLogo(c.imagen);
     document.getElementById('c_modo').value = r.modo || 'apagado';
+    document.getElementById('c_probadores').value = r.corredor || 'Ibanto';
+    verProbadores();
+    // Si ya hay logos puestos, «Hasta» sale con SU fecha: el ranking del reto
+    // solo cuenta los de la fecha de fin más alta, y sembrar más con otra
+    // dejaría fuera todo lo cogido hasta ahora.
+    var notaHasta = document.getElementById('c_hasta_nota');
+    notaHasta.textContent = r.hasta && r.libres > 0
+      ? 'Ya hay logos hasta esa fecha. Si siembras más, déjala igual: con otra, el ranking del reto empieza de cero.' : '';
     if (!conservarFechas) {
       document.getElementById('c_desde').value = fechaLocal(new Date());
-      document.getElementById('c_hasta').value = fechaLocal(new Date(Date.now() + 7 * 24 * 3600 * 1000));
+      document.getElementById('c_hasta').value = r.hasta && r.libres > 0
+        ? fechaLocal(new Date(r.hasta))
+        : fechaLocal(new Date(Date.now() + 7 * 24 * 3600 * 1000));
     }
     document.getElementById('c_eliminar').style.display = c.tipo ? '' : 'none';
     document.getElementById('c_quitar').style.display = c.tipo ? '' : 'none';
     document.getElementById('c_msg').style.display = 'none';
   }
+  function verProbadores() {
+    document.getElementById('c_probadores_campo').style.display =
+      document.getElementById('c_modo').value === 'prueba' ? '' : 'none';
+  }
+  document.getElementById('c_modo').addEventListener('change', verProbadores);
   function abrirCampana(detalle, r, conservarFechas) {
     [].forEach.call(document.querySelectorAll('#c_lista details'), function (d) {
       if (d !== detalle) d.open = false;
@@ -2739,9 +2759,9 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
   // siembra va a la ciudad GUARDADA, y si no, al cambiar la ciudad y darle a
   // sembrar los logos seguían cayendo en la de antes.
   function guardarCampana() {
-    var cuerpo = { modo: document.getElementById('c_modo').value };
+    var cuerpo = { modo: document.getElementById('c_modo').value, corredores: val('c_probadores') };
     CAMPOS_CAMPANA.forEach(function (k) { cuerpo[k] = val('c_' + k); });
-    if (cuerpo.modo === 'todos' && !confirm('¿Encender la campaña para toda su ciudad?')) return null;
+    if (cuerpo.modo === 'todos' && !confirm('¿Encender la campaña para la gente de ' + cuerpo.ciudad + '?')) return null;
     return api('/admin/campana', { method: 'POST', body: JSON.stringify(cuerpo) });
   }
   document.getElementById('c_guardar').addEventListener('click', function () {
@@ -2749,8 +2769,8 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
     if (!guardando) return;
     guardando.then(function (r) {
       return cargarCampanasPanel(r.campana.tipo).then(function () {
-        msgCampana(r.modo === 'todos' ? '✓ Guardada y encendida para su ciudad.'
-          : (r.modo === 'prueba' ? '✓ Guardada. Solo la ve ' + r.corredor + '.' : '✓ Guardada, apagada.'), true);
+        msgCampana(r.modo === 'todos' ? '✓ Guardada y encendida para ' + r.campana.ciudad + '.'
+          : (r.modo === 'prueba' ? '✓ Guardada en prueba. Solo la ven: ' + r.corredor + '.' : '✓ Guardada, apagada.'), true);
       });
     }).catch(function (e) { msgCampana('✗ ' + e.message, false); });
   });
@@ -2792,7 +2812,9 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
           if (!r.puestas) { msgCampana('✗ No ha cabido ningún logo' + (r.donde || '') + '. Allí no hay calles cargadas ni nadie ha corrido.', false); return; }
           // Los de la ciudad anterior no se tocan solos: los quita el botón.
           var cambio = antes && antes.libres > 0 && antes.campana.ciudad !== g.campana.ciudad;
-          msgCampana('✓ Sembrados ' + r.puestas + ' logos de ' + r.puntos + ' puntos' + (r.donde || '')
+          var vacias = r.vacias && r.vacias.length
+            ? '. En ' + r.vacias.join(', ') + ' no ha cabido ninguno: no hay calles cargadas ni nadie ha corrido. Hay que cargar sus calles.' : '';
+          msgCampana('✓ Sembrados ' + r.puestas + ' logos de ' + r.puntos + ' puntos' + (r.donde || '') + vacias
             + (cambio ? '. Ojo: siguen los ' + antes.libres + ' de ' + antes.campana.ciudad + '.' : ''), true);
         });
       });
@@ -4109,8 +4131,19 @@ app.post('/runs', {
         halloweenLeToca = ajusteLeToca(valorHw, yo[0]?.display_name ?? null);
       }
     }
-    const objetos = halloweenLeToca
-      ? await recoger(client, userId, celdas, new Date(isImport ? runEndMs : nowMs), celdasDelCerco)
+    // Los logos de las campañas NO dependen de ese interruptor: van por su
+    // propio reto (LOGO_ES_SUYO). Antes la recogida entera colgaba de
+    // Halloween, y al apagarlo los logos se habrían seguido viendo en el mapa
+    // sin poder cogerse (visto el 6-nov, antes de apagarlo).
+    let tieneRetos = false;
+    if (celdas.length > 0 && !halloweenLeToca) {
+      const { rows: retos } = await client.query(
+        `SELECT 1 FROM campana_apuntados a JOIN campanas c ON c.tipo = a.tipo
+          WHERE a.user_id = $1 AND c.modo <> 'no' LIMIT 1`, [userId]);
+      tieneRetos = retos.length > 0;
+    }
+    const objetos = halloweenLeToca || tieneRetos
+      ? await recoger(client, userId, celdas, new Date(isImport ? runEndMs : nowMs), celdasDelCerco, halloweenLeToca)
       : [];
     const puntosObjetos = objetos.reduce((n: number, o: Objeto) => n + o.puntos, 0);
     // Separados para el resumen: una carrera con una calabaza y un zombi suma
@@ -4233,7 +4266,7 @@ app.post('/runs', {
       const hasta = objetoHasta(o);
       // El logo de una campaña renace DENTRO de su zona, no a 5 km de donde
       // estaba: si no, a fuerza de cogerlos acabarían fuera del barrio.
-      const zona = cajaDeCampana(await campanaDe(o.tipo).catch(() => null));
+      const zona = cajaDeCampana(await campanaDe(o.tipo).catch(() => null), o.x, o.y);
       const nuevas = await sembrar(client as any, {
         cuantos: 1, tipo: o.tipo, puntos: o.puntos, desde, hasta,
         caja: zona ?? { x0: o.x - radio, x1: o.x + radio, y0: o.y - radio, y1: o.y + radio },
@@ -6632,8 +6665,11 @@ async function valorAjuste(clave: string): Promise<string> {
 function ajusteLeToca(valor: string, nombre: string | null): boolean {
   if (valor === 'si') return true;
   if (!valor.startsWith('prueba:')) return false;
-  const soloPara = valor.slice('prueba:'.length).trim().toLowerCase();
-  return !!nombre && nombre.trim().toLowerCase() === soloPara;
+  // Puede ser una lista separada por comas: las campañas se prueban entre
+  // varios (Iban y el cliente). El alta no prohíbe una coma en el nombre;
+  // quien la llevara no podría entrar en una prueba, y ya está.
+  const soloPara = valor.slice('prueba:'.length).split(',').map(s => s.trim().toLowerCase());
+  return !!nombre && soloPara.includes(nombre.trim().toLowerCase());
 }
 
 app.get('/app/ajustes', { preHandler: requireAuth }, async (req: any, reply) => {
@@ -6707,22 +6743,38 @@ type Campana = {
   titulo: string;      // Retos: 'CAZA EL LOGO DE TIENDA PEPE'
   texto: string;       // Retos: cómo va
   premio: string;      // Retos: qué se gana y dónde se recoge
-  ciudad: string;      // la ciudad de la tienda: ahí se planta y solo la ve su gente
-  lugar: string;       // cómo la ha entendido OpenStreetMap: "Sevilla, Andalucía, España"
-  /** Los límites del municipio, sacados de OpenStreetMap al guardar. */
+  ciudad: string;      // sus ciudades, separadas por comas: "Barcelona, Badalona"
+  lugar: string;       // cómo las ha entendido OpenStreetMap: "Sevilla, Andalucía, España"
+  /** Los límites de la PRIMERA ciudad (las campañas de antes solo tenían una). */
   limites: { sur: number; norte: number; oeste: number; este: number } | null;
+  /** Una por ciudad (Iban, 6-nov: «poder poner varias ciudades y no solo una»).
+   *  Las campañas guardadas antes no la llevan: valen `ciudad` y `limites`. */
+  zonas?: { ciudad: string; lugar: string; limites: NonNullable<Campana['limites']> }[];
 };
+type Caja = { x0: number; x1: number; y0: number; y1: number };
 
-/** La zona de la campaña en celdas: el municipio entero (Iban: «si la tienda
- *  está en Sevilla se planta en toda Sevilla»). Ahí se siembran los logos y
- *  ahí renacen. Se siembra sobre el mapa de calles, que va por longitud de
- *  calle, así que la mayoría cae en el casco y pocos en las pedanías. */
-function cajaDeCampana(c: Campana | null) {
-  const l = c?.limites;
-  if (!l) return null;
-  const sw = coordToCell(l.sur, l.oeste);
-  const ne = coordToCell(l.norte, l.este);
-  return { x0: sw.x, x1: ne.x, y0: sw.y, y1: ne.y };
+/** Las zonas de la campaña en celdas, una por ciudad: el municipio entero
+ *  (Iban: «si la tienda está en Sevilla se planta en toda Sevilla»). Ahí se
+ *  siembran los logos y ahí renacen. Se siembra sobre el mapa de calles, que va
+ *  por longitud de calle, así que la mayoría cae en el casco y pocos en las
+ *  pedanías. OJO: es el RECTÁNGULO que da OpenStreetMap, no la línea del
+ *  término municipal; el de Barcelona mete también L'Hospitalet y Sant Adrià. */
+function cajasDeCampana(c: Campana | null): { ciudad: string; caja: Caja }[] {
+  if (!c) return [];
+  const zonas = c.zonas?.length ? c.zonas
+    : (c.limites ? [{ ciudad: c.ciudad, lugar: c.lugar, limites: c.limites }] : []);
+  return zonas.map(z => {
+    const sw = coordToCell(z.limites.sur, z.limites.oeste);
+    const ne = coordToCell(z.limites.norte, z.limites.este);
+    return { ciudad: z.ciudad, caja: { x0: sw.x, x1: ne.x, y0: sw.y, y1: ne.y } };
+  });
+}
+
+/** Dónde renace un logo cogido: en la ciudad donde estaba, para que a fuerza
+ *  de cogerlos no se muden todos a la primera de la lista. */
+function cajaDeCampana(c: Campana | null, x: number, y: number): Caja | null {
+  const cajas = cajasDeCampana(c).map(z => z.caja);
+  return cajas.find(k => x >= k.x0 && x <= k.x1 && y >= k.y0 && y <= k.y1) ?? cajas[0] ?? null;
 }
 
 /** Los límites de una ciudad de España, de Nominatim (OpenStreetMap, gratis).
@@ -6757,7 +6809,10 @@ async function retosPara(userId: string) {
   const { rows: yo } = await db.query('SELECT display_name, city FROM users WHERE id = $1', [userId]);
   const { rows } = await db.query(
     `SELECT c.datos, c.modo,
-            (corrr_ciudad(c.datos->>'ciudad') = corrr_ciudad($2)) AS de_aqui,
+            -- Una campaña puede ir a varias ciudades: vale cualquiera de ellas.
+            EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(c.datos->'zonas',
+                      jsonb_build_array(jsonb_build_object('ciudad', c.datos->>'ciudad')))) z
+                     WHERE corrr_ciudad(z->>'ciudad') = corrr_ciudad($2)) AS de_aqui,
             EXISTS (SELECT 1 FROM campana_apuntados a WHERE a.tipo = c.tipo AND a.user_id = $1) AS apuntado,
             (SELECT COUNT(*)::int FROM campana_apuntados a WHERE a.tipo = c.tipo) AS apuntados
        FROM campanas c WHERE c.modo <> 'no' ORDER BY c.creada_at DESC`,
@@ -6767,7 +6822,7 @@ async function retosPara(userId: string) {
     .filter((r: any) => ajusteLeToca(r.modo, yo[0]?.display_name ?? null)
       && (r.modo !== 'si' || r.de_aqui === true || r.apuntado))
     .map((r: any) => {
-      const { limites: _limites, lugar: _lugar, ...c } = r.datos;
+      const { limites: _limites, lugar: _lugar, zonas: _zonas, ...c } = r.datos;
       return { ...c, apuntado: r.apuntado, apuntados: r.apuntados };
     });
 }
@@ -6863,14 +6918,20 @@ app.get('/admin/campanas', { preHandler: requireAdmin }, async (_req, reply) => 
             (SELECT COUNT(*)::int FROM campana_apuntados a WHERE a.tipo = c.tipo) AS apuntados,
             (SELECT COUNT(*)::int FROM objetos o WHERE o.tipo = c.tipo AND o.tomado_por IS NULL
                AND (o.hasta IS NULL OR o.hasta > NOW())) AS libres,
-            (SELECT COUNT(*)::int FROM objetos o WHERE o.tipo = c.tipo AND o.tomado_por IS NOT NULL) AS cogidos
+            (SELECT COUNT(*)::int FROM objetos o WHERE o.tipo = c.tipo AND o.tomado_por IS NOT NULL) AS cogidos,
+            -- El «Hasta» de los logos que ya están puestos. El panel lo propone
+            -- al sembrar más: el ranking del reto solo cuenta los de la fecha de
+            -- fin más alta (DE_ESTE_EVENTO), y una tanda con otra fecha dejaba
+            -- fuera todo lo cogido antes.
+            (SELECT MAX(o.hasta) FROM objetos o WHERE o.tipo = c.tipo AND o.tomado_por IS NULL
+               AND o.hasta > NOW()) AS hasta
        FROM campanas c ORDER BY c.creada_at DESC`,
   );
   return reply.send({ retos: rows.map((r: any) => ({
     campana: r.datos,
     modo: r.modo === 'si' ? 'todos' : (r.modo.startsWith('prueba:') ? 'prueba' : 'apagado'),
-    corredor: r.modo.startsWith('prueba:') ? r.modo.slice('prueba:'.length) : '',
-    apuntados: r.apuntados, libres: r.libres, cogidos: r.cogidos,
+    corredor: r.modo.startsWith('prueba:') ? r.modo.slice('prueba:'.length).split(',').join(', ') : '',
+    apuntados: r.apuntados, libres: r.libres, cogidos: r.cogidos, hasta: r.hasta,
   })) });
 });
 
@@ -6893,14 +6954,37 @@ app.post('/admin/campana', { preHandler: requireAdmin }, async (req: any, reply)
     tipo: txt(b.tipo, 40).toLowerCase().replace(/[^a-z0-9-]/g, '-'),
     nombre: txt(b.nombre, 80), imagen: txt(b.imagen, 500), cartel: txt(b.cartel, 60),
     fechas: txt(b.fechas, 60), titulo: txt(b.titulo, 80), texto: txt(b.texto, 600),
-    premio: txt(b.premio, 300), ciudad: txt(b.ciudad, 80), lugar: '', limites: null,
+    premio: txt(b.premio, 300), ciudad: '', lugar: '', limites: null,
   };
-  if (!c.ciudad) return reply.status(400).send({ error: 'Falta la ciudad de la tienda' });
-  const sitio = await limitesDeCiudad(c.ciudad).catch(() => null);
-  if (!sitio) return reply.status(400).send({ error: `No encuentro "${c.ciudad}" en el mapa. Escríbela como sale en Google Maps` });
-  c.lugar = sitio.lugar;
-  c.limites = sitio.limites;
   if (!c.tipo || !c.nombre) return reply.status(400).send({ error: 'Faltan el identificador y el nombre' });
+
+  // Una o varias ciudades, separadas por comas. Las que ya estaban guardadas no
+  // se le vuelven a preguntar a OpenStreetMap: el panel guarda también antes de
+  // cada siembra, y Nominatim pide no pasar de una petición por segundo.
+  const pedidas = [...new Map(String(b.ciudad ?? '').split(/[,;\n]/)
+    .map(s => s.trim().slice(0, 80)).filter(Boolean)
+    .map(s => [s.toLowerCase(), s] as const)).values()];
+  if (pedidas.length === 0) return reply.status(400).send({ error: 'Falta la ciudad de la tienda' });
+  if (pedidas.length > 10) return reply.status(400).send({ error: 'Como mucho diez ciudades por campaña' });
+  const antes = await campanaDe(c.tipo).catch(() => null);
+  const sabidas = antes?.zonas?.length ? antes.zonas
+    : (antes?.limites ? [{ ciudad: antes.ciudad, lugar: antes.lugar, limites: antes.limites }] : []);
+  const zonas: NonNullable<Campana['zonas']> = [];
+  let preguntadas = 0;
+  for (const nombre of pedidas) {
+    const ya = sabidas.find(z => z.ciudad.toLowerCase() === nombre.toLowerCase());
+    if (ya) { zonas.push({ ...ya, ciudad: nombre }); continue; }
+    if (preguntadas++ > 0) await new Promise(r => setTimeout(r, 1100));
+    const sitio = await limitesDeCiudad(nombre).catch(() => null);
+    if (!sitio?.limites) {
+      return reply.status(400).send({ error: `No encuentro "${nombre}" en el mapa. Escríbela como sale en Google Maps` });
+    }
+    zonas.push({ ciudad: nombre, lugar: sitio.lugar, limites: sitio.limites });
+  }
+  c.zonas = zonas;
+  c.ciudad = zonas.map(z => z.ciudad).join(', ');
+  c.lugar = zonas[0].lugar;
+  c.limites = zonas[0].limites;
   // Los tipos de Halloween tienen reglas propias (fantasmas, mensajes): una
   // campaña que se llamara así las heredaría sin querer.
   if (['calabaza', 'fantasma', 'zombi'].includes(c.tipo)) {
@@ -6913,13 +6997,28 @@ app.post('/admin/campana', { preHandler: requireAdmin }, async (req: any, reply)
   let modo = 'no';
   if (b.modo === 'todos') modo = 'si';
   else if (b.modo === 'prueba') {
-    // Las campañas las prueba siempre el administrador, y en cualquier ciudad:
-    // retosPara no le mira la ciudad a quien prueba.
-    const { rows } = await db.query(
-      'SELECT display_name FROM users WHERE LOWER(display_name) = LOWER($1)', [ADMIN_CORREDOR],
-    );
-    if (rows.length === 0) return reply.status(400).send({ error: `No encuentro a ${ADMIN_CORREDOR}` });
-    modo = `prueba:${rows[0].display_name}`;
+    // La prueban los corredores que se pongan, por su nombre en la app o su
+    // correo (Iban, 6-nov: que el cliente pueda probarla antes de lanzarla).
+    // Sin nadie escrito, el administrador. Y en cualquier ciudad: retosPara no
+    // le mira la ciudad a quien prueba.
+    const pedidos = [...new Set(String(b.corredores ?? '').split(/[,;\n]/)
+      .map(s => s.trim()).filter(Boolean))];
+    if (pedidos.length === 0) pedidos.push(ADMIN_CORREDOR);
+    if (pedidos.length > 20) return reply.status(400).send({ error: 'Como mucho veinte corredores en la prueba' });
+    const nombres: string[] = [];
+    const faltan: string[] = [];
+    for (const quien of pedidos) {
+      const { rows } = await db.query(
+        `SELECT display_name FROM users
+          WHERE LOWER(display_name) = LOWER($1) OR LOWER(email) = LOWER($1) LIMIT 1`, [quien],
+      );
+      if (!rows[0]) faltan.push(quien);
+      else if (!nombres.includes(rows[0].display_name)) nombres.push(rows[0].display_name);
+    }
+    if (faltan.length > 0) {
+      return reply.status(400).send({ error: `No encuentro en la app a: ${faltan.join(', ')}. Pon su nombre de corredor o su correo` });
+    }
+    modo = `prueba:${nombres.join(',')}`;
   }
 
   await db.query(
@@ -6930,7 +7029,7 @@ app.post('/admin/campana', { preHandler: requireAdmin }, async (req: any, reply)
   return reply.send({
     ok: true, campana: c,
     modo: modo === 'si' ? 'todos' : (modo === 'no' ? 'apagado' : 'prueba'),
-    corredor: modo.startsWith('prueba:') ? modo.slice('prueba:'.length) : '',
+    corredor: modo.startsWith('prueba:') ? modo.slice('prueba:'.length).split(',').join(', ') : '',
   });
 });
 
@@ -7172,12 +7271,30 @@ app.post('/admin/objetos', { preHandler: requireAdmin }, async (req: any, reply)
   let caja;
   let donde = '';
   if (req.body?.enCampana === true) {
-    // Por toda la ciudad del reto.
+    // Por toda la ciudad del reto, y si tiene varias, `cuantos` en CADA una:
+    // es lo que se entiende al leer el panel, y Barcelona y un pueblo de al
+    // lado no se reparten bien por ninguna regla automática.
     const c = await campanaDe(elTipo);
-    caja = cajaDeCampana(c);
-    if (!caja || !c) {
+    const zonas = cajasDeCampana(c);
+    if (!c || zonas.length === 0) {
       return reply.status(400).send({ error: 'Guarda antes la campaña con su ciudad' });
     }
+    if (zonas.length > 1) {
+      let puestas = 0;
+      const partes: string[] = [];
+      const vacias: string[] = [];
+      for (const z of zonas) {
+        const r = await sembrarAqui(z.caja);
+        puestas += r.puestas;
+        partes.push(`${z.ciudad} ${r.puestas}`);
+        if (r.puestas === 0) vacias.push(z.ciudad);
+      }
+      return reply.send({
+        ok: true, puestas, fantasmas: 0, pedidas: n * zonas.length, fuente: deDonde, puntos: losPuntos,
+        donde: ` (${partes.join(', ')})`, vacias,
+      });
+    }
+    caja = zonas[0].caja;
     donde = ` por toda ${c.ciudad}`;
   } else if (typeof cerca === 'string' && cerca.trim()) {
     const quien = cerca.trim();

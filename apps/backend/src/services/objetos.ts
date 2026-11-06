@@ -157,6 +157,9 @@ export async function recoger(
    *  sería recoger premios sin riesgo y se acabaría el truco o trato — que es
    *  justo de lo que va el juego: no sabes cuál te toca hasta que lo pisas. */
   cercadas: { x: number; y: number }[] = [],
+  /** Si a este corredor le toca Halloween (calabazas, fantasmas y zombis). Los
+   *  logos de campaña van aparte: los coge quien se ha apuntado a su reto. */
+  conHalloween = true,
 ): Promise<Objeto[]> {
   const celdas = [...pisadas, ...cercadas];
   if (celdas.length === 0) return [];
@@ -171,13 +174,13 @@ export async function recoger(
         SET tomado_por = $1, tomado_at = $4
       WHERE o.tomado_por IS NULL
         AND o.desde <= $4 AND (o.hasta IS NULL OR o.hasta > $4)
-        AND (o.tipo IN ('calabaza', 'fantasma', 'zombi') OR ${LOGO_ES_SUYO('o.', '$1')})
+        AND ((o.tipo IN ('calabaza', 'fantasma', 'zombi') AND $6::boolean) OR ${LOGO_ES_SUYO('o.', '$1')})
         AND EXISTS (
           SELECT 1 FROM unnest($2::int[], $3::int[], $5::boolean[]) AS t(x, y, solo_suma)
            WHERE t.x = o.cell_x AND t.y = o.cell_y
              AND (NOT t.solo_suma OR o.tipo = 'calabaza'))
       RETURNING o.id, o.cell_x, o.cell_y, o.puntos, o.tipo, o.hasta`,
-    [userId, celdas.map(c => c.x), celdas.map(c => c.y), cuando.toISOString(), soloSiSuma],
+    [userId, celdas.map(c => c.x), celdas.map(c => c.y), cuando.toISOString(), soloSiSuma, conHalloween],
   );
   // Los logos de las campañas se cogen pasando CERCA, no solo pisando su
   // cuadrado de 10 m. Con las calabazas pasaba que caían en mitad de la
