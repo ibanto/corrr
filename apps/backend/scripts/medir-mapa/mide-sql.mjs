@@ -48,6 +48,41 @@ for (const [nombre, c] of Object.entries({ 'Barcelona centro (3 km)': [41.3874, 
     if (i === 0) console.log('   ' + lineas.filter(l => /Scan|Aggregate|Sort|Buffers: shared/.test(l)).map(l => l.trim()).slice(0, 10).join('\n   '));
   }
 }
+// Desde el 6-nov-2026 (tarde): lo mismo leyendo la tabla de tiras precalculadas
+// (tiras_casilla, una fila por casilla y dueño) y lo que cuesta la comprobación
+// de descuadre que el servidor lanza cada 5 minutos.
+const SQL_PRECALC = `SELECT t.casilla_x, t.casilla_y, t.owner_id, u.display_name AS owner_name, u.war_cry AS owner_war_cry,
+            u.color_idx AS owner_color_idx, t.ys, t.x0s, t.x1s
+       FROM tiras_casilla t JOIN users u ON u.id = t.owner_id
+      WHERE t.casilla_x BETWEEN $1 AND $2 AND t.casilla_y BETWEEN $3 AND $4`;
+const hayTabla = (await q(`SELECT to_regclass('tiras_casilla') IS NOT NULL AS si`))[0].si;
+if (hayTabla) {
+  console.log('\n== Tiras PRECALCULADAS (tiras_casilla)');
+  console.log(await q(`SELECT COUNT(*)::int filas, SUM(celdas)::int celdas, COUNT(DISTINCT (casilla_x, casilla_y))::int casillas,
+    pg_size_pretty(pg_total_relation_size('tiras_casilla')) tamano, MAX(actualizado_at) ultima FROM tiras_casilla`));
+  for (const [nombre, c] of Object.entries({ 'Barcelona centro (3 km)': [41.3874, 2.1686, 0.015], 'Sagrada Família (2 km)': [41.4036, 2.1744, 0.01] })) {
+    const b = caja(...c);
+    const p = [Math.floor(b.x0 / TILE), Math.floor((b.x1 - 1) / TILE), Math.floor(b.y0 / TILE), Math.floor((b.y1 - 1) / TILE)];
+    for (let i = 0; i < 2; i++) {
+      const plan = await q(`EXPLAIN (ANALYZE, BUFFERS) ${SQL_PRECALC}`, p);
+      const l = plan.map(r => r['QUERY PLAN']);
+      console.log(`  ${nombre} #${i + 1}: ${l.find(x => x.startsWith('Execution Time'))} · ${l.find(x => x.startsWith('Planning Time'))}`);
+      if (i === 0) console.log('   ' + l.filter(x => /Scan|Buffers: shared/.test(x)).map(x => x.trim()).slice(0, 4).join('\n   '));
+    }
+    const t0 = performance.now();
+    const filas = await q(SQL_PRECALC, p);
+    const bytes = JSON.stringify(filas).length;
+    console.log(`  ${nombre}: ${filas.length} filas, ~${Math.round(bytes / 1024)} KB de datos de salida (ida y vuelta ${Math.round(performance.now() - t0)} ms)`);
+  }
+  // Del JS compilado (npm run build), que en el fuente lleva constantes sin sustituir.
+  const { SQL_TIRAS_DESCUADRE: SQL_DESCUADRE } = await import('/Users/iban/corrr/apps/backend/dist/services/tiras.js');
+  for (let i = 0; i < 2; i++) {
+    const plan = await q(`EXPLAIN (ANALYZE, BUFFERS) ${SQL_DESCUADRE}`);
+    const l = plan.map(r => r['QUERY PLAN']);
+    console.log(`  descuadre (cells entera) #${i + 1}: ${l.find(x => x.startsWith('Execution Time'))}${l.some(x => /Disk/.test(x)) ? ' · ORDENA EN DISCO' : ''}`);
+  }
+}
+
 const ib = (await q(`SELECT id FROM users WHERE display_name = 'Ibanto'`))[0].id;
 const b = caja(41.3874, 2.1686, 0.015);
 const sw = { x: Math.floor((2.1686 - 0.015) / LNG), y: Math.floor((41.3874 - 0.015) / LAT) };

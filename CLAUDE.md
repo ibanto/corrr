@@ -67,6 +67,25 @@ a la prueba interna de Play Console y hacer la misma prueba en la calle.
 (42 calabazas), 2.º carlos (26), 3.º Oriol15 (19). Publicado en redes el 2-nov
 con sus nombres (Iban lo pidió).
 
+### El mapa, rápido (6-nov-2026, tarde; commit `209891d`, desplegado)
+
+**Servidor, ya en producción**: las tiras del mapa se guardan YA HECHAS en la tabla
+`tiras_casilla` (por casilla de 128 celdas y dueño), se rehacen al guardar cada carrera y
+cada 5 min se comparan con `cells`; caché del mapa de 5 min; pool caliente. Medido en
+Barcelona: territorio sin caché **300-2.200 ms → 60-180 ms**; tras 50 s sin peticiones
+**300-1.400 ms → 165-240 ms**; en Postgres, de 150-240 ms leyendo 122.000-138.000 celdas
+a ~2 ms leyendo 29-32 filas. Comprobado en producción que la tabla da exactamente las
+mismas tiras que calcularlas al vuelo (`scripts/medir-mapa/comprueba-tiras.mjs`, solo lee).
+Detalle y cómo se mantiene: §9, «El mapa tardaba en salir».
+
+**App, para la versión siguiente a la 1.11.14** (en el repo, SIN build ni versión nueva):
+el mapa ya no espera a las zonas antiguas (`/zones/nearby`, 156 KB × 3 por arranque, que no
+se pintaban) y guarda el último territorio en el móvil para pintarlo al instante al abrir.
+**Sin probar todavía en el emulador ni en la calle** (se quedó a medias el 6-nov por falta
+de tiempo): antes de montar la siguiente versión, `npm run test:gps` (pasa) y la prueba de
+arranque CON SESIÓN contra `npm run mock` (§3), abriendo dos veces: la segunda tiene que
+pintar el territorio aunque el servidor de mentira esté apagado.
+
 ### Lo siguiente que hay que hacer (2-nov)
 
 1. **Subir la 1.11.14** — lo hace Iban, en este orden:
@@ -674,6 +693,39 @@ verdad, compilar en **Release** (lleva el código dentro y no necesita nada):
   carreras — lo que ya no se hace es anunciarlo.
 - **La app de Strava está INACTIVA** (comprobado el 23-sep-2026 con el botón "Comprobar Strava" del panel): `403 {"resource":"Application","field":"Status","code":"Inactive"}`. Strava exige suscripción de pago al dueño de la app y limita las nuevas a 10 atletas. `STRAVA_ENABLED = false` se queda así: reactivarlo sin resolver esto deja a la gente con un botón que no lleva a ninguna parte. **La vía gratis para las carreras de Strava es el iPhone: Strava escribe la ruta en Salud y CORRR ya la importa** (ver "Tus otras carreras" en Perfil). En Android, Strava solo manda a Health Connect tiempo/distancia/calorías, sin ruta: no hay camino gratis hoy.
 - **⚠️ `apps/mobile/ios/` NO está en git** (sí `android/`): el `Podfile` con el arreglo de Xcode 27, el permiso de HealthKit en `CORRR.entitlements` y el `Info.plist` solo existen en este Mac. Si se pierde, hay que rehacerlos. Pendiente decidir si se versiona.
+- **El mapa tardaba en salir, y cada vez más** (6-nov-2026, servidor desplegado la misma
+  tarde): la app bloqueaba el mapa («ACTUALIZANDO MAPA») hasta que contestaba
+  `/zones/nearby` —zonas antiguas que ya no se pintan desde la 1.11.x, 156 KB y tres
+  peticiones por arranque— y pedía el territorio tres veces (Madrid, última posición, GPS).
+  Y el servidor, sin caché, leía en Postgres TODAS las celdas del encuadre (122.000-138.000
+  en Barcelona, 150-240 ms, con la ordenación yéndose a disco por `work_mem` de 2 MB) para
+  comprimirlas en tiras; con `cells` ×10 desde el 21-sep (1.000.935 celdas) eso iba a ser
+  segundos. Las campañas NO pesan (0,6 ms). Medido con `apps/backend/scripts/medir-mapa/`
+  (solo lectura, `LEEME.md`): **antes** sin caché 300-2.200 ms en Barcelona, con caché
+  40-60, tras 50 s en silencio 300-1.400 (el pool cerraba las conexiones a los 30 s);
+  **después** 60-180, 50-70 y 165-240. Qué se hizo: (1) tabla **`tiras_casilla`**
+  (`services/tiras.ts`): las tiras ya hechas por casilla de 128 celdas y dueño, coordenadas
+  relativas 0-127; `/cells/viewport?formato=tiras` lee decenas de filas (29-32 en Barcelona,
+  ~2 ms) y las pega (`tirasDesdeCasillas`), dando EXACTAMENTE las mismas tiras que
+  `SQL_TIRAS` (`npm run test:tiras`, PGlite; y `comprueba-tiras.mjs` contra producción).
+  Se rehacen DENTRO de la transacción de `POST /runs`, de la importación y de los cercos del
+  panel (`recalcularCasillas`: bloqueo consultivo por casilla en orden x,y para que dos
+  recálculos no se pisen, y SAVEPOINT: un fallo nunca cuesta una carrera), y cada 5 min
+  `comprobarTirasCasilla` compara `cells` con la tabla casilla a casilla (`SQL_TIRAS_DESCUADRE`,
+  0,8-3,4 s, devuelve 0 filas si todo cuadra) y rehace lo que no: es la red para lo que
+  escribe en `cells` por fuera (`importar-carrera.mjs`, `sembrar-ejercito.mjs`). Mientras
+  la tabla no está comprobada o una casilla está en duda, ese encuadre se calcula al vuelo
+  como antes. (2) Caché del mapa de 30 s a **5 min**, invalidada por casilla también DESPUÉS
+  del COMMIT. (3) Pool con `idleTimeoutMillis` de 10 min, `keepAlive` y un `SELECT 1` por
+  minuto. (4) `SET LOCAL work_mem = '32MB'` para `SQL_TIRAS` y el formato viejo
+  (`consultaConMemoria`). El formato viejo (apps < 1.11.10) sigue igual, solo con más caché
+  y memoria. En la app (siguiente versión): fuera `loadZones`, `checkForStolenZones`
+  (superado por los avisos de robo del servidor) y el cruce con zonas rivales de `closeLoop`;
+  `src/map/territoryCache.ts` guarda cada respuesta por casilla del servidor (misma regla
+  de redondeo, por usuario, 8 cajas) y la última vista, y al abrir se pinta lo guardado y
+  se quita la pantalla de carga; sin Madrid si hay vista guardada; y `loadCellsSiNueva` no
+  repite la misma casilla en 15 s. **Regla: nada que el usuario vea depende de una petición
+  que no se pinta; y el territorio se precalcula al escribir, no al leer.**
 
 ## 9-bis. Juego del mapa: objetos (calabazas)
 
