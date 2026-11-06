@@ -81,10 +81,12 @@ Detalle y cómo se mantiene: §9, «El mapa tardaba en salir».
 **App, para la versión siguiente a la 1.11.14** (en el repo, SIN build ni versión nueva):
 el mapa ya no espera a las zonas antiguas (`/zones/nearby`, 156 KB × 3 por arranque, que no
 se pintaban) y guarda el último territorio en el móvil para pintarlo al instante al abrir.
-**Sin probar todavía en el emulador ni en la calle** (se quedó a medias el 6-nov por falta
-de tiempo): antes de montar la siguiente versión, `npm run test:gps` (pasa) y la prueba de
-arranque CON SESIÓN contra `npm run mock` (§3), abriendo dos veces: la segunda tiene que
-pintar el territorio aunque el servidor de mentira esté apagado.
+**Probado en el emulador la noche del 6-nov** (APK de release contra `npm run mock`, con
+sesión metida, §3): en un arranque recién instalada pide el territorio DOS veces (Madrid y
+la posición) y nunca `/zones/nearby`; con vista guardada, UNA; y con el servidor de mentira
+APAGADO el mapa sale igualmente pintado con el territorio guardado, sin pantalla de
+«ACTUALIZANDO MAPA» (captura a los 3 s de `am start`, lo que tarda en cargar el JavaScript).
+`npm run test:gps` pasa. **Falta la prueba en la calle** cuando se monte esa versión.
 
 ### Lo siguiente que hay que hacer (2-nov)
 
