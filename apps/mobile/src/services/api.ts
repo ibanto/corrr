@@ -749,10 +749,6 @@ class ApiService {
     return this.request<RemoteZone[]>('/zones/my');
   }
 
-  async getNearbyZones(lat: number, lng: number): Promise<RemoteZone[]> {
-    return this.request<RemoteZone[]>(`/zones/nearby?lat=${lat}&lng=${lng}&radius=0.05`);
-  }
-
   async getProfile(): Promise<ProfileData> {
     return this.request<ProfileData>('/users/me');
   }

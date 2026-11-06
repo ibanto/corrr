@@ -184,3 +184,185 @@ export function tirasDesdeDuenos(
   }
   return { tiras: Int32Array.from(salida), n: salida.length / 4, duenos, celdas };
 }
+
+// ── Tiras PRECALCULADAS por casilla (6-nov-2026) ─────────────────────────────
+//
+// Hasta ahora cada vistazo al mapa sin caché leía en Postgres TODAS las celdas
+// del encuadre (122.000-138.000 en Barcelona, 150-240 ms, con la ordenación
+// yéndose a disco) para comprimirlas en tiras. Con `cells` creciendo ×10 cada
+// mes y medio (95.000 celdas el 21-sep, 1.000.935 el 6-nov) eso iba a ser un
+// segundo largo en pocas semanas.
+//
+// Ahora las tiras se guardan YA HECHAS en la tabla `tiras_casilla`: una fila
+// por casilla de CASILLA_TIRAS celdas de lado (la misma casilla que usa la
+// caché de /cells/viewport) y dueño, con tres listas paralelas (fila, x0, x1)
+// en coordenadas RELATIVAS a la esquina de la casilla (0-127, que viajan en
+// 1-3 cifras en vez de 6). Un encuadre de Barcelona son 12 casillas × 8 dueños:
+// decenas de filas, y da igual cuántas celdas haya debajo.
+//
+// Quién las mantiene:
+//   · POST /runs y los dos botones de cerco del panel recalculan, DENTRO de su
+//     transacción, las casillas que han tocado (recalcularCasilla): así quien
+//     acaba de correr ve su territorio nada más guardar.
+//   · Y cada pocos minutos el servidor compara `cells` con la tabla casilla
+//     por casilla (SQL_TIRAS_DESCUADRE) y rehace las que no cuadren. Es la red
+//     para lo que no pasa por el servidor (los scripts de importar carreras y
+//     del ejército escriben en `cells` directamente) y para un recálculo que
+//     fallara a medias. Mientras una casilla esté en duda, /cells/viewport la
+//     sirve calculándola al vuelo con SQL_TIRAS, como antes.
+//
+// Las tiras son una función pura de `cells` (sin mirar `users`): el JOIN con
+// users para el nombre, el grito y el color se hace al leer, como siempre.
+
+/** Celdas por lado de cada casilla de la tabla. Tiene que ser la misma que
+ *  VIEWPORT_TILE en routes/index.ts: la caché y la tabla van por la misma
+ *  cuadrícula. */
+export const CASILLA_TIRAS = 128;
+
+/** Casilla de una celda: división ENTERA hacia abajo, también al oeste de
+ *  Greenwich (cell_x negativa). `Math.floor` y no `>> 7`, que es lo mismo
+ *  pero se lee. */
+export function casillaDe(v: number): number {
+  return Math.floor(v / CASILLA_TIRAS);
+}
+
+/** Las casillas que tocan unas celdas, sin repetir y en orden (x, y). El
+ *  orden importa: todas las transacciones bloquean las casillas en ESTE
+ *  orden y así dos recálculos a la vez no pueden esperarse mutuamente. */
+export function casillasDe(celdas: { x: number; y: number }[]): { cx: number; cy: number }[] {
+  const vistas = new Set<string>();
+  const salida: { cx: number; cy: number }[] = [];
+  for (const c of celdas) {
+    const cx = casillaDe(c.x), cy = casillaDe(c.y);
+    const k = `${cx}:${cy}`;
+    if (vistas.has(k)) continue;
+    vistas.add(k);
+    salida.push({ cx, cy });
+  }
+  salida.sort((a, b) => a.cx - b.cx || a.cy - b.cy);
+  return salida;
+}
+
+/**
+ * Las tiras de UNA casilla ($1 = casilla x, $2 = casilla y), calculadas desde
+ * `cells` con la técnica de «huecos e islas»: dentro de cada dueño y fila,
+ * `cell_x - fila_n` vale lo mismo para todas las celdas seguidas, así que
+ * agrupar por ese valor da una tira. Aquí sí se puede ordenar por ventana:
+ * una casilla son como mucho 128×128 = 16.384 celdas (la consulta de antes
+ * ordenaba el encuadre entero, 130.000). Va por el índice de la clave
+ * primaria (cell_x, cell_y), igual que SQL_TIRAS.
+ *
+ * Devuelve una fila por dueño con las tiras en coordenadas relativas a la
+ * esquina de la casilla, ordenadas por fila y x0, y cuántas celdas suman.
+ */
+export const SQL_TIRAS_CASILLA = `
+WITH c AS (
+  SELECT owner_id, cell_y - $2::int * ${CASILLA_TIRAS} AS y, cell_x - $1::int * ${CASILLA_TIRAS} AS x,
+         cell_x - ROW_NUMBER() OVER (PARTITION BY owner_id, cell_y ORDER BY cell_x) AS isla
+    FROM cells
+   WHERE cell_x BETWEEN $1::int * ${CASILLA_TIRAS} AND $1::int * ${CASILLA_TIRAS} + ${CASILLA_TIRAS - 1}
+     AND cell_y BETWEEN $2::int * ${CASILLA_TIRAS} AND $2::int * ${CASILLA_TIRAS} + ${CASILLA_TIRAS - 1}
+), t AS (
+  SELECT owner_id, y, MIN(x) AS x0, MAX(x) AS x1
+    FROM c
+   GROUP BY owner_id, y, isla
+)
+SELECT owner_id,
+       array_agg(y  ORDER BY y, x0) AS ys,
+       array_agg(x0 ORDER BY y, x0) AS x0s,
+       array_agg(x1 ORDER BY y, x0) AS x1s,
+       SUM(x1 - x0 + 1)::int AS celdas
+  FROM t
+ GROUP BY owner_id`;
+
+/**
+ * Las casillas donde la tabla NO cuadra con `cells`: distinto número de celdas
+ * o distinto reparto de dueños (la suma del hash del dueño, celda a celda, cambia
+ * si una sola celda cambia de manos). Recorre `cells` entera, por eso se lanza
+ * cada pocos minutos y no en cada petición: medido, es una pasada de la tabla
+ * sin ordenar nada. Devuelve cero filas cuando todo está al día, así que casi
+ * nunca viaja nada. Con la tabla vacía (primer arranque) devuelve todas las
+ * casillas que tienen celdas: así el primer llenado es el mismo camino.
+ */
+export const SQL_TIRAS_DESCUADRE = `
+WITH real AS (
+  SELECT FLOOR(cell_x / ${CASILLA_TIRAS}.0)::int AS cx, FLOOR(cell_y / ${CASILLA_TIRAS}.0)::int AS cy,
+         COUNT(*)::bigint AS n, SUM(hashtext(owner_id::text)::bigint) AS h
+    FROM cells
+   GROUP BY 1, 2
+), pre AS (
+  SELECT casilla_x AS cx, casilla_y AS cy,
+         SUM(celdas)::bigint AS n, SUM(celdas::bigint * hashtext(owner_id::text)) AS h
+    FROM tiras_casilla
+   GROUP BY 1, 2
+)
+SELECT COALESCE(r.cx, p.cx) AS cx, COALESCE(r.cy, p.cy) AS cy
+  FROM real r
+  FULL JOIN pre p ON p.cx = r.cx AND p.cy = r.cy
+ WHERE r.n IS DISTINCT FROM p.n OR r.h IS DISTINCT FROM p.h
+ ORDER BY 1, 2`;
+
+/** Lo que se lee de `tiras_casilla` para un encuadre (JOIN con users hecho
+ *  en routes/index.ts: nombre, grito y color). */
+export type FilaCasilla = {
+  casilla_x: number;
+  casilla_y: number;
+  owner_id: string;
+  owner_name: string | null;
+  owner_war_cry: string | null;
+  owner_color_idx: number | null;
+  ys: (number | string)[];
+  x0s: (number | string)[];
+  x1s: (number | string)[];
+};
+
+/**
+ * Monta la respuesta de /cells/viewport?formato=tiras a partir de las filas
+ * de `tiras_casilla` de las casillas del encuadre. Da EXACTAMENTE las mismas
+ * tiras que `tirasDesdeDuenos` sobre SQL_TIRAS para esa misma caja (se
+ * comprueba en scripts/tiras-check.mjs): una tira que cruza de una casilla a
+ * la siguiente está partida en la tabla y aquí se vuelve a pegar.
+ */
+export function tirasDesdeCasillas(
+  rows: FilaCasilla[], colorDe: (idx: number) => string,
+): { tiras: Int32Array; n: number; duenos: Dueno[]; celdas: number } {
+  const indice = new Map<string, number>();
+  const duenos: Dueno[] = [];
+  const porDueno: { y: number; x0: number; x1: number }[][] = [];
+  let celdas = 0;
+  for (const r of rows) {
+    let d = indice.get(r.owner_id);
+    if (d === undefined) {
+      d = duenos.length;
+      indice.set(r.owner_id, d);
+      duenos.push({
+        id: r.owner_id, name: r.owner_name, warCry: r.owner_war_cry,
+        color: colorDe(r.owner_color_idx ?? 0),
+      });
+      porDueno.push([]);
+    }
+    const bx = Number(r.casilla_x) * CASILLA_TIRAS, by = Number(r.casilla_y) * CASILLA_TIRAS;
+    const lista = porDueno[d];
+    // Number() por si el driver devolviera texto (ver tirasDesdeDuenos).
+    for (let i = 0; i < r.ys.length; i++) {
+      const x0 = bx + Number(r.x0s[i]), x1 = bx + Number(r.x1s[i]);
+      lista.push({ y: by + Number(r.ys[i]), x0, x1 });
+      celdas += x1 - x0 + 1;
+    }
+  }
+  const salida: number[] = [];
+  porDueno.forEach((lista, d) => {
+    lista.sort((a, b) => a.y - b.y || a.x0 - b.x0);
+    let abierta: { y: number; x0: number; x1: number } | null = null;
+    for (const t of lista) {
+      if (abierta && t.y === abierta.y && t.x0 === abierta.x1 + 1) {
+        abierta.x1 = t.x1; // la misma tira, partida por el borde de la casilla
+        continue;
+      }
+      if (abierta) salida.push(d, abierta.y, abierta.x0, abierta.x1);
+      abierta = { ...t };
+    }
+    if (abierta) salida.push(d, abierta.y, abierta.x0, abierta.x1);
+  });
+  return { tiras: Int32Array.from(salida), n: salida.length / 4, duenos, celdas };
+}

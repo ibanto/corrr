@@ -44,6 +44,9 @@ import { randomSharePhrase } from '../data/sharePhrases';
 import TauntSelector, { getTauntFullImage } from '../components/TauntSelector';
 import FichaCorredor from '../components/FichaCorredor';
 import LoadingScreen from '../components/LoadingScreen';
+import {
+  Vista, cajaDelServidor, claveDeCaja, leerTerritorio, guardarTerritorio, leerUltimaVista, guardarUltimaVista,
+} from '../map/territoryCache';
 import { randomPhrase } from '../data/motivationalPhrases';
 
 // Feature flag REVERSIBLE: durante la carrera mostramos una frase motivacional
@@ -423,9 +426,6 @@ const SPAIN_BOUNDS = {
   east: 4.5,      // Baleares este
 };
 
-// Delta máximo para cargar zonas (si se aleja más → no cargar)
-const MAX_DELTA_FOR_ZONES = 0.15;
-
 // ── Grid (10m × 10m cells, v1.8.0) ───────────────────────────────────────────
 // MUST match the backend formula in apps/backend/src/routes/index.ts. Cells are
 // 10m × 10m in Spain (varies by ±5% with latitude). The 10m size accommodates
@@ -701,17 +701,6 @@ function ringToCoords(ring: Ring): Coord[] {
   return ring.map(([lng, lat]) => ({ latitude: lat, longitude: lng }));
 }
 
-/** Intersección de dos polígonos usando polygon-clipping */
-function polyIntersection(a: Coord[], b: Coord[]): Coord[][] {
-  try {
-    const result = polygonClipping.intersection(
-      [coordsToRing(a)],
-      [coordsToRing(b)]
-    );
-    return result.map(poly => ringToCoords(poly[0]));
-  } catch { return []; }
-}
-
 /** Unión de dos polígonos */
 function polyUnion(a: Coord[], b: Coord[]): Coord[][] {
   try {
@@ -723,22 +712,6 @@ function polyUnion(a: Coord[], b: Coord[]): Coord[][] {
   } catch { return [a]; }
 }
 
-/** Diferencia a - b (lo que queda de A después de quitar B) */
-function polyDifference(a: Coord[], b: Coord[]): Coord[][] {
-  try {
-    const result = polygonClipping.difference(
-      [coordsToRing(a)],
-      [coordsToRing(b)]
-    );
-    return result.map(poly => ringToCoords(poly[0]));
-  } catch { return [ringToCoords(coordsToRing(a))]; }
-}
-
-/**
- * Deconflicta zonas cargadas del servidor:
- * Si dos zonas de distinto dueño se solapan, la más reciente recorta a la más antigua.
- * Así el mapa siempre muestra las zonas sin superposiciones.
- */
 /** Bounding box rápido de un polígono */
 function polyBBox(coords: Coord[]): { minLat: number; maxLat: number; minLng: number; maxLng: number } {
   let minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity;
@@ -758,119 +731,6 @@ function bboxOverlap(
 ): boolean {
   return a.minLat <= b.maxLat && a.maxLat >= b.minLat &&
          a.minLng <= b.maxLng && a.maxLng >= b.minLng;
-}
-
-function deconflictZones(zones: RemoteZone[]): RemoteZone[] {
-  try {
-    if (zones.length < 2) return zones;
-
-    // Pre-calcular bounding boxes
-    const bboxes = zones.map(z => z.polygon?.length >= 3 ? polyBBox(z.polygon) : null);
-
-    // Primero: ¿hay algún solapamiento entre dueños distintos?
-    let hasOverlap = false;
-    outer: for (let i = 0; i < zones.length; i++) {
-      if (!bboxes[i]) continue;
-      for (let j = i + 1; j < zones.length; j++) {
-        if (!bboxes[j]) continue;
-        const sameOwner = (zones[i].is_mine && zones[j].is_mine) ||
-          (zones[i].owner_name && zones[j].owner_name && zones[i].owner_name === zones[j].owner_name);
-        if (sameOwner) continue;
-        if (bboxOverlap(bboxes[i]!, bboxes[j]!)) { hasOverlap = true; break outer; }
-      }
-    }
-    // Si no hay solapamientos, devolver tal cual (rápido)
-    if (!hasOverlap) return zones;
-
-    // Ordenar por fecha: más antiguas primero
-    const indices = zones.map((_, i) => i).sort((a, b) => {
-      const dateA = zones[a].conquered_at ? new Date(zones[a].conquered_at!).getTime() : 0;
-      const dateB = zones[b].conquered_at ? new Date(zones[b].conquered_at!).getTime() : 0;
-      return dateA - dateB;
-    });
-
-    const result: RemoteZone[] = [];
-    const clippedPolygons: (Coord[] | null)[] = zones.map(z => z.polygon);
-
-    for (const i of indices) {
-      const current = zones[i];
-      if (!current.polygon || current.polygon.length < 3) continue;
-      let currentPolygon = clippedPolygons[i];
-      if (!currentPolygon || currentPolygon.length < 3) continue;
-
-      // Solo buscar zonas más recientes que me solapan
-      for (const j of indices) {
-        if (j === i) continue;
-        const newer = zones[j];
-        if (!newer.polygon || newer.polygon.length < 3) continue;
-        // Solo zonas más recientes recortan
-        const dateI = current.conquered_at ? new Date(current.conquered_at).getTime() : 0;
-        const dateJ = newer.conquered_at ? new Date(newer.conquered_at).getTime() : 0;
-        if (dateJ <= dateI) continue;
-
-        const sameOwner = (current.is_mine && newer.is_mine) ||
-          (current.owner_name && newer.owner_name && current.owner_name === newer.owner_name);
-        if (sameOwner) continue;
-        if (!bboxes[i] || !bboxes[j] || !bboxOverlap(bboxes[i]!, bboxes[j]!)) continue;
-
-        if (!currentPolygon) break;
-        try {
-          const remaining = polyDifference(currentPolygon, newer.polygon);
-          if (remaining.length > 0 && remaining[0].length >= 3) {
-            currentPolygon = remaining[0];
-          } else {
-            currentPolygon = null;
-            break;
-          }
-        } catch {}
-      }
-
-      if (currentPolygon && currentPolygon.length >= 3) {
-        result.push({ ...current, polygon: currentPolygon });
-      }
-    }
-
-    return result.length > 0 ? result : zones;
-  } catch {
-    return zones;
-  }
-}
-
-/** Merge own zones that overlap into single larger zones */
-function mergeOwnZones(zones: RemoteZone[]): RemoteZone[] {
-  try {
-    const mine = zones.filter(z => z.is_mine && z.polygon?.length >= 3);
-    const others = zones.filter(z => !z.is_mine || !z.polygon || z.polygon.length < 3);
-    if (mine.length < 2) return zones;
-
-    const merged: RemoteZone[] = [];
-    const used = new Set<number>();
-
-    for (let i = 0; i < mine.length; i++) {
-      if (used.has(i)) continue;
-      let current = mine[i].polygon;
-      let currentZone = mine[i];
-      for (let j = i + 1; j < mine.length; j++) {
-        if (used.has(j)) continue;
-        const bbox1 = polyBBox(current);
-        const bbox2 = polyBBox(mine[j].polygon);
-        if (!bboxOverlap(bbox1, bbox2)) continue;
-        try {
-          const result = polyUnion(current, mine[j].polygon);
-          if (result.length > 0 && result[0].length >= 3) {
-            current = result[0];
-            currentZone = { ...currentZone, polygon: current, area_km2: polygonArea(current) };
-            used.add(j);
-          }
-        } catch {}
-      }
-      merged.push({ ...currentZone, polygon: current });
-    }
-
-    return [...others, ...merged];
-  } catch {
-    return zones;
-  }
 }
 
 /** Sutherland-Hodgman polygon clipping — intersección de dos polígonos (fallback) */
@@ -1037,7 +897,6 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
   // `loopClosed` al backend, que calcula el bono de loop autoritativo. Se pone
   // a true dentro de closeLoop y se resetea al iniciar carrera.
   const loopClosedRef = useRef(false);
-  const [remoteZones, setRemoteZones] = useState<RemoteZone[]>([]);
   // Grid (v2): cells claimed in the current run live in a Set keyed by "x,y".
   // The polygon system above still runs in parallel during the v1.5 → v1.6 transition
   // until we're confident enough to delete it.
@@ -1420,6 +1279,9 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
   }, []);
   const mapRef = useRef<MapView>(null);
   const currentDelta = useRef({ latDelta: 0.02, lngDelta: 0.02 });
+  /** Última caja pedida al servidor y cuándo, para no pedirla dos veces
+   *  seguidas (ver loadCellsSiNueva). */
+  const ultimaPeticionRef = useRef<{ clave: string; t: number } | null>(null);
 
   const reverseGeocode = async (lat: number, lng: number) => {
     try {
@@ -1505,26 +1367,38 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
   };
 
   useEffect(() => {
-    // Red de seguridad: pase lo que pase con la carga inicial (zonas, red,
-    // permiso, una petición que se cuelga sin resolver durante un redeploy del
+    // Red de seguridad: pase lo que pase con la carga inicial (red, permiso,
+    // una petición que se cuelga sin resolver durante un redeploy del
     // backend…), el mapa NUNCA debe quedarse atascado en "ACTUALIZANDO MAPA".
-    // A los 8s lo mostramos sí o sí; el mapa es usable aunque las zonas tarden.
+    // A los 8s lo mostramos sí o sí; el mapa es usable aunque el territorio tarde.
     const mapLoadingSafety = setTimeout(() => setMapLoading(false), 8000);
     (async () => {
-      // Cold-start (v1.10.8): arrancar loadZones/loadCells contra
-      // DEFAULT_REGION inmediatamente, sin esperar al permiso ni al fix
-      // GPS. Antes el mapa se quedaba en blanco 2-5 segundos en arranques
-      // fríos (lastKnown null + getCurrentPosition lento). Ahora vemos
-      // cells al instante y cuando llega la posición real, re-centramos y
-      // re-cargamos con coords del usuario. Las dos llamadas duplicadas
-      // valen la pena por la sensación de inmediatez.
-      loadZones(DEFAULT_REGION.latitude, DEFAULT_REGION.longitude);
-      loadCells(DEFAULT_REGION.latitude, DEFAULT_REGION.longitude);
+      // 1) Lo último que se vio, del disco, al instante (6-nov-2026). Hasta la
+      // 1.11.14 el mapa esperaba a /zones/nearby —zonas antiguas que ya no se
+      // pintan, 156 KB por petición y tres peticiones en cada arranque— y el
+      // territorio se pedía primero para Madrid (DEFAULT_REGION) y luego dos
+      // veces más. Ahora se pinta el territorio guardado de la última vista y
+      // se enseña el mapa; el GPS y el servidor lo ponen al día después.
+      let vista: Vista | null = null;
+      if (user?.id) {
+        vista = await leerUltimaVista(user.id);
+        if (vista) {
+          setMapRegion(vista);
+          currentDelta.current = { latDelta: vista.latitudeDelta, lngDelta: vista.longitudeDelta };
+          const guardado = await leerTerritorio(user.id, cajaDeVista(
+            vista.latitude, vista.longitude, vista.latitudeDelta, vista.longitudeDelta).clave);
+          if (guardado) recibirTerritorio(guardado, null);
+          setMapLoading(false);
+        }
+      }
+      // Sin nada guardado (primera vez): el territorio de Madrid mientras
+      // llega la posición, como antes, y el mapa sale con esa respuesta.
+      if (!vista) loadCells(DEFAULT_REGION.latitude, DEFAULT_REGION.longitude);
 
       // Rechazo Google jul-2026: aquí se pedía el permiso a pelo al montar
       // el mapa. Ahora el diálogo del sistema solo aparece tras aceptar el
       // aviso destacado (ensureForegroundPermission). Si el usuario dice
-      // "Ahora no", el mapa sigue funcionando sobre DEFAULT_REGION y se le
+      // "Ahora no", el mapa sigue funcionando sobre la última vista y se le
       // volverá a ofrecer al pulsar "Iniciar carrera".
       const granted = await ensureForegroundPermission();
       if (granted) {
@@ -1533,8 +1407,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
           const lastKnown = await Location.getLastKnownPositionAsync();
           if (lastKnown) {
             centerOnUser(lastKnown.coords.latitude, lastKnown.coords.longitude);
-            loadZones(lastKnown.coords.latitude, lastKnown.coords.longitude);
-            loadCells(lastKnown.coords.latitude, lastKnown.coords.longitude);
+            loadCellsSiNueva(lastKnown.coords.latitude, lastKnown.coords.longitude);
             reverseGeocode(lastKnown.coords.latitude, lastKnown.coords.longitude);
           }
           // Luego obtener ubicación precisa
@@ -1543,17 +1416,16 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
             timeInterval: 10000,
           });
           centerOnUser(loc.coords.latitude, loc.coords.longitude);
-          loadZones(loc.coords.latitude, loc.coords.longitude);
-          loadCells(loc.coords.latitude, loc.coords.longitude);
+          loadCellsSiNueva(loc.coords.latitude, loc.coords.longitude);
           reverseGeocode(loc.coords.latitude, loc.coords.longitude);
           checkUnreadTaunts();
         } catch (e) {
           console.warn('[Location] Error getting position:', e);
-          loadZones(DEFAULT_REGION.latitude, DEFAULT_REGION.longitude);
+          setMapLoading(false);
         }
       } else {
         console.warn('[Location] Permission denied');
-        loadZones(DEFAULT_REGION.latitude, DEFAULT_REGION.longitude);
+        setMapLoading(false);
       }
     })();
     return () => clearTimeout(mapLoadingSafety);
@@ -1618,37 +1490,6 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     return () => sub.remove();
   }, []);
 
-  const loadZones = async (lat?: number, lng?: number) => {
-    try {
-      const useLat = lat ?? mapRegion.latitude;
-      const useLng = lng ?? mapRegion.longitude;
-      // No cargar zonas si el zoom es demasiado amplio
-      if (currentDelta.current.latDelta > MAX_DELTA_FOR_ZONES) {
-        setMapLoading(false);
-        return;
-      }
-      const zones = await api.getNearbyZones(useLat, useLng);
-
-      // Deconflictar rivales + merge propias solapadas
-      const fixed = deconflictZones(zones);
-      const merged = mergeOwnZones(fixed.length > 0 ? fixed : zones);
-      const finalZones = merged.length > 0 ? merged : zones;
-      setRemoteZones(finalZones);
-      setMapLoading(false);
-
-      // Detectar si me han robado zonas (usar zonas deconflictadas)
-      checkForStolenZones(finalZones);
-    } catch {
-      // CRÍTICO: si la carga de zonas falla (red caída, backend reiniciándose
-      // en un redeploy, 401…) hay que limpiar igualmente el loading. Antes el
-      // catch vacío dejaba el mapa colgado para siempre en "ACTUALIZANDO MAPA"
-      // sin reintento. El mapa funciona sin zonas (las celdas cargan aparte).
-      setMapLoading(false);
-    }
-  };
-
-  /** Load cells (v2 grid) for the current map viewport. Cheap call; runs alongside
-   *  loadZones during the polygon→grid transition. */
   // Temporizador para recargar celdas al mover el mapa. Con retardo: mientras
   // arrastras se disparan muchos onRegionChangeComplete seguidos y no tiene
   // sentido pedirle al servidor una consulta por cada uno.
@@ -1660,6 +1501,35 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     if (regionReloadTimer.current) clearTimeout(regionReloadTimer.current);
   }, []);
 
+  /** La caja que se pide al servidor para un centro y un zoom, y su clave en
+   *  la caché del móvil. Radio mínimo ~1 km: tras una carrera la cámara está
+   *  en zoom 17 (encuadre pequeño); sin el mínimo, un "Refrescar" a ese zoom
+   *  traería solo un trozo y el resto del run desaparecería. Con el mínimo,
+   *  el refresh cubre un run típico. */
+  const cajaDeVista = (lat: number, lng: number, latDelta: number, lngDelta: number) => {
+    const halfLat = Math.max(latDelta / 2, 0.01);
+    const halfLng = Math.max(lngDelta / 2, 0.01);
+    const north = lat + halfLat, south = lat - halfLat, east = lng + halfLng, west = lng - halfLng;
+    return { north, south, east, west, clave: claveDeCaja(cajaDelServidor(north, south, east, west)) };
+  };
+
+  /** Territorio recibido, del servidor o del disco: fotos, estado y, si viene
+   *  del servidor (con clave), a la caché del móvil bajo la clave de su caja. */
+  const recibirTerritorio = (t: MapTerritory, clave: string | null) => {
+    // Acumulamos las fotos en vez de reemplazarlas: al moverte por el mapa
+    // cada carga trae solo los dueños de ese encuadre, y no queremos perder
+    // la foto de uno cuya zona acabas de dejar atrás.
+    if (t.owners) {
+      for (const [id, o] of Object.entries(t.owners)) ownerAvatarsRef.current[id] = o.avatar;
+    }
+    setTerritorio(t);
+    if (clave && user?.id) guardarTerritorio(user.id, clave, t).catch(() => {});
+  };
+
+  /** Pide al servidor el territorio del encuadre (y las calabazas), lo pinta
+   *  y lo guarda en el móvil. Y quita la pantalla de carga si aún estaba:
+   *  desde el 6-nov-2026 el mapa espera al TERRITORIO (o al guardado), no a
+   *  las zonas antiguas. */
   const loadCells = async (lat?: number, lng?: number) => {
     try {
       // Skip when zoomed out — would return thousands of cells and choke the map.
@@ -1681,24 +1551,15 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       // Use the current viewport's delta to compute the bounding box. We could
       // be more precise by reading the actual region from onRegionChangeComplete,
       // but ±latDelta gives us roughly what's on screen.
-      // Radio mínimo ~1km: tras una carrera la cámara está en zoom 17 (viewport
-      // pequeño); sin este mínimo, un "Refrescar" a ese zoom traería solo un trozo
-      // y el resto del run desaparecería (ahora claimedCellsRef se vacía tras
-      // guardar). Con el mínimo, el refresh cubre un run típico.
-      const halfLat = Math.max(currentDelta.current.latDelta / 2, 0.01);
-      const halfLng = Math.max(currentDelta.current.lngDelta / 2, 0.01);
+      const caja = cajaDeVista(useLat, useLng, currentDelta.current.latDelta, currentDelta.current.lngDelta);
+      ultimaPeticionRef.current = { clave: caja.clave, t: Date.now() };
       // Las dos peticiones A LA VEZ. Iban una detrás de otra, y como el
       // territorio de una ciudad llena son más de cien mil celdas, las
       // calabazas no empezaban a pedirse hasta que acababa lo gordo: tardaban
       // un siglo en aparecer aunque sean cuatro datos.
       const [t, objs] = await Promise.all([
-        api.getMapTerritory(
-          useLat + halfLat,
-          useLat - halfLat,
-          useLng + halfLng,
-          useLng - halfLng,
-        ),
-        api.getObjetos(useLat + halfLat, useLat - halfLat, useLng + halfLng, useLng - halfLng),
+        api.getMapTerritory(caja.north, caja.south, caja.east, caja.west),
+        api.getObjetos(caja.north, caja.south, caja.east, caja.west),
       ]);
       // Igual: si la petición falló (null), se conservan las que ya había.
       if (objs) {
@@ -1706,15 +1567,28 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         objetosRef.current = objs.objetos;
         setObjetos(objs.objetos);
       }
-      const owners = t.owners;
-      // Acumulamos las fotos en vez de reemplazarlas: al moverte por el mapa
-      // cada carga trae solo los dueños de ese encuadre, y no queremos perder
-      // la foto de uno cuya zona acabas de dejar atrás.
-      if (owners) {
-        for (const [id, o] of Object.entries(owners)) ownerAvatarsRef.current[id] = o.avatar;
+      recibirTerritorio(t, caja.clave);
+      if (user?.id) {
+        guardarUltimaVista(user.id, {
+          latitude: useLat, longitude: useLng,
+          latitudeDelta: currentDelta.current.latDelta, longitudeDelta: currentDelta.current.lngDelta,
+        }).catch(() => {});
       }
-      setTerritorio(t);
     } catch {}
+    finally {
+      setMapLoading(false);
+    }
+  };
+
+  /** Como loadCells, pero no repite la misma caja si se pidió hace menos de
+   *  15 s: al arrancar se pide con la última posición, con la del GPS y al
+   *  montarse el mapa, y las tres caen casi siempre en la misma casilla; y al
+   *  mover el mapa un poco dentro de la misma casilla tampoco hace falta. */
+  const loadCellsSiNueva = (lat: number, lng: number) => {
+    const caja = cajaDeVista(lat, lng, currentDelta.current.latDelta, currentDelta.current.lngDelta);
+    const u = ultimaPeticionRef.current;
+    if (u && u.clave === caja.clave && Date.now() - u.t < 15_000) return;
+    loadCells(lat, lng);
   };
 
   /** Tras una carrera: recarga las celdas del servidor cubriendo TODO el bounding
@@ -1756,17 +1630,13 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         west = centerLng - MIN_HALF_LNG;
       }
       const t = await api.getMapTerritory(north, south, east, west);
-      const owners = t.owners;
-      if (owners) {
-        for (const [id, o] of Object.entries(owners)) ownerAvatarsRef.current[id] = o.avatar;
-      }
-      setTerritorio(t);
+      recibirTerritorio(t, claveDeCaja(cajaDelServidor(north, south, east, west)));
     } catch {
       await loadCells().catch(() => {});
     }
   };
 
-  /** Refrescar el mapa a mano (botón de la cabecera). Recarga celdas + zonas y
+  /** Refrescar el mapa a mano (botón de la cabecera). Recarga celdas y
    *  fuerza el remount limpio de los polígonos (mismo truco que stopRun:
    *  ocultar → recargar → bump generación → mostrar). Resuelve el caso de
    *  "perímetro marcado pero interior opaco" tras una carrera SIN tener que
@@ -1776,7 +1646,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     setRefreshingMap(true);
     try {
       setPolygonsVisible(false);
-      await Promise.all([loadCells(), loadZones()]);
+      await loadCells();
       // NO vaciamos claimedCellsRef (igual que en stopRun desde v1.10.9):
       // loadCells solo trae el viewport actual, así que el set local garantiza
       // que las celdas fuera de pantalla sigan pintadas. myCellsUnion deduplica.
@@ -1995,71 +1865,6 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     return out;
   }, [territorio, viewBox]);
 
-  const stolenCheckDone = useRef(false);
-  const checkForStolenZones = async (zones: RemoteZone[]) => {
-    if (stolenCheckDone.current || !user?.id) return;
-    stolenCheckDone.current = true;
-    try {
-      const key = `my_zones_snapshot_${user.id}`;
-      const myZones = zones.filter(z => z.is_mine);
-
-      // Calcular áreas reales de los polígonos (post-deconflicto)
-      const currentSnapshot = myZones.map(z => ({
-        id: z.id,
-        area: z.polygon?.length >= 3 ? polygonArea(z.polygon) : z.area_km2,
-        count: z.polygon?.length ?? 0,
-      }));
-
-      const prevRaw = await AsyncStorage.getItem(key);
-      const prevZones: { id: string; area: number; count?: number }[] = prevRaw ? JSON.parse(prevRaw) : [];
-
-      // Guardar snapshot actual para la próxima vez
-      await AsyncStorage.setItem(key, JSON.stringify(currentSnapshot));
-
-      // Primera vez o sin zonas previas → no hay referencia
-      if (prevZones.length === 0) return;
-
-      // Buscar zonas rivales recientes que solapan con las mías → esos son los ladrones
-      let stolenCount = 0;
-      const stolenNames: string[] = [];
-      const rivalZones = zones.filter(z => !z.is_mine);
-
-      // IDs de rivales que ya existían en el snapshot anterior
-      const prevRivalKey = `rival_zones_snapshot_${user.id}`;
-      const prevRivalRaw = await AsyncStorage.getItem(prevRivalKey);
-      const prevRivalIds: string[] = prevRivalRaw ? JSON.parse(prevRivalRaw) : [];
-      await AsyncStorage.setItem(prevRivalKey, JSON.stringify(rivalZones.map(r => r.id)));
-
-      // Solo rivales NUEVOS (no estaban antes)
-      const newRivals = rivalZones.filter(r => !prevRivalIds.includes(r.id));
-
-      for (const rival of newRivals) {
-        for (const mine of myZones) {
-          if (!mine.polygon || mine.polygon.length < 3) continue;
-          if (!rival.polygon || rival.polygon.length < 3) continue;
-          const bbox1 = polyBBox(mine.polygon);
-          const bbox2 = polyBBox(rival.polygon);
-          if (bboxOverlap(bbox1, bbox2)) {
-            stolenCount++;
-            if (rival.owner_name && !stolenNames.includes(rival.owner_name)) {
-              stolenNames.push(rival.owner_name);
-            }
-            break;
-          }
-        }
-      }
-
-      if (stolenCount > 0) {
-        setPopup({
-          visible: true,
-          type: 'stolen_from_you',
-          points: stolenCount * 50,
-          rivalName: stolenNames.length > 0 ? stolenNames.join(', ') : undefined,
-        });
-      }
-    } catch {}
-  };
-
   /** Con qué punto anterior se cierra el circuito, o -1 si no se cierra.
    *
    *  Solo dentro del tramo ACTUAL. Antes se buscaba el cierre contra todos los
@@ -2119,41 +1924,10 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
 
     const area = polygonArea(snapped);
 
-    // Robo parcial: intersección + recorte de zonas rivales
-    const stolenNames: string[] = [];
-    let stealCount = 0;
-    const stolenPieces: ConqueredZone[] = [];
-
-    const updatedRemoteZones = remoteZones.map(rz => {
-      if (rz.is_mine) return rz;
-
-      // Calcular intersección (lo que robamos)
-      const intersections = polyIntersection(rz.polygon, snapped);
-      if (intersections.length === 0) return rz; // Sin solapamiento
-
-      stealCount++;
-      if (rz.owner_name && !stolenNames.includes(rz.owner_name)) {
-        stolenNames.push(rz.owner_name);
-      }
-
-      // Guardar las piezas robadas (serán nuestras zonas naranjas)
-      intersections.forEach(piece => {
-        stolenPieces.push({ coords: piece, area: polygonArea(piece), points: 50 });
-      });
-
-      // Recortar zona rival: diferencia (lo que le queda al rival)
-      const remaining = polyDifference(rz.polygon, snapped);
-      if (remaining.length > 0 && remaining[0].length >= 3) {
-        return { ...rz, polygon: remaining[0] }; // Zona rival recortada
-      }
-      // Si no queda nada, la zona rival desaparece
-      return { ...rz, polygon: [] as Coord[] };
-    });
-
-    // Actualizar zonas remotas (rivales recortados)
-    setRemoteZones(updatedRemoteZones.filter(rz => rz.polygon.length >= 3));
-
-    const isSteal = stealCount > 0;
+    // Hasta el 6-nov-2026 aquí se cruzaba el circuito con las ZONAS antiguas
+    // (polígonos de la 1.5, /zones/nearby) para avisar en vivo de un robo. Ya
+    // no se cargan: el robo de verdad lo decide el servidor con las celdas al
+    // guardar la carrera, y sale en el resumen y en el aviso al robado.
 
     // Marca síncrona de cierre de loop para que stopRun mande `loopClosed` al
     // backend (que calcula el bono autoritativo). El bono real lo decide el
@@ -2187,17 +1961,11 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       return [
         ...remaining,
         { coords: merged, area: polygonArea(merged), points: 100 },
-        ...stolenPieces,
       ];
     });
     setTotalPoints(p => p + loopPoints);
 
-    setPopup({
-      visible: true,
-      type: isSteal ? 'stolen_by_you' : 'conquered',
-      points: loopPoints,
-      rivalName: isSteal ? stolenNames.join(', ') : undefined,
-    });
+    setPopup({ visible: true, type: 'conquered', points: loopPoints });
 
     pathRef.current = [path[path.length - 1]];
     setCurrentPath([path[path.length - 1]]);
@@ -2927,7 +2695,6 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         // esta (ver borrarCopiaSiEsLaMisma).
         await borrarCopiaSiEsLaMisma(copia);
         terminarEnvio();
-        loadZones();
         // Ocultar polígonos ANTES del reload: cuando polygonsVisible=false
         // el render del array colapsa a `false` y React desmonta TODOS los
         // <Polygon>, lo que obliga a la capa nativa de Google Maps a
@@ -3610,7 +3377,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
             if (!isRunning) {
               if (regionReloadTimer.current) clearTimeout(regionReloadTimer.current);
               regionReloadTimer.current = setTimeout(() => {
-                loadCells(region.latitude, region.longitude);
+                loadCellsSiNueva(region.latitude, region.longitude);
               }, 600);
             }
             // Limitar al territorio español

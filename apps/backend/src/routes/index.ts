@@ -11,7 +11,10 @@ import { SignJWT, jwtVerify } from 'jose';
 import { Resend } from 'resend';
 import { randomBytes, createHmac, createHash, timingSafeEqual } from 'crypto';
 import { SUPABASE_ROOT_CA } from '../db/supabase-ca.js';
-import { Dueno, SQL_TIRAS, tirasDesdeDuenos } from '../services/tiras.js';
+import {
+  Dueno, SQL_TIRAS, tirasDesdeDuenos,
+  CASILLA_TIRAS, casillasDe, SQL_TIRAS_CASILLA, SQL_TIRAS_DESCUADRE, tirasDesdeCasillas, FilaCasilla,
+} from '../services/tiras.js';
 import { sembrar, sembrarFantasmas, recoger, Objeto, LOGO_ES_SUYO } from '../services/objetos.js';
 import {
   celdasEncerradas, cajaDe, cajaDeTrabajo, gruposDeCeldas,
@@ -143,10 +146,21 @@ const RAILWAY_URL = process.env.RAILWAY_PUBLIC_DOMAIN
 // Los tiempos límite acompañan: no dejamos que una petición se quede colgada
 // indefinidamente esperando conexión (10s) — mejor un error claro que un
 // usuario mirando una pantalla congelada.
+//
+// Pool CALIENTE (6-nov-2026). Con 30 s de inactividad se cerraban las
+// conexiones, y como entre dos vistazos al mapa suele pasar más que eso, casi
+// cada petición empezaba abriendo conexión y TLS con Supabase: medido, el
+// territorio tardaba 300-1.400 ms tras 50 s en silencio frente a 55 ms con
+// la conexión abierta. Ahora se guardan 10 minutos y con keepAlive, para que
+// ningún cortafuegos por el camino las dé por muertas; si aun así el pooler
+// cierra una, el manejador de arriba la descarta y se abre otra. Y abajo
+// (latidoDB) una consulta trivial cada minuto mantiene una siempre viva.
 const db = new Pool({
   ...databaseConfig(),
   max: 10,
-  idleTimeoutMillis: 30_000,
+  idleTimeoutMillis: 600_000,
+  keepAlive: true,
+  keepAliveInitialDelayMillis: 30_000,
   connectionTimeoutMillis: 10_000,
 });
 
@@ -682,6 +696,23 @@ async function initDB() {
   await db.query(`ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS total_cells INT DEFAULT 0`).catch(() => {});
 
   // Achievements unlocked per user
+  // Tiras del mapa YA HECHAS, por casilla y dueño (services/tiras.ts). Las
+  // coordenadas van relativas a la esquina de la casilla (0-127).
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS tiras_casilla (
+      casilla_x INTEGER NOT NULL,
+      casilla_y INTEGER NOT NULL,
+      owner_id UUID NOT NULL,
+      ys INTEGER[] NOT NULL,
+      x0s INTEGER[] NOT NULL,
+      x1s INTEGER[] NOT NULL,
+      celdas INTEGER NOT NULL,
+      actualizado_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (casilla_x, casilla_y, owner_id)
+    )
+  `);
+  await db.query(`ALTER TABLE tiras_casilla ENABLE ROW LEVEL SECURITY`).catch(() => {});
+
   await db.query(`
     CREATE TABLE IF NOT EXISTS user_achievements (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -700,6 +731,18 @@ async function initDB() {
   // Lista de sesiones revocadas: se carga ya y se refresca cada minuto.
   await refreshRevokedSessions();
   setInterval(refreshRevokedSessions, 60_000).unref();
+
+  // Las tiras precalculadas del mapa: se comprueban (y se rellenan la primera
+  // vez) sin bloquear el arranque, y se vuelven a comprobar cada pocos minutos.
+  prepararTirasCasilla();
+  setInterval(() => { comprobarTirasCasilla().catch(() => {}); }, TIRAS_COMPROBAR_CADA_MS).unref();
+  setInterval(latidoDB, 60_000).unref();
+}
+
+/** Una consulta trivial cada minuto para que el pool conserve al menos una
+ *  conexión abierta y comprobada (ver el comentario del Pool). */
+function latidoDB() {
+  db.query('SELECT 1').catch((e) => console.warn('[DB] latido fallido:', e.message));
 }
 
 /** Envía una push notification via Expo Push Service. */
@@ -3755,6 +3798,10 @@ app.post('/runs', {
 
   const stolenZones: { id: string; ownerName: string; points: number }[] = [];
   const stolenCells: { x: number; y: number; prevOwnerId: string; prevOwnerName: string }[] = [];
+  // Casillas del mapa que toca esta carrera (pisadas y cerco): sus tiras
+  // precalculadas se rehacen antes del COMMIT, para que el corredor vea su
+  // territorio en cuanto la app recargue el mapa.
+  const casillasTocadas: Casilla[] = [];
 
   try {
     await client.query('BEGIN');
@@ -3841,6 +3888,7 @@ app.post('/runs', {
       // El mapa de esta zona acaba de cambiar de dueño: tira su caché para que
       // el robo se vea al instante y no dentro de 30 segundos.
       invalidateViewportCache(toClaim);
+      casillasTocadas.push(...casillasDe(toClaim));
 
       // Aquí solo se restan CELDAS. Los puntos de la víctima se descuentan más
       // abajo, en el bloque que recorre stolenCells (1 punto por celda). Están
@@ -4101,6 +4149,7 @@ app.post('/runs', {
             cercadasRobadas = cerco.robadas;
             victimasCerco = cerco.victimas;
             celdasDelCerco = encerradas;
+            casillasTocadas.push(...casillasDe(encerradas));
           }
         } else {
           req.log.warn(
@@ -4294,7 +4343,16 @@ app.post('/runs', {
     // Check and unlock achievements
     await checkAchievements(client, userId);
 
+    // Las tiras precalculadas de lo que ha tocado la carrera, dentro de la
+    // misma transacción (con su SAVEPOINT: si falla, la carrera se guarda
+    // igual y esas casillas se sirven al vuelo).
+    const casillasCarrera = juntarCasillas(casillasTocadas);
+    await recalcularCasillasConRed(client, casillasCarrera, req.log);
+
     await client.query('COMMIT');
+    // Otra vez DESPUÉS del commit: la invalidación de arriba va antes, y un
+    // vistazo al mapa entre medias habría vuelto a guardar lo viejo en caché.
+    invalidarCasillas(casillasCarrera);
     return reply.status(201).send({
       runId,
       stolenZones,
@@ -4579,8 +4637,12 @@ app.get('/zones/nearby', { preHandler: requireAuth }, async (req: any, reply) =>
 // rápido (sin salto de red) y no añade otra pieza que pueda fallar. Si algún
 // día hay varias réplicas, cada una tendrá su copia — sigue funcionando, solo
 // que con menos aciertos, y ahí sí compensaría Redis.
-const VIEWPORT_TILE = 128;              // celdas por lado (≈1,3 km)
-const VIEWPORT_TTL_MS = 30_000;
+const VIEWPORT_TILE = CASILLA_TIRAS;    // celdas por lado (≈1,3 km), la misma casilla que tiras_casilla
+// 5 minutos (antes 30 s). Se puede porque la entrada se tira en cuanto una
+// carrera o un cerco tocan la casilla (invalidarCasillas, también DESPUÉS del
+// COMMIT, que entre la invalidación y el commit otro vistazo la rellenaba con
+// lo viejo), así que lo que ya no cambia se sirve de memoria durante minutos.
+const VIEWPORT_TTL_MS = 5 * 60_000;
 // Tope de celdas por respuesta. Estaba en 5.000 y se quedó corto: con la
 // cuña de KarolK (47.000 celdas) en el Eixample, la casilla de la Sagrada
 // Família tenía 25.294, y como salían ordenadas por cell_x, las que pasaban
@@ -4805,7 +4867,7 @@ async function loadStrips(x0: number, x1: number, y0: number, y1: number, log: a
   // Sin LIMIT: un tope que corte es lo que pintó la recta vertical del 21-sep
   // (§9 del CLAUDE.md). STRIPS_MAX_CELLS queda solo como aviso en el registro.
   const t0 = Date.now();
-  const q = await db.query(SQL_TIRAS, [x0, x1, y0, y1]);
+  const q = await consultaConMemoria(SQL_TIRAS, [x0, x1, y0, y1]);
   const ms = Date.now() - t0;
   // El color se calcula aquí y viaja con el dueño: así la app no tiene que
   // adivinarlo, que es justo lo que provocaba los tonos repetidos.
@@ -4817,6 +4879,191 @@ async function loadStrips(x0: number, x1: number, y0: number, y1: number, log: a
     log.warn({ x0, x1, y0, y1, celdas }, '[viewport] casilla con más celdas de las esperables');
   }
   return { expires: Date.now() + VIEWPORT_TTL_MS, ...st };
+}
+
+// ── Tiras precalculadas: mantenimiento ───────────────────────────────────────
+// La explicación larga está en services/tiras.ts. Aquí, las piezas:
+//   recalcularCasillas  → rehace unas casillas DENTRO de una transacción ajena
+//                         (POST /runs, el panel), bloqueándolas en orden.
+//   recalcularCasillasAparte → lo mismo en una transacción propia (los
+//                         botones de cerco del panel, la comprobación).
+//   comprobarTirasCasilla → compara `cells` con la tabla y rehace lo que no
+//                         cuadre. Cada TIRAS_COMPROBAR_CADA_MS y al arrancar.
+//   tirasListas / casillasPendientes → mientras la tabla no esté comprobada,
+//                         o una casilla se haya quedado a medias, el mapa se
+//                         calcula al vuelo con SQL_TIRAS, como antes.
+const TIRAS_COMPROBAR_CADA_MS = 5 * 60_000;
+let tirasListas = false;
+const casillasPendientes = new Set<string>();
+type Casilla = { cx: number; cy: number };
+const claveCasilla = (c: Casilla) => `${c.cx}:${c.cy}`;
+/** Sin repetidas y en el orden de bloqueo (x, y). */
+const juntarCasillas = (cs: Casilla[]): Casilla[] =>
+  casillasDe(cs.map(c => ({ x: c.cx * CASILLA_TIRAS, y: c.cy * CASILLA_TIRAS })));
+// Primera clave del bloqueo consultivo: un número fijo que no choque con
+// otros usos (hoy no hay ninguno). Vale cualquier entero mientras sea siempre
+// el mismo.
+const hashCasillas = 1961;
+
+type ClienteSQL = { query: (sql: string, params?: any[]) => Promise<{ rows: any[]; rowCount: number | null }> };
+
+/** Rehace las tiras de unas casillas dentro de la transacción de `cliente`.
+ *  Primero las bloquea todas, en el orden que da `casillasDe` (x, y): dos
+ *  transacciones que recalculen las mismas casillas se esperan en vez de
+ *  pisarse, y como el bloqueo va antes de leer `cells`, la segunda lee lo
+ *  que la primera dejó. Luego, por casilla: calcular, borrar los dueños que
+ *  ya no están y escribir (upsert) los que sí. */
+async function recalcularCasillas(cliente: ClienteSQL, casillas: Casilla[]) {
+  if (casillas.length === 0) return;
+  for (const c of casillas) {
+    await cliente.query('SELECT pg_advisory_xact_lock($1::int, $2::int)', [hashCasillas, c.cx * 32768 + c.cy]);
+  }
+  for (const c of casillas) {
+    const { rows } = await cliente.query(SQL_TIRAS_CASILLA, [c.cx, c.cy]);
+    await cliente.query(
+      `DELETE FROM tiras_casilla WHERE casilla_x = $1 AND casilla_y = $2 AND owner_id <> ALL($3::uuid[])`,
+      [c.cx, c.cy, rows.map((r: any) => r.owner_id)],
+    );
+    for (const r of rows) {
+      await cliente.query(
+        `INSERT INTO tiras_casilla (casilla_x, casilla_y, owner_id, ys, x0s, x1s, celdas, actualizado_at)
+         VALUES ($1, $2, $3, $4::int[], $5::int[], $6::int[], $7, NOW())
+         ON CONFLICT (casilla_x, casilla_y, owner_id) DO UPDATE
+           SET ys = EXCLUDED.ys, x0s = EXCLUDED.x0s, x1s = EXCLUDED.x1s,
+               celdas = EXCLUDED.celdas, actualizado_at = NOW()`,
+        [c.cx, c.cy, r.owner_id, r.ys, r.x0s, r.x1s, r.celdas],
+      );
+    }
+  }
+}
+/** Lo mismo, en una transacción propia. Si falla, las casillas quedan en
+ *  duda (se sirven al vuelo) hasta que la comprobación las rehaga. */
+async function recalcularCasillasAparte(casillas: Casilla[], log: any): Promise<boolean> {
+  if (casillas.length === 0) return true;
+  const cliente = await db.connect();
+  try {
+    await cliente.query('BEGIN');
+    await recalcularCasillas(cliente, casillas);
+    await cliente.query('COMMIT');
+    for (const c of casillas) casillasPendientes.delete(claveCasilla(c));
+    invalidarCasillas(casillas);
+    return true;
+  } catch (e) {
+    await cliente.query('ROLLBACK').catch(() => {});
+    for (const c of casillas) casillasPendientes.add(claveCasilla(c));
+    log.warn({ err: String(e), casillas: casillas.length }, '[tiras] no se pudieron recalcular; se sirven al vuelo');
+    return false;
+  } finally {
+    cliente.release();
+  }
+}
+
+/** Dentro de una transacción ajena y con red: un fallo aquí no puede
+ *  costarle la carrera a nadie, así que va en un SAVEPOINT; si se deshace,
+ *  las casillas quedan en duda y se sirven al vuelo hasta la comprobación. */
+async function recalcularCasillasConRed(cliente: ClienteSQL, casillas: Casilla[], log: any) {
+  if (casillas.length === 0) return;
+  await cliente.query('SAVEPOINT tiras');
+  try {
+    await recalcularCasillas(cliente, casillas);
+    await cliente.query('RELEASE SAVEPOINT tiras');
+  } catch (e) {
+    await cliente.query('ROLLBACK TO SAVEPOINT tiras');
+    for (const c of casillas) casillasPendientes.add(claveCasilla(c));
+    log.warn({ err: String(e), casillas: casillas.length }, '[tiras] no se pudieron recalcular en la carrera; se sirven al vuelo');
+  }
+}
+
+let comprobandoTiras = false;
+/** Compara `cells` con la tabla y rehace las casillas que no cuadren. Al
+ *  acabar bien, la tabla queda lista para servir el mapa. */
+async function comprobarTirasCasilla(): Promise<void> {
+  if (comprobandoTiras) return;
+  comprobandoTiras = true;
+  const t0 = Date.now();
+  try {
+    const { rows } = await db.query(SQL_TIRAS_DESCUADRE);
+    const descuadradas: Casilla[] = rows.map((r: any) => ({ cx: Number(r.cx), cy: Number(r.cy) }));
+    const descuadre = Date.now() - t0;
+    // Lo que estaba en duda y cuadra, ya no está en duda.
+    const malas = new Set(descuadradas.map(claveCasilla));
+    for (const k of [...casillasPendientes]) if (!malas.has(k)) casillasPendientes.delete(k);
+    let rehechas = 0;
+    // De una en una: la primera vez son todas las casillas con celdas (305 el
+    // 6-nov-2026) y así cada transacción es corta y no estorba a las carreras.
+    for (const c of descuadradas) {
+      if (await recalcularCasillasAparte([c], app.log)) rehechas++;
+    }
+    const listas = rehechas === descuadradas.length;
+    if (listas && !tirasListas) app.log.info('[tiras] tabla tiras_casilla comprobada: el mapa se sirve de ella');
+    tirasListas = tirasListas || listas;
+    if (descuadradas.length > 0 || !listas) {
+      app.log.info({ descuadradas: descuadradas.length, rehechas, ms: Date.now() - t0, msDescuadre: descuadre }, '[tiras] comprobación');
+    }
+  } catch (e) {
+    app.log.error({ err: String(e) }, '[tiras] no se pudo comprobar la tabla; el mapa sigue al vuelo');
+  } finally {
+    comprobandoTiras = false;
+  }
+}
+
+function prepararTirasCasilla() {
+  comprobarTirasCasilla().catch(() => {});
+}
+
+/** ¿Alguna casilla del encuadre está en duda? Entonces ese encuadre se
+ *  calcula al vuelo. */
+function hayCasillasPendientes(cx0: number, cx1: number, cy0: number, cy1: number): boolean {
+  if (casillasPendientes.size === 0) return false;
+  for (const k of casillasPendientes) {
+    const [cx, cy] = k.split(':').map(Number);
+    if (cx >= cx0 && cx <= cx1 && cy >= cy0 && cy <= cy1) return true;
+  }
+  return false;
+}
+
+/** Las tiras de un encuadre LEÍDAS de la tabla: decenas de filas (casilla ×
+ *  dueño), da igual cuántas celdas haya debajo. */
+async function loadStripsPrecalculadas(x0: number, x1: number, y0: number, y1: number, log: any): Promise<StripsEntry> {
+  // La caja [x0, x1] de la caché incluye x1, que es la primera columna de la
+  // casilla siguiente; aquí se sirven las casillas enteras hasta x1 - 1 (y1 - 1),
+  // que cubren todo lo pedido (x1 ≥ neCell.x + 1).
+  const cx0 = Math.floor(x0 / CASILLA_TIRAS), cx1 = Math.floor((x1 - 1) / CASILLA_TIRAS);
+  const cy0 = Math.floor(y0 / CASILLA_TIRAS), cy1 = Math.floor((y1 - 1) / CASILLA_TIRAS);
+  const t0 = Date.now();
+  const q = await db.query(
+    `SELECT t.casilla_x, t.casilla_y, t.owner_id, u.display_name AS owner_name, u.war_cry AS owner_war_cry,
+            u.color_idx AS owner_color_idx, t.ys, t.x0s, t.x1s
+       FROM tiras_casilla t
+       JOIN users u ON u.id = t.owner_id
+      WHERE t.casilla_x BETWEEN $1 AND $2 AND t.casilla_y BETWEEN $3 AND $4`,
+    [cx0, cx1, cy0, cy1],
+  );
+  const ms = Date.now() - t0;
+  const { celdas, ...st } = tirasDesdeCasillas(q.rows as FilaCasilla[], colorDeCorredor);
+  if (ms > 500) log.warn({ cx0, cx1, cy0, cy1, ms, celdas, tiras: st.n, filas: q.rows.length }, '[viewport] tiras precalculadas lentas');
+  return { expires: Date.now() + VIEWPORT_TTL_MS, ...st };
+}
+
+/** Una consulta con más memoria de ordenación de la que da Supabase por
+ *  defecto (2 MB): SQL_TIRAS y la del formato viejo ordenan el encuadre entero
+ *  (130.000 celdas en Barcelona) y con 2 MB se iban a disco («external merge
+ *  Disk: 4568kB»). SET LOCAL solo vale dentro de una transacción, y así solo
+ *  afecta a esta consulta. */
+async function consultaConMemoria(sql: string, params: any[]): Promise<{ rows: any[] }> {
+  const cliente = await db.connect();
+  try {
+    await cliente.query('BEGIN');
+    await cliente.query(`SET LOCAL work_mem = '32MB'`);
+    const r = await cliente.query(sql, params);
+    await cliente.query('COMMIT');
+    return r;
+  } catch (e) {
+    await cliente.query('ROLLBACK').catch(() => {});
+    throw e;
+  } finally {
+    cliente.release();
+  }
 }
 
 app.get('/cells/viewport', { preHandler: requireAuth }, async (req: any, reply) => {
@@ -4840,7 +5087,15 @@ app.get('/cells/viewport', { preHandler: requireAuth }, async (req: any, reply) 
   if (String(req.query?.formato ?? '') === 'tiras') {
     let st = stripsCache.get(cacheKey);
     if (!st || st.expires <= Date.now()) {
-      st = await loadStrips(x0, x1, y0, y1, req.log);
+      // De la tabla precalculada (decenas de filas) salvo que no esté
+      // comprobada todavía o alguna casilla del encuadre esté en duda: entonces,
+      // al vuelo desde `cells`, como hasta el 6-nov-2026.
+      const precalculadas = tirasListas && !hayCasillasPendientes(
+        Math.floor(x0 / CASILLA_TIRAS), Math.floor((x1 - 1) / CASILLA_TIRAS),
+        Math.floor(y0 / CASILLA_TIRAS), Math.floor((y1 - 1) / CASILLA_TIRAS));
+      st = precalculadas
+        ? await loadStripsPrecalculadas(x0, x1, y0, y1, req.log)
+        : await loadStrips(x0, x1, y0, y1, req.log);
       if (stripsCache.size >= VIEWPORT_CACHE_MAX) {
         const now = Date.now();
         for (const [k, v] of stripsCache) if (v.expires <= now) stripsCache.delete(k);
@@ -4882,7 +5137,7 @@ app.get('/cells/viewport', { preHandler: requireAuth }, async (req: any, reply) 
     // abajo se rehace la lista celda a celda en el mismo orden (por cercanía
     // al centro; los empates ya salían en cualquier orden, aquí por x e y).
     // Los tres array_agg llevan el mismo ORDER BY para ir alineados.
-    const q = await db.query(
+    const q = await consultaConMemoria(
       `WITH c AS (
          SELECT c.cell_x, c.cell_y, c.owner_id,
                 EXTRACT(EPOCH FROM c.claimed_at)::int AS claimed_s
@@ -4983,6 +5238,20 @@ app.get('/cells/viewport', { preHandler: requireAuth }, async (req: any, reply) 
 /** Invalida el caché del mapa alrededor de unas celdas recién conquistadas.
  *  Sin esto, quien acabara de robar territorio seguiría viéndolo del dueño
  *  anterior hasta 30 segundos, que en un juego de robos se nota. */
+/** Igual, por casillas (las que acaba de rehacer un recálculo). */
+function invalidarCasillas(casillas: Casilla[]) {
+  if (casillas.length === 0) return;
+  const toca = (key: string) => {
+    const [x0, x1, y0, y1] = key.split(':').map(Number);
+    const cx0 = Math.floor(x0 / CASILLA_TIRAS), cx1 = Math.floor(x1 / CASILLA_TIRAS);
+    const cy0 = Math.floor(y0 / CASILLA_TIRAS), cy1 = Math.floor(y1 / CASILLA_TIRAS);
+    return casillas.some(c => c.cx >= cx0 && c.cx <= cx1 && c.cy >= cy0 && c.cy <= cy1);
+  };
+  for (const cache of [viewportCache, stripsCache] as Map<string, unknown>[]) {
+    for (const key of [...cache.keys()]) if (toca(key)) cache.delete(key);
+  }
+}
+
 function invalidateViewportCache(cells: { x: number; y: number }[]) {
   if (cells.length === 0) return;
   // Cada entrada cubre un rectángulo de varias casillas (x0..x1, y0..y1). Antes
@@ -5725,6 +5994,7 @@ async function importStravaActivity(userId: string, activityId: number, accessTo
     // 4) Procesar celdas — detectar new vs robos (mismo patrón que POST /runs)
     let newCellCount = 0;
     const stolenCells: { x: number; y: number; prevOwnerId: string }[] = [];
+    let casillasImportadas: Casilla[] = [];
     if (claimedCells.length > 0) {
       const xs = claimedCells.map(c => c.x);
       const ys = claimedCells.map(c => c.y);
@@ -5759,6 +6029,7 @@ async function importStravaActivity(userId: string, activityId: number, accessTo
         [xs, ys, userId, runId]
       );
       invalidateViewportCache(xs.map((x: number, i: number) => ({ x, y: ys[i] })));
+      casillasImportadas = casillasDe(claimedCells);
 
       // Robos: decrement victim total_cells + push notification
       const thiefName = (await client.query('SELECT display_name FROM users WHERE id = $1', [userId])).rows[0]?.display_name ?? 'Alguien';
@@ -5803,7 +6074,9 @@ async function importStravaActivity(userId: string, activityId: number, accessTo
     );
 
     await checkAchievements(client, userId);
+    await recalcularCasillasConRed(client, casillasImportadas, app.log);
     await client.query('COMMIT');
+    invalidarCasillas(casillasImportadas);
 
     console.log(`[Strava v2] ${activityId} → ${userId}: ${distKm.toFixed(1)}km, +${totalPoints}pts (${newCellCount} celdas nuevas, ${stolenCells.length} robadas, loop=${isLoop})`);
 
@@ -5985,6 +6258,7 @@ app.post('/admin/carreras/:id/rellenar', { preHandler: requireAdmin }, async (re
     );
     await db.query(`UPDATE runs SET points = points + $2 WHERE id = $1`, [id, puntos]);
     invalidateViewportCache(interior);
+    await recalcularCasillasAparte(casillasDe(interior), req.log);
     await avisarCercados(db, cerco.victimas, nombre);
 
     // Y se le cuenta, que si no aparece territorio de la nada y no se entiende.
@@ -6189,6 +6463,7 @@ app.post('/admin/corredores/cercos', { preHandler: requireAdmin }, async (req: a
       [userId, cerco.total, puntos],
     );
     invalidateViewportCache(encerradas);
+    await recalcularCasillasAparte(casillasDe(encerradas), req.log);
     await avisarCercados(db, cerco.victimas, nombre);
     await db.query(
       `INSERT INTO avisos (titulo, texto, boton, etiqueta, sello, nota, publico, corredor, automatico)
