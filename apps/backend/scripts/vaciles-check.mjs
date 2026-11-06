@@ -21,6 +21,7 @@ const raiz = dirname(dirname(fileURLToPath(import.meta.url)));
 const {
   prepararVaciles, guardarPestanaVaciles, borrarPestanaVaciles, pestanasVacilesAdmin,
   pestanasVacilesPara, lineasDeVaciles, PRIMER_ID_VACILE,
+  guardarParejaVacile, quitarParejaVacile, imagenVacile, parteDeCartel,
 } = await import(join(raiz, 'dist/services/vaciles.js'));
 const fuente = readFileSync(join(raiz, 'src/routes/index.ts'), 'utf8');
 const dist = readFileSync(join(raiz, 'dist/routes/index.js'), 'utf8');
@@ -157,6 +158,54 @@ comprueba('eliminada: no sale en el panel', !(await pestanasVacilesAdmin(db)).so
 comprueba('eliminada: no la ve nadie en la app', !(await pestanasVacilesPara(db, 'KarolK', ajusteLeToca)).some(p => p.nombre === 'Navidad'));
 const despues = (await db.query(sqlUnread, [karol])).rows.find(t => t.taunt_id === idEh);
 comprueba('pero el vacile ya enviado sigue llegando con su texto', despues?.texto === 'Eh KarolK, esa calle era mía', despues?.texto);
+
+// ── Pestañas de carteles (imágenes), como los tótems de Iban ──
+const sharp = (await import('sharp')).default;
+const png = (color) => sharp({ create: { width: 592, height: 1280, channels: 3, background: color } }).png().toBuffer();
+comprueba('parteDeCartel: tótems (03_01_PROVOCACION_sombra_azul.png)',
+  JSON.stringify(parteDeCartel('03_01_PROVOCACION_sombra_azul.png')) === JSON.stringify({ numero: 3, cual: 'provocacion', nombre: 'sombra azul' }));
+comprueba('parteDeCartel: aura (04_RESPUESTA_amarillo_rankings.png)',
+  JSON.stringify(parteDeCartel('04_RESPUESTA_amarillo_rankings.png')) === JSON.stringify({ numero: 4, cual: 'respuesta', nombre: 'amarillo rankings' }));
+comprueba('parteDeCartel: otro nombre no vale', parteDeCartel('vista_general.jpg') === null && parteDeCartel('.DS_Store') === null);
+const totems = await guardarPestanaVaciles(db, { id: null, nombre: 'Tótems', orden: 5, modo: 'prueba:Ibanto', tipo: 'imagen', mensajes: [], respuestas: [] });
+comprueba('pestaña de carteles: se crea vacía', totems.tipo === 'imagen' && totems.mensajes.length === 0);
+comprueba('vacía no sale en la app aunque esté en prueba', !(await pestanasVacilesPara(db, 'Ibanto', ajusteLeToca)).some(p => p.nombre === 'Tótems'));
+const lobo = await guardarParejaVacile(db, { pestanaId: totems.id, orden: 1, nombre: 'lobo_naranja', provocacion: await png('#ff5500'), respuesta: await png('#0000ff') });
+comprueba('pareja: dos ids nuevos, provocación y respuesta', lobo.mensajeId > PRIMER_ID_VACILE && lobo.respuestaId === lobo.mensajeId + 1);
+const conCartel = (await pestanasVacilesPara(db, 'Ibanto', ajusteLeToca, 'https://s')).find(p => p.nombre === 'Tótems');
+comprueba('con una pareja ya sale, con el cartel y la miniatura', !!conCartel && conCartel.mensajes.length === 1
+  && conCartel.mensajes[0].imagen.startsWith('https://s/vaciles/imagen/' + lobo.mensajeId + '.png?v=')
+  && conCartel.mensajes[0].miniatura.startsWith('https://s/vaciles/imagen/' + lobo.mensajeId + '-v.jpg?v='), JSON.stringify(conCartel?.mensajes));
+comprueba('el texto de reserva es el nombre, con espacios', conCartel?.mensajes[0].texto === 'lobo naranja');
+comprueba('la respuesta es la suya, no el mensaje', conCartel?.respuestas[0].id === lobo.respuestaId && !!conCartel?.respuestas[0].imagen);
+const guardado = await imagenVacile(db, lobo.mensajeId);
+const metaPng = await sharp(guardado.png).metadata();
+const metaJpg = await sharp(guardado.jpg).metadata();
+comprueba('el cartel se guarda en PNG 592×1280', metaPng.format === 'png' && metaPng.width === 592 && metaPng.height === 1280);
+comprueba('la miniatura es JPG 288×512', metaJpg.format === 'jpeg' && metaJpg.width === 288 && metaJpg.height === 512);
+comprueba('un mensaje sin cartel da null', (await imagenVacile(db, 3)) === null);
+const chica = await sharp({ create: { width: 100, height: 100, channels: 3, background: '#fff' } }).png().toBuffer();
+const lobo2 = await guardarParejaVacile(db, { pestanaId: totems.id, orden: 1, nombre: 'lobo naranja', provocacion: chica, respuesta: chica });
+comprueba('subir otra vez la misma pareja conserva los ids', lobo2.mensajeId === lobo.mensajeId && lobo2.respuestaId === lobo.respuestaId);
+const g2 = await imagenVacile(db, lobo.mensajeId);
+const meta2 = await sharp(g2.png).metadata();
+comprueba('y el cartel nuevo se encaja a 592×1280 con otra versión', meta2.width === 592 && meta2.height === 1280 && g2.version !== guardado.version);
+saltó = false;
+try { await guardarParejaVacile(db, { pestanaId: totems.id, orden: 2, nombre: 'rota', provocacion: Buffer.from('no soy una imagen'), respuesta: chica }); } catch { saltó = true; }
+comprueba('una imagen que no se puede leer no se guarda', saltó);
+saltó = false;
+try { await guardarParejaVacile(db, { pestanaId: prueba.id, orden: 1, nombre: 'x', provocacion: chica, respuesta: chica }); } catch { saltó = true; }
+comprueba('una pestaña de texto no admite carteles', saltó);
+await db.query(`INSERT INTO taunts (from_user_id, to_user_id, mode, taunt_id) VALUES ($1, $2, 'taunt', $3)`, [iban, karol, lobo.mensajeId]);
+const deCartel = (await db.query(sqlUnread, [karol])).rows.find(t => t.taunt_id === lobo.mensajeId);
+comprueba('en la bandeja viene la versión del cartel y el nombre de reserva', !!deCartel && deCartel.imagen_version === g2.version && deCartel.texto === 'lobo naranja');
+comprueba('un clásico sigue llegando sin versión de cartel', clasico.imagen_version === null);
+comprueba('guardar el nombre o el interruptor no toca los carteles',
+  (await guardarPestanaVaciles(db, { id: totems.id, nombre: 'Tótems', orden: 5, modo: 'si', tipo: 'imagen', mensajes: [], respuestas: [] })).mensajes.length === 1);
+comprueba('quitar la pareja', await quitarParejaVacile(db, totems.id, 'lobo_naranja'));
+comprueba('quitada: la pestaña se queda vacía y no sale en la app', !(await pestanasVacilesPara(db, 'KarolK', ajusteLeToca)).some(p => p.nombre === 'Tótems'));
+comprueba('pero el vacile de cartel enviado sigue trayendo su cartel',
+  (await db.query(sqlUnread, [karol])).rows.find(t => t.taunt_id === lobo.mensajeId)?.imagen_version === g2.version);
 
 console.log(fallos ? `\n${fallos} fallo(s) en los vaciles.` : '\nVaciles en orden.');
 process.exit(fallos ? 1 : 0);

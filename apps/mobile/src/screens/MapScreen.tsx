@@ -2948,8 +2948,8 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
               // que llega con su texto y se pinta en una tarjeta, o es de
               // una versión más nueva y no se enseña nada.
               if (!img) {
-                return currentTaunt.texto
-                  ? <VacileTarjeta grande texto={currentTaunt.texto} pestana={currentTaunt.pestana} />
+                return currentTaunt.texto || currentTaunt.imagen
+                  ? <VacileTarjeta grande texto={currentTaunt.texto ?? ''} imagen={currentTaunt.imagen} pestana={currentTaunt.pestana} />
                   : null;
               }
               return (

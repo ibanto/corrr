@@ -18,7 +18,8 @@ import {
 import { sembrar, sembrarFantasmas, recoger, Objeto, LOGO_ES_SUYO } from '../services/objetos.js';
 import {
   prepararVaciles, guardarPestanaVaciles, borrarPestanaVaciles, pestanasVacilesAdmin,
-  pestanasVacilesPara, lineasDeVaciles,
+  pestanasVacilesPara, lineasDeVaciles, guardarParejaVacile, quitarParejaVacile,
+  imagenVacile, direccionesDeCartel,
 } from '../services/vaciles.js';
 import {
   celdasEncerradas, cajaDe, cajaDeTrabajo, gruposDeCeldas,
@@ -2170,20 +2171,34 @@ Sale UNA vez por persona; para repetirlo, se crea otro. Solo lo ven las apps 1.1
 <h2>Vaciles</h2>
 <p class="nota">Los vaciles son los mensajes que un corredor manda a quien le ha robado, y la respuesta del ladr&oacute;n.
 La app lleva dentro los <b>Cl&aacute;sicos</b> y los de <b>Halloween</b>, dibujados. <b>Las pesta&ntilde;as de aqu&iacute; salen
-en el selector sin sacar versi&oacute;n</b> (en las apps 1.11.15 o m&aacute;s nuevas): un nombre y sus textos, uno por l&iacute;nea,
-que la app pinta en una tarjeta. Si escribes <b>{nombre}</b> se cambia por el nombre de quien lo recibe. Gu&aacute;rdala en
-prueba para verla t&uacute; en la app antes de encenderla. Los cambios se ven al abrir el selector; lo &uacute;ltimo recibido se queda
-guardado en el m&oacute;vil por si no hay red.</p>
+en el selector sin sacar versi&oacute;n</b> (en las apps 1.11.15 o m&aacute;s nuevas). Una pesta&ntilde;a es <b>de textos</b> (frases, una por
+l&iacute;nea, que la app pinta en una tarjeta; <b>{nombre}</b> se cambia por el nombre de quien lo recibe) o <b>de carteles</b> (parejas de PNG
+de 592&times;1280 como los cl&aacute;sicos: la provocaci&oacute;n y la respuesta del ladr&oacute;n). Gu&aacute;rdala en prueba para verla t&uacute; en la app
+antes de encenderla. Los cambios se ven al abrir el selector; lo &uacute;ltimo recibido se queda guardado en el m&oacute;vil por si no hay red.</p>
 <div id="v_lista"><p class="nota">Cargando&hellip;</p></div>
 <button class="btn" id="v_nueva" type="button">Nueva pesta&ntilde;a</button>
 <form class="form" id="fv" style="display:none;margin-top:14px">
   <input id="v_id" type="hidden">
   <label class="campo">Nombre de la pesta&ntilde;a (corto; en la app sale en may&uacute;sculas)
     <input id="v_nombre" placeholder="Navidad" maxlength="18"></label>
+  <select id="v_tipo">
+    <option value="texto">De textos &mdash; frases, una por l&iacute;nea</option>
+    <option value="imagen">De carteles &mdash; parejas de PNG (provocaci&oacute;n + respuesta)</option>
+  </select>
+  <div id="v_zona_texto" class="form">
   <label class="campo">Mensajes, uno por l&iacute;nea (los que manda quien ha sufrido el robo; 140 letras como mucho cada uno)
     <textarea id="v_mensajes" rows="8" placeholder="Eh {nombre}, esa calle era m&iacute;a. Voy a por ti."></textarea></label>
   <label class="campo">Respuestas, una por l&iacute;nea (las del ladr&oacute;n; en blanco = valen las mismas de arriba)
     <textarea id="v_respuestas" rows="4"></textarea></label>
+  </div>
+  <div id="v_zona_imagen" class="form" style="display:none">
+  <p class="nota">Elige los PNG de la carpeta <b>todos a la vez</b>. Se emparejan por el n&uacute;mero del nombre:
+  <b>01_PROVOCACION_lobo.png</b> con <b>01_RESPUESTA_lobo.png</b> (tambi&eacute;n vale 01_01_PROVOCACION_&hellip; y 01_02_RESPUESTA_&hellip;).
+  Al guardar se suben una pareja detr&aacute;s de otra; una pareja con el mismo nombre que otra ya subida la sustituye.</p>
+  <div id="v_parejas"></div>
+  <label class="campo">Carteles nuevos (varios archivos a la vez)
+    <input id="v_archivos" type="file" multiple accept="image/png,image/jpeg"></label>
+  </div>
   <label class="campo">Orden (las pesta&ntilde;as salen de menor a mayor)
     <input id="v_orden" type="number" value="0" style="width:90px"></label>
   <select id="v_modo">
@@ -2945,23 +2960,50 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
     var lista = document.getElementById('v_lista');
     if (!vacilesPanel.length) { lista.innerHTML = '<p class="nota">Todavía no hay ninguna pestaña. Pulsa «Nueva pestaña».</p>'; return; }
     lista.innerHTML = vacilesPanel.map(function (p) {
-      var cuenta = p.mensajes.length + (p.mensajes.length === 1 ? ' mensaje' : ' mensajes')
-        + (p.respuestas.length ? ' y ' + p.respuestas.length + (p.respuestas.length === 1 ? ' respuesta' : ' respuestas') : '');
+      var cuenta = p.tipo === 'imagen'
+        ? p.mensajes.length + (p.mensajes.length === 1 ? ' pareja de carteles' : ' parejas de carteles')
+        : p.mensajes.length + (p.mensajes.length === 1 ? ' mensaje' : ' mensajes')
+          + (p.respuestas.length ? ' y ' + p.respuestas.length + (p.respuestas.length === 1 ? ' respuesta' : ' respuestas') : '');
       return '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:8px 0;border-bottom:1px solid #222">'
         + '<b>' + esc(p.nombre) + '</b><span style="color:' + (p.modo === 'si' ? '#4caf50' : (p.modo === 'no' ? '#888' : '#f59e0b')) + '">'
         + esc(estadoVacile(p.modo)) + '</span><span style="color:#888">' + cuenta + '</span>'
         + '<button class="mini" type="button" data-vacile="' + p.id + '">Abrir</button></div>';
     }).join('');
   }
+  var SALTO = String.fromCharCode(10);
+  function pintarParejas(p) {
+    var caja = document.getElementById('v_parejas');
+    if (!p || p.tipo !== 'imagen' || !p.mensajes.length) {
+      caja.innerHTML = '<p class="nota">Todavía no hay carteles en esta pestaña.</p>';
+      return;
+    }
+    caja.innerHTML = p.mensajes.map(function (m, i) {
+      var r = p.respuestas[i];
+      var mini = function (x) { return x && x.miniatura ? '<img src="' + esc(x.miniatura) + '" style="width:36px;height:64px;object-fit:contain;background:#000;border-radius:4px">' : ''; };
+      return '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:6px 0;border-bottom:1px solid #222">'
+        + mini(m) + mini(r) + '<b>' + esc(m.texto) + '</b><span style="color:#888">'
+        + (m.imagen ? 'provocación' : 'SIN provocación') + (r && r.imagen ? ' y respuesta' : ' y SIN respuesta') + '</span>'
+        + '<button class="mini" type="button" data-pareja="' + esc(m.texto) + '">Quitar</button></div>';
+    }).join('');
+  }
   function abrirVacile(p) {
     var modo = !p || p.modo === 'no' ? 'apagado' : (p.modo === 'si' ? 'todos' : 'prueba');
+    var tipo = p && p.tipo === 'imagen' ? 'imagen' : 'texto';
     // display y no el atributo hidden: la clase .form (display:grid) le gana
     // al hidden del navegador y el formulario se veía siempre.
     document.getElementById('fv').style.display = '';
     document.getElementById('v_id').value = p ? p.id : '';
     document.getElementById('v_nombre').value = p ? p.nombre : '';
-    document.getElementById('v_mensajes').value = p ? p.mensajes.map(function (m) { return m.texto; }).join('\\n') : '';
-    document.getElementById('v_respuestas').value = p ? p.respuestas.map(function (m) { return m.texto; }).join('\\n') : '';
+    document.getElementById('v_tipo').value = tipo;
+    // El tipo se decide al crearla: cambiarlo después dejaría los mensajes de
+    // un tipo colgando en una pestaña del otro.
+    document.getElementById('v_tipo').disabled = !!p;
+    document.getElementById('v_zona_texto').style.display = tipo === 'texto' ? '' : 'none';
+    document.getElementById('v_zona_imagen').style.display = tipo === 'imagen' ? '' : 'none';
+    document.getElementById('v_mensajes').value = p && tipo === 'texto' ? p.mensajes.map(function (m) { return m.texto; }).join(SALTO) : '';
+    document.getElementById('v_respuestas').value = p && tipo === 'texto' ? p.respuestas.map(function (m) { return m.texto; }).join(SALTO) : '';
+    document.getElementById('v_archivos').value = '';
+    pintarParejas(p);
     document.getElementById('v_orden').value = p ? p.orden : (vacilesPanel.length ? vacilesPanel[vacilesPanel.length - 1].orden + 1 : 0);
     document.getElementById('v_modo').value = modo;
     document.getElementById('v_probadores').value = p && p.modo.indexOf('prueba:') === 0 ? p.modo.slice('prueba:'.length) : '';
@@ -2985,30 +3027,108 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
     if (p) { abrirVacile(p); document.getElementById('fv').scrollIntoView({ behavior: 'smooth', block: 'start' }); }
   });
   document.getElementById('v_nueva').addEventListener('click', function () { abrirVacile(null); });
+  document.getElementById('v_tipo').addEventListener('change', function (ev) {
+    document.getElementById('v_zona_texto').style.display = ev.target.value === 'texto' ? '' : 'none';
+    document.getElementById('v_zona_imagen').style.display = ev.target.value === 'imagen' ? '' : 'none';
+  });
   document.getElementById('v_modo').addEventListener('change', function (ev) {
     document.getElementById('v_probadores_campo').style.display = ev.target.value === 'prueba' ? '' : 'none';
   });
+  // El nombre de un cartel: 03_01_PROVOCACION_sombra_azul.png o 03_RESPUESTA_azul.png
+  // (la misma expresión que parteDeCartel en services/vaciles.ts).
+  function parteDeCartel(archivo) {
+    var m = /^(\\d+)(?:[_-]0?[12])?[_-](PROVOCACION|RESPUESTA)[_-](.+)\\.png$/i.exec(archivo.trim());
+    if (!m) return null;
+    return { numero: Number(m[1]), cual: m[2].toUpperCase() === 'PROVOCACION' ? 'provocacion' : 'respuesta',
+      nombre: m[3].replace(/[_-]+/g, ' ').trim() };
+  }
+  // Empareja los archivos elegidos por su número; el nombre lo da la provocación.
+  function parejasDeArchivos(archivos) {
+    var porNumero = {};
+    var sueltos = [];
+    [].forEach.call(archivos, function (f) {
+      var p = parteDeCartel(f.name);
+      if (!p) { sueltos.push(f.name); return; }
+      porNumero[p.numero] = porNumero[p.numero] || { numero: p.numero };
+      porNumero[p.numero][p.cual] = f;
+      if (p.cual === 'provocacion' || !porNumero[p.numero].nombre) porNumero[p.numero].nombre = p.nombre;
+    });
+    var todas = Object.keys(porNumero).map(function (k) { return porNumero[k]; }).sort(function (a, b) { return a.numero - b.numero; });
+    return {
+      parejas: todas.filter(function (p) { return p.provocacion && p.respuesta; }),
+      incompletas: todas.filter(function (p) { return !p.provocacion || !p.respuesta; }).map(function (p) { return p.numero; }),
+      sueltos: sueltos,
+    };
+  }
+  function leerArchivo(f) {
+    return new Promise(function (ok, mal) {
+      var l = new FileReader();
+      l.onload = function () { ok(l.result); };
+      l.onerror = function () { mal(new Error('No se puede leer ' + f.name)); };
+      l.readAsDataURL(f);
+    });
+  }
+  function estadoGuardada(p) {
+    return p.modo === 'si' ? 'ENCENDIDA para todo el mundo' : (p.modo === 'no' ? 'apagada' : 'en prueba, solo la ven ' + p.modo.slice('prueba:'.length));
+  }
   document.getElementById('v_guardar').addEventListener('click', function () {
     var modo = document.getElementById('v_modo').value;
     if (modo === 'todos' && !confirm('¿Encender la pestaña «' + val('v_nombre') + '» para todo el mundo?')) return;
     var b = document.getElementById('v_guardar');
+    var tipo = document.getElementById('v_tipo').value;
+    var lote = tipo === 'imagen' ? parejasDeArchivos(document.getElementById('v_archivos').files) : { parejas: [], incompletas: [], sueltos: [] };
     b.disabled = true;
     api('/admin/vaciles', { method: 'POST', body: JSON.stringify({
       id: val('v_id') || null, nombre: val('v_nombre'), orden: Number(val('v_orden') || 0),
-      modo: modo, corredores: val('v_probadores'),
+      modo: modo, corredores: val('v_probadores'), tipo: tipo,
       mensajes: document.getElementById('v_mensajes').value,
       respuestas: document.getElementById('v_respuestas').value,
     }) }).then(function (r) {
-      return cargarVaciles().then(function () {
+      var p = r.pestana;
+      document.getElementById('v_id').value = p.id;
+      var subidas = 0;
+      // Las parejas, una detrás de otra: cada cartel pesa medio mega.
+      var cola = lote.parejas.reduce(function (prom, pareja) {
+        return prom.then(function () {
+          msgVaciles('Subiendo ' + (subidas + 1) + ' de ' + lote.parejas.length + ': ' + pareja.nombre + '… (no toques nada)', true);
+          return Promise.all([leerArchivo(pareja.provocacion), leerArchivo(pareja.respuesta)]).then(function (datos) {
+            return api('/admin/vaciles/imagen', { method: 'POST', body: JSON.stringify({
+              pestanaId: p.id, orden: pareja.numero, nombre: pareja.nombre, provocacion: datos[0], respuesta: datos[1],
+            }) });
+          }).then(function () { subidas++; });
+        });
+      }, Promise.resolve());
+      return cola.then(function () { return cargarVaciles(); }).then(function () {
         b.disabled = false;
-        abrirVacile(r.pestana);
-        var p = r.pestana;
-        var cuantos = p.mensajes.length + (p.mensajes.length === 1 ? ' mensaje' : ' mensajes');
-        msgVaciles(p.modo === 'si' ? '✓ Guardada y ENCENDIDA para todo el mundo: ' + cuantos + '. Saldrá al abrir el selector de vaciles.'
-          : (p.modo === 'no' ? '✓ Guardada, apagada: ' + cuantos + '. Nadie la ve todavía.'
-            : '✓ Guardada en prueba: ' + cuantos + '. Solo la ven: ' + p.modo.slice('prueba:'.length) + '.'), true);
+        var ahora = vacilesPanel.filter(function (x) { return x.id === p.id; })[0] || p;
+        abrirVacile(ahora);
+        var cuantos = ahora.mensajes.length + (ahora.mensajes.length === 1 ? (tipo === 'imagen' ? ' pareja' : ' mensaje') : (tipo === 'imagen' ? ' parejas' : ' mensajes'));
+        var aviso = '';
+        if (tipo === 'imagen') {
+          if (subidas) aviso += ' Subidas ' + subidas + ' ahora.';
+          if (lote.incompletas.length) aviso += ' Sin pareja (falta la provocación o la respuesta): ' + lote.incompletas.join(', ') + '.';
+          if (lote.sueltos.length) aviso += ' Nombres que no entiendo: ' + lote.sueltos.join(', ') + '.';
+          if (!ahora.mensajes.length) aviso += ' Sin carteles no sale en la app.';
+        }
+        msgVaciles('✓ Guardada, ' + estadoGuardada(ahora) + ': ' + cuantos + '.' + aviso
+          + (ahora.modo === 'si' ? ' Saldrá al abrir el selector de vaciles.' : ''), true);
       });
     }).catch(function (e) { b.disabled = false; msgVaciles('✗ ' + e.message, false); });
+  });
+  document.getElementById('v_parejas').addEventListener('click', function (ev) {
+    var b = ev.target.closest ? ev.target.closest('button[data-pareja]') : null;
+    if (!b) return;
+    var nombre = b.getAttribute('data-pareja');
+    var id = val('v_id');
+    if (!id || !confirm('¿Quitar la pareja «' + nombre + '» de la pestaña? Los vaciles ya enviados con ella se siguen viendo.')) return;
+    api('/admin/vaciles/quitar-pareja', { method: 'POST', body: JSON.stringify({ pestanaId: Number(id), nombre: nombre }) })
+      .then(function () { return cargarVaciles(); })
+      .then(function () {
+        var ahora = vacilesPanel.filter(function (x) { return String(x.id) === id; })[0];
+        if (ahora) abrirVacile(ahora);
+        msgVaciles('✓ Quitada la pareja «' + nombre + '».', true);
+      })
+      .catch(function (e) { msgVaciles('✗ ' + e.message, false); });
   });
   document.getElementById('v_eliminar').addEventListener('click', function () {
     var id = val('v_id');
@@ -5470,18 +5590,27 @@ app.get('/taunts/unread', { preHandler: requireAuth }, async (req: any, reply) =
     `SELECT t.id, t.mode, t.taunt_id, t.run_id, t.created_at,
             t.from_user_id, u.display_name AS from_user_name,
             REPLACE(v.texto, '{nombre}', COALESCE(yo.display_name, '')) AS texto,
-            p.nombre AS pestana
+            p.nombre AS pestana,
+            i.version AS imagen_version
        FROM taunts t
        LEFT JOIN users u ON u.id = t.from_user_id
        LEFT JOIN users yo ON yo.id = t.to_user_id
        LEFT JOIN vacile_mensajes v ON v.id = t.taunt_id
        LEFT JOIN vacile_pestanas p ON p.id = v.pestana_id
+       LEFT JOIN vacile_imagenes i ON i.mensaje_id = v.id
       WHERE t.to_user_id = $1 AND t.read_at IS NULL
       ORDER BY t.created_at ASC
       LIMIT 50`,
     [req.userId]
   );
-  return reply.send({ taunts: rows });
+  // Las pestañas de imágenes: la dirección del cartel, para enseñarlo entero.
+  const base = baseVaciles(req);
+  return reply.send({
+    taunts: rows.map((r: any) => {
+      const { imagen_version, ...t } = r;
+      return { ...t, imagen: imagen_version ? direccionesDeCartel(Number(t.taunt_id), String(imagen_version), base).imagen : null };
+    }),
+  });
 });
 
 /** Send a taunt to another user. Used when victim hits "Devolver" on a robo
@@ -5572,11 +5701,32 @@ app.put('/taunts/read', { preHandler: requireAuth }, async (req: any, reply) => 
 // adelante), y a quien lo recibe le llega el texto en `/taunts/unread`. La
 // lógica y las tablas están en services/vaciles.ts.
 
+/** Lo que va delante de las direcciones de los carteles: este servidor. */
+function baseVaciles(req: any): string {
+  return `${req.protocol ?? 'https'}://${req.headers.host}`;
+}
+
 /** Lo que ve este corredor: las pestañas encendidas, o en prueba para él. */
 app.get('/app/vaciles', { preHandler: requireAuth }, async (req: any, reply) => {
   const { rows } = await db.query('SELECT display_name FROM users WHERE id = $1', [req.userId]);
-  const pestanas = await pestanasVacilesPara(db, rows[0]?.display_name ?? null, ajusteLeToca);
+  const pestanas = await pestanasVacilesPara(db, rows[0]?.display_name ?? null, ajusteLeToca, baseVaciles(req));
   return reply.send({ pestanas });
+});
+
+/** Los carteles de las pestañas de imágenes: `<id>.png` el cartel entero y
+ *  `<id>-v.jpg` la miniatura. Públicos y con caché de un año: cada versión
+ *  lleva su `?v=` en la dirección, así que al cambiarlo nadie se queda con el
+ *  viejo. Igual que los logos de las campañas. */
+app.get('/vaciles/imagen/:archivo', async (req: any, reply) => {
+  const m = /^(\d+)(-v)?\.(png|jpg)$/.exec(String(req.params.archivo));
+  if (!m) return reply.status(404).send({ error: 'No hay cartel' });
+  const cartel = await imagenVacile(db, Number(m[1]));
+  if (!cartel) return reply.status(404).send({ error: 'No hay cartel' });
+  const miniatura = m[2] === '-v';
+  return reply
+    .header('Content-Type', miniatura ? 'image/jpeg' : 'image/png')
+    .header('Cache-Control', 'public, max-age=31536000, immutable')
+    .send(miniatura ? cartel.jpg : cartel.png);
 });
 
 /** El interruptor de tres estados del panel ('apagado' / 'prueba' / 'todos')
@@ -5606,12 +5756,14 @@ async function modoDesdePanel(modo: unknown, corredores: unknown): Promise<strin
   return `prueba:${nombres.join(',')}`;
 }
 
-app.get('/admin/vaciles', { preHandler: requireAdmin }, async (_req, reply) => {
-  return reply.send({ pestanas: await pestanasVacilesAdmin(db) });
+app.get('/admin/vaciles', { preHandler: requireAdmin }, async (req: any, reply) => {
+  return reply.send({ pestanas: await pestanasVacilesAdmin(db, baseVaciles(req)) });
 });
 
-/** Crear o cambiar una pestaña: nombre, orden, interruptor y los textos, uno
- *  por línea (mensajes, y respuestas si se quieren distintas). */
+/** Crear o cambiar una pestaña: nombre, orden, interruptor, tipo (texto o
+ *  imagen) y, en las de texto, las frases una por línea (mensajes, y
+ *  respuestas si se quieren distintas). Los carteles de las de imágenes van
+ *  aparte, por parejas (`/admin/vaciles/imagen`). */
 app.post('/admin/vaciles', { preHandler: requireAdmin }, async (req: any, reply) => {
   const b = req.body ?? {};
   const id = b.id === null || b.id === undefined || b.id === '' ? null : Number(b.id);
@@ -5622,13 +5774,56 @@ app.post('/admin/vaciles', { preHandler: requireAdmin }, async (req: any, reply)
       nombre: String(b.nombre ?? ''),
       orden: Number(b.orden) || 0,
       modo: await modoDesdePanel(b.modo, b.corredores),
+      tipo: b.tipo === 'imagen' ? 'imagen' : 'texto',
       mensajes: lineasDeVaciles(b.mensajes),
       respuestas: lineasDeVaciles(b.respuestas),
     });
-    return reply.send({ ok: true, pestana });
+    return reply.send({ ok: true, pestana: { ...pestana, ...direccionesDePestana(pestana, baseVaciles(req)) } });
   } catch (e: any) {
     return reply.status(400).send({ error: e?.message ?? 'No se ha podido guardar' });
   }
+});
+
+/** Las direcciones de los carteles de una pestaña recién guardada, con el
+ *  servidor delante (el servicio las da relativas). */
+function direccionesDePestana(p: { mensajes: any[]; respuestas: any[] }, base: string) {
+  const con = (m: any) => (m.imagen ? { ...m, imagen: base + m.imagen, miniatura: base + m.miniatura } : m);
+  return { mensajes: p.mensajes.map(con), respuestas: p.respuestas.map(con) };
+}
+
+/** Una pareja de carteles (provocación + respuesta, PNG en base64 como los
+ *  manda el panel) para una pestaña de imágenes. Una petición por pareja:
+ *  cada cartel pesa medio mega y el cuerpo tiene tope de 10 MB. */
+app.post('/admin/vaciles/imagen', { preHandler: requireAdmin }, async (req: any, reply) => {
+  const b = req.body ?? {};
+  const pestanaId = Number(b.pestanaId);
+  if (!Number.isInteger(pestanaId)) return reply.status(400).send({ error: 'Identificador de pestaña raro' });
+  const bytes = (dataUri: unknown): Buffer | null => {
+    const s = String(dataUri ?? '');
+    const coma = s.indexOf(',');
+    return coma < 0 ? null : Buffer.from(s.slice(coma + 1), 'base64');
+  };
+  const provocacion = bytes(b.provocacion);
+  const respuesta = bytes(b.respuesta);
+  if (!provocacion || !respuesta) return reply.status(400).send({ error: 'Faltan los dos carteles: la provocación y la respuesta' });
+  try {
+    const ids = await guardarParejaVacile(db, {
+      pestanaId, orden: Number(b.orden) || 0, nombre: String(b.nombre ?? ''), provocacion, respuesta,
+    });
+    return reply.send({ ok: true, ...ids });
+  } catch (e: any) {
+    return reply.status(400).send({ error: e?.message ?? 'No se ha podido guardar la pareja' });
+  }
+});
+
+app.post('/admin/vaciles/quitar-pareja', { preHandler: requireAdmin }, async (req: any, reply) => {
+  const b = req.body ?? {};
+  const pestanaId = Number(b.pestanaId);
+  if (!Number.isInteger(pestanaId)) return reply.status(400).send({ error: 'Identificador de pestaña raro' });
+  if (!(await quitarParejaVacile(db, pestanaId, String(b.nombre ?? '')))) {
+    return reply.status(404).send({ error: 'Esa pareja no está en la pestaña' });
+  }
+  return reply.send({ ok: true });
 });
 
 app.delete('/admin/vaciles/:id', { preHandler: requireAdmin }, async (req: any, reply) => {

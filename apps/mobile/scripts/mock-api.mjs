@@ -18,6 +18,7 @@
  * probar.
  */
 import { createServer } from 'node:http';
+import { readFileSync } from 'node:fs';
 
 const MODO = process.env.MODO || 'lleno';
 let avisoVisto = false;
@@ -165,7 +166,10 @@ const RUTAS = {
     // Un vacile de una pestaña del panel (§9-sexies): la app no lleva su
     // dibujo, le llega el texto ya con el nombre de quien lo recibe.
     { id: 't2', mode: 'response', taunt_id: 1004, run_id: null, created_at: haceDias(0), from_user_id: RIVAL, from_user_name: 'Lucía M.',
-      texto: 'Jo, jo, jo, Auditor. Esa calle ahora es mía.', pestana: 'Navidad' }] }),
+      texto: 'Jo, jo, jo, Auditor. Esa calle ahora es mía.', pestana: 'Navidad' },
+    // Y uno de CARTELES: llega con la dirección del cartel entero.
+    { id: 't3', mode: 'taunt', taunt_id: 2003, run_id: null, created_at: haceDias(0), from_user_id: RIVAL, from_user_name: 'Lucía M.',
+      texto: 'ninja rosa', pestana: 'Tótems', imagen: CARTEL(2003) }] }),
   // Las pestañas de vaciles escritas desde el panel (§9-sexies). Con
   // MODO=vacio no hay ninguna: el selector enseña solo Clásicos y Halloween.
   'GET /app/vaciles': () => ({ pestanas: vacio ? [] : [
@@ -176,6 +180,11 @@ const RUTAS = {
       { id: 1005, texto: 'Un mensaje largo de los de ciento cuarenta letras, para ver que el texto se encoge hasta caber en la tarjeta sin comerse ni una palabra.' }],
       respuestas: [{ id: 1004, texto: 'Jo, jo, jo, {nombre}. Esa calle ahora es mía.' }] },
     { id: 2, nombre: 'Picantes', mensajes: [{ id: 1006, texto: 'Corres como mi abuela.' }, { id: 1007, texto: '¿Eso era correr o pasear al perro?' }], respuestas: [] },
+    // Una pestaña de CARTELES (los tótems de Iban): los PNG se sirven desde la
+    // carpeta de la app por /vaciles/imagen/<id>.png, como hará el servidor.
+    { id: 3, nombre: 'Tótems', tipo: 'imagen',
+      mensajes: TOTEMS.map((t, i) => ({ id: 2001 + i * 2, texto: t.nombre, imagen: CARTEL(2001 + i * 2), miniatura: CARTEL(2001 + i * 2, true) })),
+      respuestas: TOTEMS.map((t, i) => ({ id: 2002 + i * 2, texto: t.nombre, imagen: CARTEL(2002 + i * 2), miniatura: CARTEL(2002 + i * 2, true) })) },
   ] }),
   'GET /taunts': () => [],
   'GET /friends': () => vacio ? [] : [{ user_id: RIVAL, display_name: 'Lucía M.', city: 'Bilbao', total_points: 28480, total_zones: 87 }],
@@ -232,6 +241,20 @@ const DINAMICAS = [
   [/^DELETE \//, () => ({ ok: true })],
 ];
 
+// Los carteles de la pestaña Tótems: id impar = provocación, par = respuesta.
+const CARPETA_TOTEMS = new URL('../assets/taunts/vaciles/', import.meta.url).pathname;
+const TOTEMS = ['lobo_naranja', 'ninja_rosa', 'sombra_azul', 'corona_amarilla', 'soldado_verde'].map(n => ({ nombre: n.replace(/_/g, ' '), archivo: n }));
+const CARTEL = (id, mini = false) => `http://localhost:8787/vaciles/imagen/${id}${mini ? '-v.jpg' : '.png'}?v=1`;
+DINAMICAS.unshift([/^GET \/vaciles\/imagen\/\d+(-v)?\.(png|jpg)$/, (clave) => {
+  const id = Number(clave.match(/\/(\d+)/)[1]);
+  const t = TOTEMS[Math.floor((id - 2001) / 2)];
+  if (!t) return {};
+  const cual = id % 2 === 1 ? '01_PROVOCACION' : '02_RESPUESTA';
+  const n = String(Math.floor((id - 2001) / 2) + 1).padStart(2, '0');
+  // La miniatura es el mismo PNG: para mirar la app vale.
+  return { __archivo: `${CARPETA_TOTEMS}${n}_${cual}_${t.archivo}.png`, tipo: 'image/png' };
+}]);
+
 const vistas = new Set(); const perdidas = new Set();
 createServer((req, res) => {
   const [ruta] = req.url.split('?');
@@ -246,6 +269,11 @@ createServer((req, res) => {
   if (!fn) { perdidas.add(clave); console.log('  ✗ SIN MOCK', clave); res.writeHead(404); return res.end('{}'); }
   console.log('  ·', clave);
   let cuerpo; try { cuerpo = fn(clave, req.url); } catch (e) { console.log('   ERROR en el mock:', e.message); cuerpo = {}; }
+  if (cuerpo && cuerpo.__archivo) {
+    // Un archivo tal cual (los carteles de los vaciles), no JSON.
+    res.setHeader('Content-Type', cuerpo.tipo);
+    res.writeHead(200); return res.end(readFileSync(cuerpo.__archivo));
+  }
   res.writeHead(200); res.end(JSON.stringify(cuerpo));
 }).listen(8787, '0.0.0.0', () => console.log(`mock-api en :8787 (modo ${MODO})`));
 

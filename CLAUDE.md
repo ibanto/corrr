@@ -1051,26 +1051,55 @@ servidor:
 
 ## 9-sexies. Vaciles desde el panel, sin sacar versión (6-nov-2026; app desde la 1.11.15)
 
-Iban: pasar una lista de textos y que salgan como una pestaña más del selector de
-vaciles, junto a «Clásicos» y «Halloween», sin tocar las tiendas. Los de siempre van
-DIBUJADOS dentro de la app (diez carteles por colección, ids 1-10 y 101-110); los de
-aquí son TEXTO, y la app los pinta en una tarjeta de CORRR (negra, marco naranja,
-letra condensada, `VacileTarjeta.tsx`). Se mandan y llegan exactamente igual que uno
-clásico: por `POST /taunts` con el id del mensaje, con el mismo hilo de una ida y una
-vuelta y la misma notificación.
+Iban: pasar una tanda nueva de vaciles y que salgan como una pestaña más del selector,
+junto a «Clásicos» y «Halloween», sin tocar las tiendas. Los de siempre van DIBUJADOS
+dentro de la app (diez carteles por colección, ids 1-10 y 101-110). Una pestaña del panel
+es de uno de dos tipos:
 
-**Cómo se sube una pestaña nueva** (Iban pasa los textos; lo hace él o Claude):
+- **De textos**: frases, una por línea; la app las pinta en una tarjeta de CORRR (negra,
+  marco naranja, letra condensada, `VacileTarjeta.tsx`).
+- **De carteles** (los «tótems» y «Aura» de Iban, 6-nov-2026): parejas de PNG de
+  **592×1280** como los clásicos, la provocación y la respuesta del ladrón. El servidor los
+  guarda (tabla `vacile_imagenes`), les hace la miniatura 288×512 JPG con sharp y los sirve
+  en `/vaciles/imagen/<id>.png` y `<id>-v.jpg` (caché de un año, `?v=` por versión, en
+  memoria del proceso como los logos de campaña). Cada uno lleva de texto el nombre del
+  archivo («lobo naranja»): si a un móvil no le llega el dibujo, enseña la tarjeta con ese
+  nombre, nunca un hueco.
 
-1. Panel → **Juego** → *Vaciles* → «Nueva pestaña». Nombre corto (en la app sale en
-   mayúsculas, 18 letras como mucho), los **mensajes uno por línea** (los que manda quien
-   ha sufrido el robo; 140 letras cada uno, 50 por pestaña) y, si se quieren distintas,
-   las **respuestas** del ladrón, también una por línea (en blanco = valen las mismas).
-   `{nombre}` se cambia por el nombre de quien lo recibe. El orden decide en qué sitio sale.
+Se mandan y llegan exactamente igual que uno clásico: por `POST /taunts` con el id del
+mensaje, con el mismo hilo de una ida y una vuelta y la misma notificación.
+
+**Cómo se sube una pestaña de textos** (Iban pasa las frases; lo hace él o Claude):
+
+1. Panel → **Juego** → *Vaciles* → «Nueva pestaña», tipo «De textos». Nombre corto (en la
+   app sale en mayúsculas, 18 letras como mucho), los **mensajes uno por línea** (los que
+   manda quien ha sufrido el robo; 140 letras cada uno, 50 por pestaña) y, si se quieren
+   distintas, las **respuestas** del ladrón, también una por línea (en blanco = valen las
+   mismas). `{nombre}` se cambia por el nombre de quien lo recibe. El orden decide en qué
+   sitio sale.
 2. Guardarla **en prueba** (vacío = Ibanto; o varios nombres o correos, como las campañas),
    abrir el selector en el móvil (robo → Devolver) y mirarla. Los cambios se ven al abrir
    el selector: no hace falta reiniciar la app.
 3. **Encender para todo el mundo**. Para apagarla, el mismo desplegable; «Eliminar» la
    quita de la lista pero no borra nada: los vaciles ya enviados se siguen leyendo.
+
+**Cómo se sube una carpeta de carteles** (Iban pasa la carpeta; lo hace Claude con el
+script, o él desde el panel):
+
+- Los archivos se llaman `NN_PROVOCACION_<nombre>.png` y `NN_RESPUESTA_<nombre>.png`
+  (también vale `NN_01_PROVOCACION_…` / `NN_02_RESPUESTA_…`): se emparejan por el número
+  y el nombre lo da la provocación. Un zip o una `vista_general.jpg` en la carpeta se ignoran.
+  **Las carpetas de Iban están en `apps/mobile/assets/taunts/vaciles/` (tótems) y
+  `…/taunts/AURA/`: NO se commitean** (el repo es público y la app no las necesita dentro).
+- Por script, desde `apps/backend` (lee `ADMIN_KEY` del `.env` y no la imprime):
+  `node scripts/subir-vaciles.mjs --carpeta ../mobile/assets/taunts/vaciles --nombre "Tótems" --modo prueba`
+  (`--solo-mirar` enseña las parejas sin subir nada; `--probadores "Ibanto, Otro"`, `--orden N`).
+  Si ya hay una pestaña con ese nombre se reutiliza, y una pareja con el mismo nombre
+  sustituye a la anterior **sin cambiar los ids**.
+- Desde el panel: «Nueva pestaña», tipo «De carteles», elegir los PNG de la carpeta todos a
+  la vez y «Guardar»: se guarda la pestaña y se suben las parejas una detrás de otra (una
+  petición por pareja, medio mega cada cartel). Cada pareja tiene su botón «Quitar».
+- Después, igual que las de textos: prueba → mirar en el móvil → encender.
 
 **Hasta que la 1.11.15 esté en las dos tiendas, no encender ninguna para todos**: las
 apps 1.11.14 y anteriores no enseñan la pestaña, y si reciben un vacile de estas ven la
@@ -1080,26 +1109,39 @@ hacía ya la app con un id que no conoce). Es la misma regla que las campañas.
 Por dentro:
 
 - **Servidor** (`services/vaciles.ts`, rutas en `routes/index.ts` detrás de `/taunts/read`):
-  tablas `vacile_pestanas` (nombre, orden, `modo` 'no' / 'si' / 'prueba:A,B' como las
-  campañas, `borrada`) y `vacile_mensajes` (texto, `tipo` mensaje/respuesta, orden, `activo`).
+  tablas `vacile_pestanas` (nombre, orden, `tipo` texto/imagen, `modo` 'no' / 'si' /
+  'prueba:A,B' como las campañas, `borrada`), `vacile_mensajes` (texto, `tipo`
+  mensaje/respuesta, orden, `activo`) y `vacile_imagenes` (png, jpg, version, por mensaje).
+  Rutas de carteles: `POST /admin/vaciles/imagen` (una pareja en base64),
+  `POST /admin/vaciles/quitar-pareja` y `GET /vaciles/imagen/:archivo`. En una pestaña de
+  carteles, guardar el nombre o el interruptor no toca los carteles.
   **Los ids de los mensajes empiezan en 1001** (columna identity) para no pisarse con los
   dibujados: si coincidieran, a quien lo recibiera le saldría el dibujo de ese número. Al
   editar una lista, los textos que siguen **conservan su id** (es lo que viaja en cada
   vacile enviado), los quitados se apagan y uno que vuelve revive con su id de antes.
-  `GET /app/vaciles` da las pestañas que le tocan al corredor (`ajusteLeToca`), y
-  `GET /taunts/unread` añade `texto` (ya con `{nombre}` cambiado por quien lo recibe) y
-  `pestana` a los vaciles del panel; en los dibujados van a null. Panel: `GET/POST
-  /admin/vaciles`, `DELETE /admin/vaciles/:id`.
+  `GET /app/vaciles` da las pestañas que le tocan al corredor (`ajusteLeToca`), con
+  `imagen` y `miniatura` por mensaje en las de carteles, y `GET /taunts/unread` añade
+  `texto` (ya con `{nombre}` cambiado por quien lo recibe), `pestana` e `imagen` a los
+  vaciles del panel; en los dibujados van a null. Panel: `GET/POST /admin/vaciles`,
+  `DELETE /admin/vaciles/:id`.
 - **App**: `services/vaciles.ts` pide las pestañas al arrancar y cada vez que se abre el
-  selector, y **guarda lo último recibido** (`corrr_vaciles_panel_v1` en AsyncStorage): sin
-  red salen las de la última vez; si el servidor no contesta no se borra nada. El selector
-  (`TauntSelector.tsx`) pone CLÁSICOS, las del panel y HALLOWEEN en una fila que se desliza
-  si no caben; las del panel están todas abiertas (no se ganan con robos ni calabazas). Al
-  recibir uno, `MapScreen` enseña la tarjeta si no hay dibujo y viene texto.
+  selector, **guarda lo último recibido** (`corrr_vaciles_panel_v1` en AsyncStorage) y
+  **baja por adelantado los carteles** (`Image.prefetch`, miniaturas primero, tope de 8 s):
+  sin red salen las de la última vez; si el servidor no contesta no se borra nada. El
+  selector (`TauntSelector.tsx`) pone CLÁSICOS, las del panel y HALLOWEEN en una fila que se
+  desliza si no caben; las del panel están todas abiertas (no se ganan con robos ni
+  calabazas). `VacileTarjeta` pinta el cartel ENCIMA de la tarjeta de texto, **invisible
+  hasta que avisa de que ha cargado el suyo**: con la arquitectura nueva, iOS reutiliza la
+  vista nativa de una imagen recién desaparecida (la cuadrícula del selector) y, sin eso,
+  al recibir un tótem justo después de enviar otro salía el cartel de OTRO mensaje (visto
+  el 6-nov-2026 en el simulador). Si el dibujo no llega, queda la tarjeta con el nombre.
+  Al recibir uno, `MapScreen` enseña el cartel o la tarjeta si no hay dibujo dentro de la app.
 - **Comprobar**: `npm run test:vaciles` (PGlite, como `test:campanas`: crear, editar sin
-  cambiar ids, quién ve qué, y la consulta de la bandeja tal cual está en el código) y
-  `npm run test:panel`. En la app, `npm run mock` lleva dos pestañas de ejemplo (Navidad y
-  Picantes) y un vacile de texto en la bandeja; `MODO=vacio`, ninguna.
+  cambiar ids, quién ve qué, carteles con sharp, y la consulta de la bandeja tal cual está
+  en el código) y `npm run test:panel`. En la app, `npm run mock` lleva tres pestañas de
+  ejemplo (Navidad y Picantes de texto, Tótems de carteles servidos desde
+  `assets/taunts/vaciles/`) y vaciles de texto y de cartel en la bandeja; `MODO=vacio`,
+  ninguna.
 
 ## 9-ter. El panel de administración
 
@@ -1190,6 +1232,20 @@ uno a uno. El del dinero era el único con algo que hacer, y ya está hecho:
 
 Para comparar: los 189 TB del vídeo, a los $0,05/GB que cobra Railway, serían
 **9.450 dólares**. CORRR lleva 5,66 GB.
+
+**El espacio de la base de datos** (medido el 6-nov-2026 con `scripts/espacio.mjs`,
+solo lectura; Iban: «¿vamos a tener que comprar algo más?»): **235 MB de los 500 MB
+del plan gratis de Supabase** (al pasarse, el proyecto se queda en solo lectura).
+`cells` 145 MB (77 de datos + 68 de índices, 1.000.935 filas, 152 bytes por celda,
+108.000 filas muertas que el autovacuum irá limpiando); `calles` 55 MB (fija);
+`users` 12 MB, casi todo **14 fotos de perfil en base64** (`avatar_url` entera; la
+miniatura, 63 kB); el resto, menos de 2 MB entre todas. El ritmo: 50.000-180.000
+celdas reclamadas por semana (la semana del 27-sep fueron 416.000: el ejército
+CORRR), unos 10-25 MB por semana de `cells` → **el tope de 500 MB llega hacia
+febrero-abril de 2027 al ritmo de hoy**; antes si entra gente. Entonces toca
+Supabase Pro ($25/mes, 8 GB) y nada más: Railway sigue en ~$1,6/mes de los $5 del
+Hobby. Ahorros a mano si hace falta: guardar la foto de perfil reducida (512 px) y
+no la original (−11 MB) y `VACUUM` de `cells`. Mirarlo cada mes o dos.
 
 Los otros cuatro avisos del vídeo, en una línea: **no mandamos SMS** (el caso
 de los 5 M$ es por SMS en EE. UU.) y el correo cumple la LSSI con baja de un

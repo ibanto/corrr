@@ -44,3 +44,8 @@ yarn-error.*
 # tiene que seguir guardándose. Se colaron 306 de estos el 2-oct-2026 (commit
 # 181a8b0) y casi vuelve a pasar el 8-oct.
 modules/*/android/build/
+
+# Carpetas de carteles de vaciles que pasa Iban: se suben al servidor con
+# apps/backend/scripts/subir-vaciles.mjs, la app no las lleva dentro (§9-sexies).
+assets/taunts/vaciles/
+assets/taunts/AURA/

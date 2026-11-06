@@ -291,11 +291,22 @@ interface StravaExchangeResult {
  *  textos. Las de siempre (Clásicos, Halloween) van dibujadas dentro de la
  *  app; estas llegan como texto y la app las pinta en una tarjeta. Los ids
  *  empiezan en 1001 para no pisarse con los dibujados (1-10 y 101-110). */
+interface MensajeVacile {
+  id: number;
+  /** En las pestañas de imágenes es el nombre del cartel: se enseña en una
+   *  tarjeta si el dibujo no ha llegado. */
+  texto: string;
+  /** Solo en las pestañas de imágenes: el cartel (592×1280) y su miniatura. */
+  imagen?: string | null;
+  miniatura?: string | null;
+}
+
 interface PestanaVaciles {
   id: number;
   nombre: string;
-  mensajes: { id: number; texto: string }[];
-  respuestas: { id: number; texto: string }[];
+  tipo?: 'texto' | 'imagen';
+  mensajes: MensajeVacile[];
+  respuestas: MensajeVacile[];
 }
 
 interface TauntInbox {
@@ -310,6 +321,8 @@ interface TauntInbox {
    *  recibe puesto, y el nombre de su pestaña. En los dibujados viene null. */
   texto?: string | null;
   pestana?: string | null;
+  /** Y si la pestaña es de imágenes, la dirección del cartel. */
+  imagen?: string | null;
 }
 
 interface CellRunPayload extends RunPayload {
@@ -927,7 +940,7 @@ interface Friend {
 }
 
 export const api = new ApiService();
-export type { LoginResponse, RankingEntry, Challenge, Achievement, RunRecord, UserStats, MyStats, RemoteZone, ZonePayload, FriendRequest, Friend, Cell, RemoteCell, MapOwner, MapTerritory, Aviso, ObjetoMapa, FichaCorredor, ResumenAdmin, CellRunPayload, RunSaveResult, TauntInbox, PestanaVaciles, ProfileData, ProfileUpdate };
+export type { LoginResponse, RankingEntry, Challenge, Achievement, RunRecord, UserStats, MyStats, RemoteZone, ZonePayload, FriendRequest, Friend, Cell, RemoteCell, MapOwner, MapTerritory, Aviso, ObjetoMapa, FichaCorredor, ResumenAdmin, CellRunPayload, RunSaveResult, TauntInbox, PestanaVaciles, MensajeVacile, ProfileData, ProfileUpdate };
 
 const MOCK_RANKING: RankingEntry[] = [
   { position: 1, username: 'Laura R.', city: 'Barcelona', points: 28480, zones: 87 },

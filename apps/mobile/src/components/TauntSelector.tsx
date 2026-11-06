@@ -25,8 +25,11 @@ interface TauntMessage {
   /** Los dibujados dentro de la app (Clásicos y Halloween). */
   thumb?: ImageSourcePropType;
   full?: ImageSourcePropType;
-  /** Los del panel (§9-sexies): solo texto, se pintan en una tarjeta. */
+  /** Los del panel (§9-sexies): el texto (o el nombre de reserva del cartel),
+   *  que se pinta en una tarjeta, y en las pestañas de carteles sus direcciones. */
   texto?: string;
+  imagen?: string;
+  miniatura?: string;
 }
 
 /* Las miniaturas son VERTICALES (9:16), no cuadradas: el cartel se lee entero
@@ -180,7 +183,7 @@ export default function TauntSelector({
       // `{nombre}` es el rival: se enseña ya con su nombre, que es como le va
       // a llegar (el servidor se lo pone al que lo recibe).
       return (mode === 'response' ? pestanaPanel.respuestas : pestanaPanel.mensajes)
-        .map(m => ({ id: m.id, texto: conNombre(m.texto, rivalName) }));
+        .map(m => ({ id: m.id, texto: conNombre(m.texto, rivalName), imagen: m.imagen ?? undefined, miniatura: m.miniatura ?? undefined }));
     }
     return lista(coleccion as 'clasicos' | 'halloween', mode);
   }, [coleccion, mode, pestanaPanel, rivalName]);
@@ -193,7 +196,7 @@ export default function TauntSelector({
       <Modal visible transparent animationType="fade" statusBarTranslucent>
         <View style={styles.previewContainer}>
           {preview.texto !== undefined ? (
-            <VacileTarjeta grande texto={preview.texto} pestana={pestanaPanel?.nombre} />
+            <VacileTarjeta grande texto={preview.texto} imagen={preview.imagen} pestana={pestanaPanel?.nombre} />
           ) : (
             <Image
               source={preview.full}
@@ -334,7 +337,7 @@ export default function TauntSelector({
                   activeOpacity={isLocked ? 1 : 0.8}
                 >
                   {msg.texto !== undefined ? (
-                    <VacileTarjeta texto={msg.texto} pestana={pestanaPanel?.nombre} />
+                    <VacileTarjeta texto={msg.texto} imagen={msg.miniatura} pestana={pestanaPanel?.nombre} />
                   ) : (
                     <Image
                       source={msg.thumb}
