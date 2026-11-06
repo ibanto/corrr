@@ -109,5 +109,22 @@ for (const [clave, veces] of enganches) {
   }
 }
 
+// Un id repetido deja el segundo elemento huérfano: getElementById solo ve el
+// primero, y el botón o el formulario que lleva ese id deja de funcionar sin
+// ningún error. Había dos `<form id="fc">` el 6-nov-2026.
+const ids = new Map();
+for (const m of html.matchAll(/\sid="([^"]+)"/g)) ids.set(m[1], (ids.get(m[1]) ?? 0) + 1);
+for (const [id, veces] of ids) {
+  if (veces > 1) { console.error(`✘ El id "${id}" está ${veces} veces en el panel`); fallos++; }
+}
+
+// Intro en un campo no puede recargar el panel: cada formulario necesita que
+// alguien le pare el envío (el bloqueo general de `querySelectorAll('form')`
+// o un `submit` propio con preventDefault).
+if (!scripts.some(s => s.includes("querySelectorAll('form')") && s.includes('preventDefault'))) {
+  console.error('✘ Falta el bloqueo general del envío de formularios (Intro recargaría el panel)');
+  fallos++;
+}
+
 console.log(fallos ? `\n${fallos} problema(s) en el panel.` : '\nPanel en orden.');
 process.exit(fallos ? 1 : 0);

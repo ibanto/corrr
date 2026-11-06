@@ -987,6 +987,15 @@ servidor:
 
 ## 9-ter. El panel de administración
 
+**Intro no recarga el panel (desde el 6-nov-2026).** Todos los formularios van por
+botones `type="button"`, y un bloqueo general (`querySelectorAll('form')` +
+`preventDefault`) para el envío. Antes, escribir «200» en «Cuántos logos» y pulsar
+Intro enviaba el formulario a la nada: el panel se recargaba y el campo volvía a 30,
+así que Iban creyó sembrar 200 logos y se sembraron 30. Y **ningún id se repite**:
+Correos tenía `<form id="fc">` y `c_msg`, iguales que los de Campañas, y
+`getElementById` solo ve el primero (ahora `fcorreos` y `correos_msg`).
+`npm run test:panel` vigila las dos cosas.
+
 Vive entero en la plantilla HTML de `apps/backend/src/routes/index.ts` (no hay
 build ni framework: se escribe el HTML a mano y Railway lo sirve). Desde el
 29-sep-2026 está repartido en **seis pestañas** —Resumen, Gente, Avisos, Juego,

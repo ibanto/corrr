@@ -2248,12 +2248,12 @@ guardar en prueba (para ti y, si quiere, el cliente), sembrar y, cuando est&eacu
 <p class="nota">Cada campaña se manda UNA vez por persona. Quien pidió la baja y quien ya salió a
 correr quedan fuera solos. Manda siempre una prueba a tu correo antes de la tanda.</p>
 <div id="campanas"></div>
-<form class="form" id="fc">
+<form class="form" id="fcorreos">
   <select id="c_campana"></select>
   <input id="c_prueba" placeholder="Tu email, para la prueba" type="email">
   <button class="btn" id="c_test" type="button" disabled>Mandarme una prueba</button>
   <button class="btn" id="c_enviar" type="button" disabled>Enviar la tanda de verdad</button>
-  <div id="c_msg" class="resultado" style="display:none"></div>
+  <div id="correos_msg" class="resultado" style="display:none"></div>
 </form>
 </div>
 <div class="caja">
@@ -2351,6 +2351,13 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
   function esc(t) { return String(t == null ? '' : t).replace(/[&<>"]/g, function (c) {
     return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
   var val = function (id) { return document.getElementById(id).value.trim(); };
+  // Intro dentro de un campo NO recarga la página. Los formularios del panel
+  // van por botones; sin esto, escribir «200» en «Cuántos logos» y pulsar
+  // Intro enviaba el formulario a la nada, el panel se recargaba y el campo
+  // volvía a 30: Iban creyó sembrar 200 logos y se sembraron 30 (6-nov-2026).
+  [].forEach.call(document.querySelectorAll('form'), function (f) {
+    f.addEventListener('submit', function (ev) { ev.preventDefault(); });
+  });
   // Un campo de fecha y hora da la hora SIN zona horaria (2026-11-05T21:39).
   // El servidor va en UTC y la leía como hora de Londres: los logos y las
   // calabazas salían una hora tarde en invierno y dos en verano (5-nov-2026).
@@ -2519,13 +2526,13 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
       document.getElementById('c_test').disabled = false;
       document.getElementById('c_enviar').disabled = false;
     }).catch(function (e) {
-      var m = document.getElementById('c_msg');
+      var m = document.getElementById('correos_msg');
       m.style.display = 'block'; m.style.color = '#f44336'; m.style.borderLeftColor = '#f44336';
       m.textContent = '✗ No se han podido cargar las campañas: ' + e.message;
     });
   }
   function mandarCorreo(modo) {
-    var m = document.getElementById('c_msg');
+    var m = document.getElementById('correos_msg');
     var cuerpo = { modo: modo, campana: document.getElementById('c_campana').value };
     if (modo === 'prueba') {
       cuerpo.para = val('c_prueba');
