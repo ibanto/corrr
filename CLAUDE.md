@@ -123,12 +123,11 @@ pintar el territorio aunque el servidor de mentira esté apagado.
 7. **Vaciles desde el panel** (§9-sexies, 6-nov): el servidor y el panel ya lo
    tienen, de textos y **de carteles** (commit `167867b`, desplegado); la app lo
    lleva en la **1.11.15** (la siguiente a la 1.11.14). Hasta que esa esté en las
-   dos tiendas, las pestañas nuevas solo **en prueba**. **Pendiente: subir las dos
-   carpetas de Iban («Tótems» = `assets/taunts/vaciles/`, «Aura» = `assets/taunts/AURA/`)
-   en modo prueba.** El script `subir-vaciles.mjs` lo intentó el 6-nov y el servidor
-   dijo «Acceso denegado»: la `ADMIN_KEY` del `.env` local NO es la de Railway. O se
-   pone la buena en el `.env` y se repite el comando del §9-sexies, o lo hace Iban desde
-   el panel (Juego → Vaciles → Nueva pestaña → De carteles → elegir los 10 PNG → Guardar).
+   dos tiendas, las pestañas nuevas solo **en prueba**. **Subidas el 6-nov con
+   `subir-vaciles.mjs`: «Tótems» (id 1, mensajes 1001-1010) y «Aura» (id 2, 1011-1020),
+   las dos EN PRUEBA para Ibanto.** Cuando la 1.11.15 esté en las dos tiendas, encenderlas
+   desde el panel. Ojo: el `.env` de `apps/backend` lleva desde ese día la `ADMIN_KEY` de
+   producción (antes tenía una de pruebas y el servidor decía «Acceso denegado»).
 
 #### Lo que se hizo la noche del 22 (histórico)
 
