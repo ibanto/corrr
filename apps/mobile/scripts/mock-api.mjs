@@ -159,8 +159,24 @@ const RUTAS = {
   'GET /robos': () => vacio ? [] : [
     { id: 'r1', run_id: 'run-1', created_at: haceDias(0), ladron_id: RIVAL, ladron: 'Lucía M.', contestado: false },
     { id: 'r2', run_id: null, created_at: haceDias(5), ladron_id: RIVAL, ladron: 'Lucía M.', contestado: true }],
-  'GET /taunts/unread': () => vacio ? [] : [
-    { id: 't1', mode: 'taunt', taunt_id: 3, run_id: null, created_at: haceDias(0), from_user_id: RIVAL, from_user_name: 'Lucía M.' }],
+  // La app espera { taunts: [...] }, como contesta el servidor de verdad.
+  'GET /taunts/unread': () => ({ taunts: vacio ? [] : [
+    { id: 't1', mode: 'taunt', taunt_id: 3, run_id: null, created_at: haceDias(0), from_user_id: RIVAL, from_user_name: 'Lucía M.' },
+    // Un vacile de una pestaña del panel (§9-sexies): la app no lleva su
+    // dibujo, le llega el texto ya con el nombre de quien lo recibe.
+    { id: 't2', mode: 'response', taunt_id: 1004, run_id: null, created_at: haceDias(0), from_user_id: RIVAL, from_user_name: 'Lucía M.',
+      texto: 'Jo, jo, jo, Auditor. Esa calle ahora es mía.', pestana: 'Navidad' }] }),
+  // Las pestañas de vaciles escritas desde el panel (§9-sexies). Con
+  // MODO=vacio no hay ninguna: el selector enseña solo Clásicos y Halloween.
+  'GET /app/vaciles': () => ({ pestanas: vacio ? [] : [
+    { id: 1, nombre: 'Navidad', mensajes: [
+      { id: 1001, texto: 'Feliz Navidad, {nombre}. Tu calle ya es mía.' },
+      { id: 1002, texto: 'Eh {nombre}, esa calle era mía. Voy a por ti.' },
+      { id: 1003, texto: 'Te la devuelvo en Reyes. O no.' },
+      { id: 1005, texto: 'Un mensaje largo de los de ciento cuarenta letras, para ver que el texto se encoge hasta caber en la tarjeta sin comerse ni una palabra.' }],
+      respuestas: [{ id: 1004, texto: 'Jo, jo, jo, {nombre}. Esa calle ahora es mía.' }] },
+    { id: 2, nombre: 'Picantes', mensajes: [{ id: 1006, texto: 'Corres como mi abuela.' }, { id: 1007, texto: '¿Eso era correr o pasear al perro?' }], respuestas: [] },
+  ] }),
   'GET /taunts': () => [],
   'GET /friends': () => vacio ? [] : [{ user_id: RIVAL, display_name: 'Lucía M.', city: 'Bilbao', total_points: 28480, total_zones: 87 }],
   'GET /friends/pending': () => vacio ? [] : [{ id: 'fr1', sender_id: RIVAL, sender_name: 'Lucía M.', created_at: haceDias(1) }],

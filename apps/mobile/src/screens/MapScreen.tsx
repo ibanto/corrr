@@ -42,6 +42,7 @@ import BuscadorCiudad from '../components/BuscadorCiudad';
 import ShareRunCard, { ShareRunData, ShareSteal } from '../components/ShareRunCard';
 import { randomSharePhrase } from '../data/sharePhrases';
 import TauntSelector, { getTauntFullImage } from '../components/TauntSelector';
+import VacileTarjeta from '../components/VacileTarjeta';
 import FichaCorredor from '../components/FichaCorredor';
 import LoadingScreen from '../components/LoadingScreen';
 import {
@@ -2930,7 +2931,14 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
                 botón) pintan por encima de ella. */}
             {(() => {
               const img = tauntImageById(currentTaunt.mode, currentTaunt.taunt_id);
-              if (!img) return null;
+              // Sin dibujo en la app: o es un vacile del panel (§9-sexies),
+              // que llega con su texto y se pinta en una tarjeta, o es de
+              // una versión más nueva y no se enseña nada.
+              if (!img) {
+                return currentTaunt.texto
+                  ? <VacileTarjeta grande texto={currentTaunt.texto} pestana={currentTaunt.pestana} />
+                  : null;
+              }
               return (
                 <Image
                   source={img}

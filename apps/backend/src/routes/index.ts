@@ -17,6 +17,10 @@ import {
 } from '../services/tiras.js';
 import { sembrar, sembrarFantasmas, recoger, Objeto, LOGO_ES_SUYO } from '../services/objetos.js';
 import {
+  prepararVaciles, guardarPestanaVaciles, borrarPestanaVaciles, pestanasVacilesAdmin,
+  pestanasVacilesPara, lineasDeVaciles,
+} from '../services/vaciles.js';
+import {
   celdasEncerradas, cajaDe, cajaDeTrabajo, gruposDeCeldas,
   MAX_CELDAS_CERCO, MAX_CAJA_CERCO, Celda,
 } from '../services/territorio.js';
@@ -611,6 +615,10 @@ async function initDB() {
     )
   `);
   await db.query(`CREATE INDEX IF NOT EXISTS taunts_to_unread_idx ON taunts(to_user_id, read_at) WHERE read_at IS NULL`).catch(() => {});
+  // Pestañas de vaciles que se escriben desde el panel, sin sacar versión
+  // (§9-sexies). Sus mensajes llevan ids desde el 1001: por debajo están los
+  // dibujados dentro de la app.
+  await prepararVaciles(db).catch((e) => console.error('[vaciles] no se han podido preparar las tablas:', e?.message));
 
   // ── Points engine state (v1.7 economy) ─────────────────────────────────────
   // last_run_date + streak_days power the "carrera 3 días seguidos = ×1.5" bonus.
@@ -2158,6 +2166,40 @@ Sale UNA vez por persona; para repetirlo, se crea otro. Solo lo ven las apps 1.1
 </section>
 
 <section id="p-juego" role="tabpanel" hidden>
+<div class="caja">
+<h2>Vaciles</h2>
+<p class="nota">Los vaciles son los mensajes que un corredor manda a quien le ha robado, y la respuesta del ladr&oacute;n.
+La app lleva dentro los <b>Cl&aacute;sicos</b> y los de <b>Halloween</b>, dibujados. <b>Las pesta&ntilde;as de aqu&iacute; salen
+en el selector sin sacar versi&oacute;n</b> (en las apps 1.11.15 o m&aacute;s nuevas): un nombre y sus textos, uno por l&iacute;nea,
+que la app pinta en una tarjeta. Si escribes <b>{nombre}</b> se cambia por el nombre de quien lo recibe. Gu&aacute;rdala en
+prueba para verla t&uacute; en la app antes de encenderla. Los cambios se ven al abrir el selector; lo &uacute;ltimo recibido se queda
+guardado en el m&oacute;vil por si no hay red.</p>
+<div id="v_lista"><p class="nota">Cargando&hellip;</p></div>
+<button class="btn" id="v_nueva" type="button">Nueva pesta&ntilde;a</button>
+<form class="form" id="fv" style="display:none;margin-top:14px">
+  <input id="v_id" type="hidden">
+  <label class="campo">Nombre de la pesta&ntilde;a (corto; en la app sale en may&uacute;sculas)
+    <input id="v_nombre" placeholder="Navidad" maxlength="18"></label>
+  <label class="campo">Mensajes, uno por l&iacute;nea (los que manda quien ha sufrido el robo; 140 letras como mucho cada uno)
+    <textarea id="v_mensajes" rows="8" placeholder="Eh {nombre}, esa calle era m&iacute;a. Voy a por ti."></textarea></label>
+  <label class="campo">Respuestas, una por l&iacute;nea (las del ladr&oacute;n; en blanco = valen las mismas de arriba)
+    <textarea id="v_respuestas" rows="4"></textarea></label>
+  <label class="campo">Orden (las pesta&ntilde;as salen de menor a mayor)
+    <input id="v_orden" type="number" value="0" style="width:90px"></label>
+  <select id="v_modo">
+    <option value="apagado">Apagada &mdash; nadie la ve</option>
+    <option value="prueba">En prueba &mdash; solo la ven los de abajo</option>
+    <option value="todos">Encendida para todo el mundo</option>
+  </select>
+  <label class="campo" id="v_probadores_campo">Qui&eacute;n la prueba: su nombre en la app o su correo, separados por comas (vac&iacute;o = Ibanto)
+    <input id="v_probadores" placeholder="Ibanto"></label>
+  <div style="display:flex;gap:10px;flex-wrap:wrap">
+    <button class="btn" id="v_guardar" type="button">Guardar la pesta&ntilde;a</button>
+    <button class="mini" id="v_eliminar" type="button">Eliminar la pesta&ntilde;a</button>
+  </div>
+  <div id="v_msg" class="resultado" style="display:none"></div>
+</form>
+</div>
 <details class="caja" id="hist_halloween">
 <summary><b>Hist&oacute;rico: Halloween 2026</b> &mdash; acab&oacute; el 1 de noviembre. Aqu&iacute; dentro siguen el interruptor (no se apaga hasta que la 1.11.13 est&eacute; en las dos tiendas), el marcador y la siembra de calabazas.</summary>
 <div class="caja">
@@ -2883,6 +2925,99 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
     api('/admin/campana?tipo=' + encodeURIComponent(tipo), { method: 'DELETE' }).then(function () {
       return cargarCampanasPanel();
     }).catch(function (e) { msgCampana('✗ ' + e.message, false); });
+  });
+
+  // ── Vaciles desde el panel (§9-sexies): la lista y un formulario único ──
+  var vacilesPanel = [];
+  function msgVaciles(t, ok) {
+    var m = document.getElementById('v_msg');
+    m.style.display = 'block';
+    m.style.color = ok ? '#4caf50' : '#f44336';
+    m.style.borderLeftColor = ok ? '#4caf50' : '#f44336';
+    m.textContent = t;
+  }
+  function estadoVacile(modo) {
+    if (modo === 'si') return 'ENCENDIDA';
+    if (modo === 'no') return 'APAGADA';
+    return 'EN PRUEBA: ' + modo.slice('prueba:'.length);
+  }
+  function pintarVaciles() {
+    var lista = document.getElementById('v_lista');
+    if (!vacilesPanel.length) { lista.innerHTML = '<p class="nota">Todavía no hay ninguna pestaña. Pulsa «Nueva pestaña».</p>'; return; }
+    lista.innerHTML = vacilesPanel.map(function (p) {
+      var cuenta = p.mensajes.length + (p.mensajes.length === 1 ? ' mensaje' : ' mensajes')
+        + (p.respuestas.length ? ' y ' + p.respuestas.length + (p.respuestas.length === 1 ? ' respuesta' : ' respuestas') : '');
+      return '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:8px 0;border-bottom:1px solid #222">'
+        + '<b>' + esc(p.nombre) + '</b><span style="color:' + (p.modo === 'si' ? '#4caf50' : (p.modo === 'no' ? '#888' : '#f59e0b')) + '">'
+        + esc(estadoVacile(p.modo)) + '</span><span style="color:#888">' + cuenta + '</span>'
+        + '<button class="mini" type="button" data-vacile="' + p.id + '">Abrir</button></div>';
+    }).join('');
+  }
+  function abrirVacile(p) {
+    var modo = !p || p.modo === 'no' ? 'apagado' : (p.modo === 'si' ? 'todos' : 'prueba');
+    // display y no el atributo hidden: la clase .form (display:grid) le gana
+    // al hidden del navegador y el formulario se veía siempre.
+    document.getElementById('fv').style.display = '';
+    document.getElementById('v_id').value = p ? p.id : '';
+    document.getElementById('v_nombre').value = p ? p.nombre : '';
+    document.getElementById('v_mensajes').value = p ? p.mensajes.map(function (m) { return m.texto; }).join('\\n') : '';
+    document.getElementById('v_respuestas').value = p ? p.respuestas.map(function (m) { return m.texto; }).join('\\n') : '';
+    document.getElementById('v_orden').value = p ? p.orden : (vacilesPanel.length ? vacilesPanel[vacilesPanel.length - 1].orden + 1 : 0);
+    document.getElementById('v_modo').value = modo;
+    document.getElementById('v_probadores').value = p && p.modo.indexOf('prueba:') === 0 ? p.modo.slice('prueba:'.length) : '';
+    document.getElementById('v_probadores_campo').style.display = modo === 'prueba' ? '' : 'none';
+    document.getElementById('v_eliminar').style.display = p ? '' : 'none';
+    document.getElementById('v_msg').style.display = 'none';
+  }
+  function cargarVaciles() {
+    return api('/admin/vaciles').then(function (r) {
+      vacilesPanel = r.pestanas || [];
+      pintarVaciles();
+    });
+  }
+  cargarVaciles().catch(function (e) {
+    document.getElementById('v_lista').innerHTML = '<p class="nota">No se han podido cargar: ' + esc(e.message) + '</p>';
+  });
+  document.getElementById('v_lista').addEventListener('click', function (ev) {
+    var b = ev.target.closest ? ev.target.closest('button[data-vacile]') : null;
+    if (!b) return;
+    var p = vacilesPanel.filter(function (x) { return String(x.id) === b.getAttribute('data-vacile'); })[0];
+    if (p) { abrirVacile(p); document.getElementById('fv').scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+  });
+  document.getElementById('v_nueva').addEventListener('click', function () { abrirVacile(null); });
+  document.getElementById('v_modo').addEventListener('change', function (ev) {
+    document.getElementById('v_probadores_campo').style.display = ev.target.value === 'prueba' ? '' : 'none';
+  });
+  document.getElementById('v_guardar').addEventListener('click', function () {
+    var modo = document.getElementById('v_modo').value;
+    if (modo === 'todos' && !confirm('¿Encender la pestaña «' + val('v_nombre') + '» para todo el mundo?')) return;
+    var b = document.getElementById('v_guardar');
+    b.disabled = true;
+    api('/admin/vaciles', { method: 'POST', body: JSON.stringify({
+      id: val('v_id') || null, nombre: val('v_nombre'), orden: Number(val('v_orden') || 0),
+      modo: modo, corredores: val('v_probadores'),
+      mensajes: document.getElementById('v_mensajes').value,
+      respuestas: document.getElementById('v_respuestas').value,
+    }) }).then(function (r) {
+      return cargarVaciles().then(function () {
+        b.disabled = false;
+        abrirVacile(r.pestana);
+        var p = r.pestana;
+        var cuantos = p.mensajes.length + (p.mensajes.length === 1 ? ' mensaje' : ' mensajes');
+        msgVaciles(p.modo === 'si' ? '✓ Guardada y ENCENDIDA para todo el mundo: ' + cuantos + '. Saldrá al abrir el selector de vaciles.'
+          : (p.modo === 'no' ? '✓ Guardada, apagada: ' + cuantos + '. Nadie la ve todavía.'
+            : '✓ Guardada en prueba: ' + cuantos + '. Solo la ven: ' + p.modo.slice('prueba:'.length) + '.'), true);
+      });
+    }).catch(function (e) { b.disabled = false; msgVaciles('✗ ' + e.message, false); });
+  });
+  document.getElementById('v_eliminar').addEventListener('click', function () {
+    var id = val('v_id');
+    if (!id) return;
+    if (!confirm('¿Eliminar la pestaña «' + val('v_nombre') + '»? Desaparece del selector; los vaciles ya enviados se siguen leyendo.')) return;
+    api('/admin/vaciles/' + encodeURIComponent(id), { method: 'DELETE' }).then(function () {
+      document.getElementById('fv').style.display = 'none';
+      return cargarVaciles();
+    }).catch(function (e) { msgVaciles('✗ ' + e.message, false); });
   });
 
   function pintarHalloween(r) {
@@ -5303,10 +5438,21 @@ app.get('/robos', { preHandler: requireAuth }, async (req: any, reply) => {
 
 app.get('/taunts/unread', { preHandler: requireAuth }, async (req: any, reply) => {
   const { rows } = await db.query(
+    // `texto` y `pestana` solo vienen llenos en los vaciles del panel
+    // (§9-sexies, ids desde el 1001): la app no lleva su dibujo, así que el
+    // texto viaja con el aviso, ya con el nombre de quien lo recibe puesto.
+    // Los dibujados (1-10, 101-110) no casan con ningún mensaje y llegan como
+    // siempre. Se mira también lo apagado y lo borrado a propósito: un vacile
+    // ya enviado tiene que poder leerse aunque la pestaña ya no exista.
     `SELECT t.id, t.mode, t.taunt_id, t.run_id, t.created_at,
-            t.from_user_id, u.display_name AS from_user_name
+            t.from_user_id, u.display_name AS from_user_name,
+            REPLACE(v.texto, '{nombre}', COALESCE(yo.display_name, '')) AS texto,
+            p.nombre AS pestana
        FROM taunts t
        LEFT JOIN users u ON u.id = t.from_user_id
+       LEFT JOIN users yo ON yo.id = t.to_user_id
+       LEFT JOIN vacile_mensajes v ON v.id = t.taunt_id
+       LEFT JOIN vacile_pestanas p ON p.id = v.pestana_id
       WHERE t.to_user_id = $1 AND t.read_at IS NULL
       ORDER BY t.created_at ASC
       LIMIT 50`,
@@ -5392,6 +5538,80 @@ app.put('/taunts/read', { preHandler: requireAuth }, async (req: any, reply) => 
     `UPDATE taunts SET read_at = NOW() WHERE to_user_id = $1 AND id = ANY($2::uuid[])`,
     [req.userId, ids]
   );
+  return reply.send({ ok: true });
+});
+
+// ── Vaciles desde el panel (§9-sexies, 6-nov-2026) ──────────────────────────
+// Pestañas nuevas del selector de vaciles SIN sacar versión: un nombre y sus
+// textos, escritos en el panel. La app (desde la 1.11.15) las pone junto a
+// Clásicos y Halloween y pinta cada texto en una tarjeta. Se mandan por
+// `POST /taunts` como los de siempre, con el id del mensaje (1001 en
+// adelante), y a quien lo recibe le llega el texto en `/taunts/unread`. La
+// lógica y las tablas están en services/vaciles.ts.
+
+/** Lo que ve este corredor: las pestañas encendidas, o en prueba para él. */
+app.get('/app/vaciles', { preHandler: requireAuth }, async (req: any, reply) => {
+  const { rows } = await db.query('SELECT display_name FROM users WHERE id = $1', [req.userId]);
+  const pestanas = await pestanasVacilesPara(db, rows[0]?.display_name ?? null, ajusteLeToca);
+  return reply.send({ pestanas });
+});
+
+/** El interruptor de tres estados del panel ('apagado' / 'prueba' / 'todos')
+ *  al valor que se guarda ('no' / 'prueba:Nombre1,Nombre2' / 'si'), mirando
+ *  que los probadores existan. Las mismas reglas que las campañas: nombre de
+ *  corredor o correo, separados por comas, veinte como mucho, y sin nadie
+ *  escrito prueba el administrador. */
+async function modoDesdePanel(modo: unknown, corredores: unknown): Promise<string> {
+  if (modo === 'todos') return 'si';
+  if (modo !== 'prueba') return 'no';
+  const pedidos = [...new Set(String(corredores ?? '').split(/[,;\n]/).map(s => s.trim()).filter(Boolean))];
+  if (pedidos.length === 0) pedidos.push(ADMIN_CORREDOR);
+  if (pedidos.length > 20) throw new Error('Como mucho veinte corredores en la prueba');
+  const nombres: string[] = [];
+  const faltan: string[] = [];
+  for (const quien of pedidos) {
+    const { rows } = await db.query(
+      `SELECT display_name FROM users
+        WHERE LOWER(display_name) = LOWER($1) OR LOWER(email) = LOWER($1) LIMIT 1`, [quien],
+    );
+    if (!rows[0]) faltan.push(quien);
+    else if (!nombres.includes(rows[0].display_name)) nombres.push(rows[0].display_name);
+  }
+  if (faltan.length > 0) {
+    throw new Error(`No encuentro en la app a: ${faltan.join(', ')}. Pon su nombre de corredor o su correo`);
+  }
+  return `prueba:${nombres.join(',')}`;
+}
+
+app.get('/admin/vaciles', { preHandler: requireAdmin }, async (_req, reply) => {
+  return reply.send({ pestanas: await pestanasVacilesAdmin(db) });
+});
+
+/** Crear o cambiar una pestaña: nombre, orden, interruptor y los textos, uno
+ *  por línea (mensajes, y respuestas si se quieren distintas). */
+app.post('/admin/vaciles', { preHandler: requireAdmin }, async (req: any, reply) => {
+  const b = req.body ?? {};
+  const id = b.id === null || b.id === undefined || b.id === '' ? null : Number(b.id);
+  if (id !== null && !Number.isInteger(id)) return reply.status(400).send({ error: 'Identificador de pestaña raro' });
+  try {
+    const pestana = await guardarPestanaVaciles(db, {
+      id,
+      nombre: String(b.nombre ?? ''),
+      orden: Number(b.orden) || 0,
+      modo: await modoDesdePanel(b.modo, b.corredores),
+      mensajes: lineasDeVaciles(b.mensajes),
+      respuestas: lineasDeVaciles(b.respuestas),
+    });
+    return reply.send({ ok: true, pestana });
+  } catch (e: any) {
+    return reply.status(400).send({ error: e?.message ?? 'No se ha podido guardar' });
+  }
+});
+
+app.delete('/admin/vaciles/:id', { preHandler: requireAdmin }, async (req: any, reply) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return reply.status(400).send({ error: 'Identificador de pestaña raro' });
+  if (!(await borrarPestanaVaciles(db, id))) return reply.status(404).send({ error: 'Esa pestaña ya no existe' });
   return reply.send({ ok: true });
 });
 

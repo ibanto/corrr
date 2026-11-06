@@ -10,6 +10,7 @@
     "test:territorio": "npm run build --silent && node scripts/territorio-check.mjs",
     "test:campanas": "npm run build --silent && node scripts/campanas-check.mjs",
     "test:tiras": "npm run build --silent && node scripts/tiras-check.mjs",
+    "test:vaciles": "npm run build --silent && node scripts/vaciles-check.mjs",
     "cercos": "npm run build --silent && node scripts/cercos-pendientes.mjs",
     "calles": "node scripts/bajar-calles.mjs",
     "calles:subir": "node scripts/subir-calles.mjs",

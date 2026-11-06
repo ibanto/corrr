@@ -287,6 +287,17 @@ interface StravaExchangeResult {
   };
 }
 
+/** Una pestaña de vaciles escrita desde el panel (§9-sexies): un nombre y sus
+ *  textos. Las de siempre (Clásicos, Halloween) van dibujadas dentro de la
+ *  app; estas llegan como texto y la app las pinta en una tarjeta. Los ids
+ *  empiezan en 1001 para no pisarse con los dibujados (1-10 y 101-110). */
+interface PestanaVaciles {
+  id: number;
+  nombre: string;
+  mensajes: { id: number; texto: string }[];
+  respuestas: { id: number; texto: string }[];
+}
+
 interface TauntInbox {
   id: string;
   mode: 'robo_notif' | 'taunt' | 'response';
@@ -295,6 +306,10 @@ interface TauntInbox {
   created_at: string;
   from_user_id: string | null;
   from_user_name: string | null;
+  /** Solo en los vaciles del panel: el texto, ya con el nombre de quien lo
+   *  recibe puesto, y el nombre de su pestaña. En los dibujados viene null. */
+  texto?: string | null;
+  pestana?: string | null;
 }
 
 interface CellRunPayload extends RunPayload {
@@ -692,6 +707,18 @@ class ApiService {
     }
   }
 
+  /** Las pestañas de vaciles del panel que me tocan. undefined = no se ha
+   *  podido preguntar (no es lo mismo que "no hay ninguna"): el selector tira
+   *  entonces de lo último guardado en el móvil. */
+  async getVaciles(): Promise<PestanaVaciles[] | undefined> {
+    try {
+      const res = await this.request<{ pestanas?: PestanaVaciles[] }>('/app/vaciles');
+      return Array.isArray(res?.pestanas) ? res.pestanas : [];
+    } catch {
+      return undefined;
+    }
+  }
+
   /** Quién lleva más calabazas, y cuántas llevo yo. */
   async getRankingCalabazas(tipo = 'calabaza'): Promise<{ mias: number; ranking: RankingObjeto[] }> {
     try {
@@ -900,7 +927,7 @@ interface Friend {
 }
 
 export const api = new ApiService();
-export type { LoginResponse, RankingEntry, Challenge, Achievement, RunRecord, UserStats, MyStats, RemoteZone, ZonePayload, FriendRequest, Friend, Cell, RemoteCell, MapOwner, MapTerritory, Aviso, ObjetoMapa, FichaCorredor, ResumenAdmin, CellRunPayload, RunSaveResult, TauntInbox, ProfileData, ProfileUpdate };
+export type { LoginResponse, RankingEntry, Challenge, Achievement, RunRecord, UserStats, MyStats, RemoteZone, ZonePayload, FriendRequest, Friend, Cell, RemoteCell, MapOwner, MapTerritory, Aviso, ObjetoMapa, FichaCorredor, ResumenAdmin, CellRunPayload, RunSaveResult, TauntInbox, PestanaVaciles, ProfileData, ProfileUpdate };
 
 const MOCK_RANKING: RankingEntry[] = [
   { position: 1, username: 'Laura R.', city: 'Barcelona', points: 28480, zones: 87 },

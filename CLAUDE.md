@@ -101,6 +101,9 @@ con sus nombres (Iban lo pidió).
    si se cambia, **de madrugada** y pulsando «Deploy» en Railway.
 6. **Lo primero de §14** (ya es «después de Halloween»): devolver la carrera
    que se pierde cuando Android mata la app.
+7. **Vaciles desde el panel** (§9-sexies, 6-nov): el servidor y el panel ya lo
+   tienen; la app lo lleva en la **1.11.15** (la siguiente a la 1.11.14). Hasta
+   que esa esté en las dos tiendas, las pestañas nuevas solo **en prueba**.
 
 #### Lo que se hizo la noche del 22 (histórico)
 
@@ -133,7 +136,9 @@ bajar `MIN_APP_VERSION` a `1.0.0`.
 Cercos entre días (§9-quater) · Avisos con notificación al móvil (§9-ter) ·
 Panel por pestañas (§9-ter) · Calabazas y su interruptor de tres estados
 (§9-bis) · Mapa por tiras · Colores de corredor repartidos por el servidor ·
-Historial de robos (`/robos`).
+Historial de robos (`/robos`) · **Pestañas de vaciles desde el panel** (§9-sexies,
+6-nov-2026: el servidor y el panel ya; la app las enseña desde la **1.11.15**, la
+siguiente a la 1.11.14, que está en revisión de Apple y no se toca).
 
 ### Qué lleva la 1.11.11 sobre la 1.11.10
 
@@ -440,6 +445,7 @@ verdad, compilar en **Release** (lleva el código dentro y no necesita nada):
 - A puede pulsar "Devolver" → envía 1 `response` (respuesta) a B.
 - Backend cierra el hilo: solo 1 taunt + 1 response por `(from, to, run_id)`.
 - **Desbloqueo progresivo**: el usuario empieza con 1 mensaje + 1 respuesta. Cada 10 robos desbloquea el siguiente. Cap a 10.
+- **Tres familias por el id** (`taunt_id`): clásicos 1-10 y Halloween 101-110 van DIBUJADOS dentro de la app; desde el 1001, los escritos en el panel (§9-sexies), que viajan como texto.
 
 ### Stats
 
@@ -984,6 +990,58 @@ servidor:
 - **Las apps de antes de la 1.11.13 no saben nada**: con Halloween apagado no ven los
   logos; encendido, los pintan como calabazas. Antes de lanzar una campaña de verdad,
   que la 1.11.13 esté en las dos tiendas (y valorar `MIN_APP_VERSION`, §9).
+
+## 9-sexies. Vaciles desde el panel, sin sacar versión (6-nov-2026; app desde la 1.11.15)
+
+Iban: pasar una lista de textos y que salgan como una pestaña más del selector de
+vaciles, junto a «Clásicos» y «Halloween», sin tocar las tiendas. Los de siempre van
+DIBUJADOS dentro de la app (diez carteles por colección, ids 1-10 y 101-110); los de
+aquí son TEXTO, y la app los pinta en una tarjeta de CORRR (negra, marco naranja,
+letra condensada, `VacileTarjeta.tsx`). Se mandan y llegan exactamente igual que uno
+clásico: por `POST /taunts` con el id del mensaje, con el mismo hilo de una ida y una
+vuelta y la misma notificación.
+
+**Cómo se sube una pestaña nueva** (Iban pasa los textos; lo hace él o Claude):
+
+1. Panel → **Juego** → *Vaciles* → «Nueva pestaña». Nombre corto (en la app sale en
+   mayúsculas, 18 letras como mucho), los **mensajes uno por línea** (los que manda quien
+   ha sufrido el robo; 140 letras cada uno, 50 por pestaña) y, si se quieren distintas,
+   las **respuestas** del ladrón, también una por línea (en blanco = valen las mismas).
+   `{nombre}` se cambia por el nombre de quien lo recibe. El orden decide en qué sitio sale.
+2. Guardarla **en prueba** (vacío = Ibanto; o varios nombres o correos, como las campañas),
+   abrir el selector en el móvil (robo → Devolver) y mirarla. Los cambios se ven al abrir
+   el selector: no hace falta reiniciar la app.
+3. **Encender para todo el mundo**. Para apagarla, el mismo desplegable; «Eliminar» la
+   quita de la lista pero no borra nada: los vaciles ya enviados se siguen leyendo.
+
+**Hasta que la 1.11.15 esté en las dos tiendas, no encender ninguna para todos**: las
+apps 1.11.14 y anteriores no enseñan la pestaña, y si reciben un vacile de estas ven la
+pantalla negra con «Fulano te ha enviado un mensaje» y el botón, sin cartel (es lo que
+hacía ya la app con un id que no conoce). Es la misma regla que las campañas.
+
+Por dentro:
+
+- **Servidor** (`services/vaciles.ts`, rutas en `routes/index.ts` detrás de `/taunts/read`):
+  tablas `vacile_pestanas` (nombre, orden, `modo` 'no' / 'si' / 'prueba:A,B' como las
+  campañas, `borrada`) y `vacile_mensajes` (texto, `tipo` mensaje/respuesta, orden, `activo`).
+  **Los ids de los mensajes empiezan en 1001** (columna identity) para no pisarse con los
+  dibujados: si coincidieran, a quien lo recibiera le saldría el dibujo de ese número. Al
+  editar una lista, los textos que siguen **conservan su id** (es lo que viaja en cada
+  vacile enviado), los quitados se apagan y uno que vuelve revive con su id de antes.
+  `GET /app/vaciles` da las pestañas que le tocan al corredor (`ajusteLeToca`), y
+  `GET /taunts/unread` añade `texto` (ya con `{nombre}` cambiado por quien lo recibe) y
+  `pestana` a los vaciles del panel; en los dibujados van a null. Panel: `GET/POST
+  /admin/vaciles`, `DELETE /admin/vaciles/:id`.
+- **App**: `services/vaciles.ts` pide las pestañas al arrancar y cada vez que se abre el
+  selector, y **guarda lo último recibido** (`corrr_vaciles_panel_v1` en AsyncStorage): sin
+  red salen las de la última vez; si el servidor no contesta no se borra nada. El selector
+  (`TauntSelector.tsx`) pone CLÁSICOS, las del panel y HALLOWEEN en una fila que se desliza
+  si no caben; las del panel están todas abiertas (no se ganan con robos ni calabazas). Al
+  recibir uno, `MapScreen` enseña la tarjeta si no hay dibujo y viene texto.
+- **Comprobar**: `npm run test:vaciles` (PGlite, como `test:campanas`: crear, editar sin
+  cambiar ids, quién ve qué, y la consulta de la bandeja tal cual está en el código) y
+  `npm run test:panel`. En la app, `npm run mock` lleva dos pestañas de ejemplo (Navidad y
+  Picantes) y un vacile de texto en la bandeja; `MODO=vacio`, ninguna.
 
 ## 9-ter. El panel de administración
 

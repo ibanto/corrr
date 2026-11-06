@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -13,6 +13,8 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, radius } from '../theme';
+import VacileTarjeta from './VacileTarjeta';
+import { useVaciles, conNombre } from '../services/vaciles';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const SCREEN_HEIGHT = Dimensions.get('window').height;
@@ -20,8 +22,11 @@ const THUMB_WIDTH = (SCREEN_WIDTH - spacing.md * 3) / 2;
 
 interface TauntMessage {
   id: number;
-  thumb: ImageSourcePropType;
-  full: ImageSourcePropType;
+  /** Los dibujados dentro de la app (Clásicos y Halloween). */
+  thumb?: ImageSourcePropType;
+  full?: ImageSourcePropType;
+  /** Los del panel (§9-sexies): solo texto, se pintan en una tarjeta. */
+  texto?: string;
 }
 
 /* Las miniaturas son VERTICALES (9:16), no cuadradas: el cartel se lee entero
@@ -95,9 +100,11 @@ const HALLOWEEN_RESPONSES: TauntMessage[] = [
 ];
 
 export type TauntMode = 'taunt' | 'response';
-type Coleccion = 'clasicos' | 'halloween';
+/** Las dos colecciones dibujadas, o una pestaña del panel: 'panel:<id>'. */
+type Coleccion = 'clasicos' | 'halloween' | `panel:${number}`;
+const PANEL = 'panel:';
 
-function lista(coleccion: Coleccion, mode: TauntMode): TauntMessage[] {
+function lista(coleccion: 'clasicos' | 'halloween', mode: TauntMode): TauntMessage[] {
   if (coleccion === 'halloween') return mode === 'response' ? HALLOWEEN_RESPONSES : HALLOWEEN_TAUNTS;
   return mode === 'response' ? RESPONSES : TAUNTS;
 }
@@ -109,6 +116,7 @@ function lista(coleccion: Coleccion, mode: TauntMode): TauntMessage[] {
  *  lo que le pasa a un móvil con una versión antigua cuando le llega uno
  *  nuevo — mejor eso que enseñar el dibujo equivocado. */
 export function getTauntFullImage(mode: TauntMode, id: number): ImageSourcePropType | null {
+  // Los del panel (1001 en adelante) no están aquí: llegan con su texto.
   const donde = id >= PRIMER_ID_HALLOWEEN ? 'halloween' : 'clasicos';
   return lista(donde, mode).find(t => t.id === id)?.full ?? null;
 }
@@ -142,6 +150,21 @@ export default function TauntSelector({
 }: Props) {
   const [preview, setPreview] = useState<TauntMessage | null>(null);
   const [coleccion, setColeccion] = useState<Coleccion>('clasicos');
+  // Las pestañas escritas desde el panel (§9-sexies): lo guardado en el móvil
+  // al momento, y se vuelve a preguntar cada vez que se abre el selector.
+  const pestanasPanel = useVaciles(visible);
+  const esPanel = coleccion.startsWith(PANEL);
+  const pestanaPanel = esPanel ? pestanasPanel.find(p => `${PANEL}${p.id}` === coleccion) : undefined;
+  // Si la pestaña que estaba elegida desaparece (la apagan desde el panel),
+  // vuelta a Clásicos en vez de quedarse mirando una cuadrícula vacía.
+  useEffect(() => {
+    if (esPanel && !pestanaPanel) setColeccion('clasicos');
+  }, [esPanel, pestanaPanel]);
+  const pestanas = useMemo(() => [
+    { clave: 'clasicos' as Coleccion, titulo: 'CLÁSICOS' },
+    ...pestanasPanel.map(p => ({ clave: `${PANEL}${p.id}` as Coleccion, titulo: p.nombre.toUpperCase() })),
+    { clave: 'halloween' as Coleccion, titulo: 'HALLOWEEN' },
+  ], [pestanasPanel]);
 
   const title = mode === 'taunt' ? 'RESPONDER' : 'DEVOLVER';
   // Clamp al rango [1, 10] por seguridad.
@@ -151,7 +174,16 @@ export default function TauntSelector({
   // Una calabaza, un mensaje. Sin calabazas no hay nada que enseñar todavía.
   const halloweenAbiertos = halloweenActivo ? Math.max(0, Math.min(10, calabazas)) : 0;
 
-  const mensajes = useMemo(() => lista(coleccion, mode), [coleccion, mode]);
+  const mensajes = useMemo<TauntMessage[]>(() => {
+    if (coleccion.startsWith(PANEL)) {
+      if (!pestanaPanel) return [];
+      // `{nombre}` es el rival: se enseña ya con su nombre, que es como le va
+      // a llegar (el servidor se lo pone al que lo recibe).
+      return (mode === 'response' ? pestanaPanel.respuestas : pestanaPanel.mensajes)
+        .map(m => ({ id: m.id, texto: conNombre(m.texto, rivalName) }));
+    }
+    return lista(coleccion as 'clasicos' | 'halloween', mode);
+  }, [coleccion, mode, pestanaPanel, rivalName]);
 
   if (!visible) return null;
 
@@ -160,11 +192,15 @@ export default function TauntSelector({
     return (
       <Modal visible transparent animationType="fade" statusBarTranslucent>
         <View style={styles.previewContainer}>
-          <Image
-            source={preview.full}
-            style={styles.previewImage}
-            resizeMode="contain"
-          />
+          {preview.texto !== undefined ? (
+            <VacileTarjeta grande texto={preview.texto} pestana={pestanaPanel?.nombre} />
+          ) : (
+            <Image
+              source={preview.full}
+              style={styles.previewImage}
+              resizeMode="contain"
+            />
+          )}
 
           {/* Botón cerrar */}
           <TouchableOpacity style={styles.previewClose} onPress={() => setPreview(null)}>
@@ -206,30 +242,34 @@ export default function TauntSelector({
           <View style={{ width: 40 }} />
         </View>
 
-        {/* Las dos colecciones. La de Halloween se queda puesta si se cambia de
-            pestaña y se vuelve, que es lo que uno espera al comparar. */}
+        {/* Las colecciones: Clásicos, las que vengan del panel y Halloween. La
+            elegida se queda puesta si se cambia de pestaña y se vuelve, que es
+            lo que uno espera al comparar. Con dos o tres llenan el ancho; con
+            más, la fila se desliza. */}
         <View style={styles.pestanas}>
-          {(['clasicos', 'halloween'] as Coleccion[]).map(c => {
-            const activa = coleccion === c;
-            return (
-              <TouchableOpacity
-                key={c}
-                style={[styles.pestana, activa && styles.pestanaActiva]}
-                onPress={() => setColeccion(c)}
-                activeOpacity={0.8}
-              >
-                <Text style={[styles.pestanaTexto, activa && styles.pestanaTextoActiva]}>
-                  {c === 'clasicos' ? 'CLÁSICOS' : 'HALLOWEEN'}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.pestanasFila}>
+            {pestanas.map(p => {
+              const activa = coleccion === p.clave;
+              return (
+                <TouchableOpacity
+                  key={p.clave}
+                  style={[styles.pestana, activa && styles.pestanaActiva]}
+                  onPress={() => setColeccion(p.clave)}
+                  activeOpacity={0.8}
+                >
+                  <Text style={[styles.pestanaTexto, activa && styles.pestanaTextoActiva]} numberOfLines={1}>
+                    {p.titulo}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
         </View>
 
         {/* Progreso de desbloqueo. Cada colección se gana de una forma, así que
             la línea dice cuál toca — si no, el usuario no sabe qué hacer para
             abrir los de Halloween. */}
-        {!esHalloween && unlocked < 10 && (
+        {!esHalloween && !esPanel && unlocked < 10 && (
           <View style={styles.unlockHint}>
             <Text style={styles.unlockHintText}>
               {unlocked}/10 desbloqueado · roba {stealsToNext} {stealsToNext === 1 ? 'celda' : 'celdas'} más para el siguiente
@@ -265,7 +305,8 @@ export default function TauntSelector({
             {mensajes.map((msg, i) => {
               // En clásicos manda el número del mensaje; en Halloween, cuántas
               // calabazas lleva. `i` es la posición, que es lo que se compara.
-              const isLocked = esHalloween ? i >= halloweenAbiertos : msg.id > unlocked;
+              // Los del panel no se ganan: están todos abiertos.
+              const isLocked = esPanel ? false : (esHalloween ? i >= halloweenAbiertos : msg.id > unlocked);
               return (
                 <TouchableOpacity
                   key={msg.id}
@@ -292,13 +333,17 @@ export default function TauntSelector({
                   }}
                   activeOpacity={isLocked ? 1 : 0.8}
                 >
-                  <Image
-                    source={msg.thumb}
-                    style={[styles.thumbImage, isLocked && styles.thumbLocked]}
-                    // 'contain' y no 'cover': los carteles no miden todos
-                    // exactamente lo mismo y recortar se comería palabras.
-                    resizeMode="contain"
-                  />
+                  {msg.texto !== undefined ? (
+                    <VacileTarjeta texto={msg.texto} pestana={pestanaPanel?.nombre} />
+                  ) : (
+                    <Image
+                      source={msg.thumb}
+                      style={[styles.thumbImage, isLocked && styles.thumbLocked]}
+                      // 'contain' y no 'cover': los carteles no miden todos
+                      // exactamente lo mismo y recortar se comería palabras.
+                      resizeMode="contain"
+                    />
+                  )}
                 </TouchableOpacity>
               );
             })}
@@ -345,13 +390,19 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   pestanas: {
-    flexDirection: 'row',
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
   },
+  // flexGrow en la fila Y en cada pestaña: con pocas se reparten el ancho
+  // como antes, y cuando no caben la fila se desliza de lado.
+  pestanasFila: {
+    flexGrow: 1,
+  },
   pestana: {
-    flex: 1,
+    flexGrow: 1,
+    minWidth: 108,
     paddingVertical: 14,
+    paddingHorizontal: 14,
     alignItems: 'center',
     borderBottomWidth: 2,
     borderBottomColor: 'transparent',
