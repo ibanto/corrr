@@ -447,6 +447,13 @@ const SPAIN_BOUNDS = {
 // aquí, y hay que probarlo en Android y en iPhone.
 const MAX_DELTA_FOR_CELLS = 0.05;
 
+/** A cuántos cuadrados (de 10 m) se coge un logo de campaña al pasar: el MISMO
+ *  número que `RADIO_LOGO` en el servidor (`services/objetos.ts`), que es quien
+ *  lo da por bueno al guardar la carrera. Las calabazas y los fantasmas se
+ *  cogen pisando su cuadrado, como siempre. */
+const RADIO_LOGO = 2;
+const DE_HALLOWEEN = ['calabaza', 'fantasma', 'zombi'];
+
 const TERRITORIO_VACIO: MapTerritory = { duenos: [], tiras: [] };
 
 /** Lo que se pinta en el mapa: una calabaza suelta, o un montón con cuántas
@@ -2271,7 +2278,13 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         // bueno al guardar la carrera; esto es solo para que se entere en
         // el momento, que es la gracia.
         const celda = coordToCell(out.coord.latitude, out.coord.longitude);
-        const pillado = objetosRef.current.find(o => o.x === celda.x && o.y === celda.y);
+        // Los logos, a dos cuadrados (20 m), igual que el servidor. Hasta la
+        // 1.11.14 aquí solo valía el cuadrado exacto: pasabas por la acera a
+        // 15 m, el logo seguía en el mapa, y luego el servidor te lo daba al
+        // guardar (Iban, 6-nov: «hasta que no he pasado por encima, nada»).
+        const pillado = objetosRef.current.find(o => DE_HALLOWEEN.includes(o.tipo)
+          ? (o.x === celda.x && o.y === celda.y)
+          : (Math.abs(o.x - celda.x) <= RADIO_LOGO && Math.abs(o.y - celda.y) <= RADIO_LOGO));
         if (pillado) {
           objetosRef.current = objetosRef.current.filter(o => o.id !== pillado.id);
           setObjetos(objetosRef.current);

@@ -3749,6 +3749,14 @@ function validateClaimedCellsGeometry(
 
 /** Lo que tarda en aparecer el objeto que sustituye a uno recogido. */
 const ESPERA_REAPARICION_MS = 10 * 60 * 1000;
+/** Los logos de las campañas renacen antes (Iban, 6-nov-2026, tras probar la
+ *  campaña: «cuando cojas uno, a los 5 minutos aparezca en otro lado pero
+ *  cerca de donde apareció») y a menos de RADIO_RENACER_LOGO cuadrados de
+ *  donde estaba (50 = 500 m), recortado a la zona de su campaña. Si ahí no
+ *  cabe ninguno (hay que guardar 300 m con los demás), en toda la zona. */
+const ESPERA_REAPARICION_LOGO_MS = 5 * 60 * 1000;
+const RADIO_RENACER_LOGO = 50;
+const DE_HALLOWEEN = ['calabaza', 'fantasma', 'zombi'];
 
 /** Hasta cuándo vale el objeto que nace al comerse otro: hereda el final del
  *  evento del que se acaba de comer. */
@@ -4453,15 +4461,30 @@ app.post('/runs', {
       // bastaría con acordarse de cuál era bueno.
       if (o.tipo === 'fantasma') continue;
       const radio = 500; // celdas = 5 km
-      const desde = new Date(Date.now() + ESPERA_REAPARICION_MS);
+      const esLogo = !DE_HALLOWEEN.includes(o.tipo);
+      const desde = new Date(Date.now() + (esLogo ? ESPERA_REAPARICION_LOGO_MS : ESPERA_REAPARICION_MS));
       const hasta = objetoHasta(o);
       // El logo de una campaña renace DENTRO de su zona, no a 5 km de donde
-      // estaba: si no, a fuerza de cogerlos acabarían fuera del barrio.
+      // estaba: si no, a fuerza de cogerlos acabarían fuera del barrio. Y
+      // primero se intenta CERCA de donde estaba (RADIO_RENACER_LOGO), para
+      // que el reto no se vaya moviendo de barrio a fuerza de cogerlos.
       const zona = cajaDeCampana(await campanaDe(o.tipo).catch(() => null), o.x, o.y);
-      const nuevas = await sembrar(client as any, {
-        cuantos: 1, tipo: o.tipo, puntos: o.puntos, desde, hasta,
-        caja: zona ?? { x0: o.x - radio, x1: o.x + radio, y0: o.y - radio, y1: o.y + radio },
-      }).catch(() => [] as { x: number; y: number }[]);
+      const cajaEntera = zona ?? { x0: o.x - radio, x1: o.x + radio, y0: o.y - radio, y1: o.y + radio };
+      let nuevas: { x: number; y: number }[] = [];
+      if (esLogo) {
+        const cerca = {
+          x0: Math.max(cajaEntera.x0, o.x - RADIO_RENACER_LOGO), x1: Math.min(cajaEntera.x1, o.x + RADIO_RENACER_LOGO),
+          y0: Math.max(cajaEntera.y0, o.y - RADIO_RENACER_LOGO), y1: Math.min(cajaEntera.y1, o.y + RADIO_RENACER_LOGO),
+        };
+        nuevas = await sembrar(client as any, {
+          cuantos: 1, tipo: o.tipo, puntos: o.puntos, desde, hasta, caja: cerca,
+        }).catch(() => [] as { x: number; y: number }[]);
+      }
+      if (nuevas.length === 0) {
+        nuevas = await sembrar(client as any, {
+          cuantos: 1, tipo: o.tipo, puntos: o.puntos, desde, hasta, caja: cajaEntera,
+        }).catch(() => [] as { x: number; y: number }[]);
+      }
       // Y la calabaza que nace trae sus fantasmas, con premios nuevos.
       if (o.tipo === 'calabaza' && nuevas.length > 0) {
         await sembrarFantasmas(client as any, {

@@ -1020,7 +1020,13 @@ servidor:
     campañas guardadas antes (sin `zonas`) siguen valiendo (`cajasDeCampana`). El reto lo ve en
     Retos quien sea de CUALQUIERA de ellas; «Sembrar» pone `cuantos` EN CADA ciudad y el panel
     dice cuántos han cabido en cada una (`vacias`: las que no tienen calles cargadas ni nadie
-    ha corrido → `npm run calles`); un logo cogido renace en la ciudad donde estaba. OJO: la
+    ha corrido → `npm run calles`); un logo cogido **renace a los 5 minutos y a menos de 500 m
+    de donde estaba** (`ESPERA_REAPARICION_LOGO_MS`, `RADIO_RENACER_LOGO`; recortado a su ciudad,
+    y si ahí no cabe guardando los 300 m con los demás, en toda la ciudad), no a los 10 min en
+    cualquier punto como las calabazas (Iban, 6-nov, tras probar la campaña). Se coge pasando a
+    2 cuadrados (20 m, `RADIO_LOGO`) y lo da el SERVIDOR al guardar la carrera; la app avisa en
+    vivo con el mismo radio desde la 1.11.15 (hasta la 1.11.14 solo al pisar el cuadrado exacto,
+    por eso parecía que a 15 m no se cogía). OJO: la
     zona es el RECTÁNGULO que da OpenStreetMap, no el término municipal: el de Barcelona mete
     L'Hospitalet y Sant Adrià. **Antes de añadir una ciudad a una campaña, mirar que sus
     calles estén cargadas en TODO su rectángulo**, no solo en el centro: Sant Cugat del Vallès
