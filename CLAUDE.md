@@ -964,7 +964,11 @@ servidor:
     dice cuántos han cabido en cada una (`vacias`: las que no tienen calles cargadas ni nadie
     ha corrido → `npm run calles`); un logo cogido renace en la ciudad donde estaba. OJO: la
     zona es el RECTÁNGULO que da OpenStreetMap, no el término municipal: el de Barcelona mete
-    L'Hospitalet y Sant Adrià.
+    L'Hospitalet y Sant Adrià. **Antes de añadir una ciudad a una campaña, mirar que sus
+    calles estén cargadas en TODO su rectángulo**, no solo en el centro: Sant Cugat del Vallès
+    tenía el centro (zona de 6×6 km) y le faltaban Valldoreix, el norte y Collserola; se cargó
+    el municipio entero el 6-nov-2026 (+1.243 celdas, 9.039 en total). `datos/` está en el
+    `.gitignore`: `zonas.json` solo vive en el Mac de Iban.
   - **Prueba para varios**: el modo «En prueba» lleva un campo con nombres de la app o correos
     separados por comas (vacío = Ibanto; veinte como mucho). Se guarda como
     `prueba:Nombre1,Nombre2` y `ajusteLeToca` entiende la lista (también valdría para
