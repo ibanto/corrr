@@ -1157,8 +1157,13 @@ Por dentro:
   de AsyncStorage; vale también la lista a secas que se guardaba antes) y
   **baja por adelantado los carteles** (`Image.prefetch`, miniaturas primero, tope de 8 s):
   sin red salen las de la última vez; si el servidor no contesta no se borra nada. El
-  selector (`TauntSelector.tsx`) pone CLÁSICOS, las del panel y, **solo si el panel la tiene
-  encendida**, HALLOWEEN, en una fila que se desliza si no caben; las del panel están todas abiertas (no se ganan con robos ni
+  selector (`TauntSelector.tsx`) abre con una **PORTADA de colecciones** (boceto de Iban, 7-nov:
+  una imagen por colección con su nombre debajo, dos columnas como los mensajes): CLÁSICOS, las
+  del panel por su `orden` y, **solo si el panel la tiene encendida**, HALLOWEEN. La imagen es
+  el primer cartel de la colección (en el modo que toque, provocación o respuesta; una pestaña
+  de textos enseña su primera frase en la tarjeta). Al tocar una se entra en su cuadrícula, con
+  una barra con su nombre bajo el encabezado; **la X de dentro vuelve a la portada y la de la
+  portada cierra el selector**, y cada vez que se abre se empieza por la portada; las del panel están todas abiertas (no se ganan con robos ni
   calabazas). `VacileTarjeta` pinta el cartel ENCIMA de la tarjeta de texto, **invisible
   hasta que avisa de que ha cargado el suyo**: con la arquitectura nueva, iOS reutiliza la
   vista nativa de una imagen recién desaparecida (la cuadrícula del selector) y, sin eso,

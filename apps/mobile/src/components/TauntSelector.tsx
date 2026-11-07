@@ -102,6 +102,19 @@ const HALLOWEEN_RESPONSES: TauntMessage[] = [
   { id: 110, thumb: require('../../assets/taunts/halloween_replies/halloween_reply_10-v.jpg'), full: require('../../assets/taunts/halloween_replies/halloween_reply_10.png') },
 ];
 
+/** Una colección en la portada del selector. */
+interface Portada {
+  clave: Coleccion;
+  titulo: string;
+  /** Las dibujadas dentro de la app (Clásicos y Halloween). */
+  thumb?: ImageSourcePropType;
+  /** Las del panel: la primera frase (o el nombre del cartel), su miniatura si
+   *  es de carteles y el nombre de la pestaña, para el pie de la tarjeta. */
+  texto?: string;
+  miniatura?: string;
+  nombre?: string;
+}
+
 export type TauntMode = 'taunt' | 'response';
 /** Las dos colecciones dibujadas, o una pestaña del panel: 'panel:<id>'. */
 type Coleccion = 'clasicos' | 'halloween' | `panel:${number}`;
@@ -154,24 +167,41 @@ export default function TauntSelector({
   onSend, onClose,
 }: Props) {
   const [preview, setPreview] = useState<TauntMessage | null>(null);
-  const [coleccion, setColeccion] = useState<Coleccion>('clasicos');
+  // null = la PORTADA (una imagen por colección, con su nombre debajo); al
+  // tocar una se entra en su cuadrícula de mensajes. Cada vez que se abre el
+  // selector se empieza por la portada.
+  const [coleccion, setColeccion] = useState<Coleccion | null>(null);
+  useEffect(() => { if (visible) setColeccion(null); }, [visible]);
   // Las pestañas escritas desde el panel (§9-sexies): lo guardado en el móvil
   // al momento, y se vuelve a preguntar cada vez que se abre el selector. Con
   // ellas viene si a este corredor le sale HALLOWEEN, que también se enciende
   // y apaga desde el panel: fuera de temporada la pestaña no está.
   const { pestanas: pestanasPanel, halloween: conHalloween } = useVaciles(visible);
-  const esPanel = coleccion.startsWith(PANEL);
+  const esPanel = coleccion !== null && coleccion.startsWith(PANEL);
   const pestanaPanel = esPanel ? pestanasPanel.find(p => `${PANEL}${p.id}` === coleccion) : undefined;
-  // Si la pestaña que estaba elegida desaparece (la apagan desde el panel),
-  // vuelta a Clásicos en vez de quedarse mirando una cuadrícula vacía.
+  // Si la colección en la que estás desaparece (la apagan desde el panel),
+  // vuelta a la portada en vez de quedarse mirando una cuadrícula vacía.
   useEffect(() => {
-    if ((esPanel && !pestanaPanel) || (coleccion === 'halloween' && !conHalloween)) setColeccion('clasicos');
+    if ((esPanel && !pestanaPanel) || (coleccion === 'halloween' && !conHalloween)) setColeccion(null);
   }, [esPanel, pestanaPanel, coleccion, conHalloween]);
-  const pestanas = useMemo(() => [
-    { clave: 'clasicos' as Coleccion, titulo: 'CLÁSICOS' },
-    ...pestanasPanel.map(p => ({ clave: `${PANEL}${p.id}` as Coleccion, titulo: p.nombre.toUpperCase() })),
-    ...(conHalloween ? [{ clave: 'halloween' as Coleccion, titulo: 'HALLOWEEN' }] : []),
-  ], [pestanasPanel, conHalloween]);
+  // La portada: CLÁSICOS, las del panel y, si el panel la tiene encendida,
+  // HALLOWEEN. La imagen de cada una es su primer cartel (en el modo que toque:
+  // provocación o respuesta); una colección de textos enseña su primera frase
+  // en la tarjeta de CORRR.
+  const portadas = useMemo<Portada[]>(() => {
+    const primero = (c: 'clasicos' | 'halloween') => lista(c, mode)[0]?.thumb;
+    return [
+      { clave: 'clasicos', titulo: 'CLÁSICOS', thumb: primero('clasicos') },
+      ...pestanasPanel.map(p => {
+        const m = (mode === 'response' ? p.respuestas : p.mensajes)[0];
+        return {
+          clave: `${PANEL}${p.id}` as Coleccion, titulo: p.nombre.toUpperCase(), nombre: p.nombre,
+          texto: m ? conNombre(m.texto, rivalName) : p.nombre, miniatura: m?.miniatura ?? undefined,
+        };
+      }),
+      ...(conHalloween ? [{ clave: 'halloween' as Coleccion, titulo: 'HALLOWEEN', thumb: primero('halloween') }] : []),
+    ];
+  }, [mode, pestanasPanel, conHalloween, rivalName]);
 
   const title = mode === 'taunt' ? 'RESPONDER' : 'DEVOLVER';
   // Clamp al rango [1, 10] por seguridad.
@@ -182,6 +212,7 @@ export default function TauntSelector({
   const halloweenAbiertos = halloweenActivo ? Math.max(0, Math.min(10, calabazas)) : 0;
 
   const mensajes = useMemo<TauntMessage[]>(() => {
+    if (coleccion === null) return [];
     if (coleccion.startsWith(PANEL)) {
       if (!pestanaPanel) return [];
       // `{nombre}` es el rival: se enseña ya con su nombre, que es como le va
@@ -239,7 +270,9 @@ export default function TauntSelector({
       <View style={styles.container}>
         {/* Header */}
         <View style={styles.header}>
-          <TouchableOpacity onPress={onClose} style={styles.backBtn}>
+          {/* En la portada cierra el selector; dentro de una colección vuelve
+              a la portada. */}
+          <TouchableOpacity onPress={coleccion === null ? onClose : () => setColeccion(null)} style={styles.backBtn}>
             <Ionicons name="close" size={28} color={colors.textPrimary} />
           </TouchableOpacity>
           <View style={styles.headerCenter}>
@@ -249,29 +282,29 @@ export default function TauntSelector({
           <View style={{ width: 40 }} />
         </View>
 
-        {/* Las colecciones: Clásicos, las que vengan del panel y, si el panel
-            la tiene encendida, Halloween. La
-            elegida se queda puesta si se cambia de pestaña y se vuelve, que es
-            lo que uno espera al comparar. Con dos o tres llenan el ancho; con
-            más, la fila se desliza. */}
-        <View style={styles.pestanas}>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.pestanasFila}>
-            {pestanas.map(p => {
-              const activa = coleccion === p.clave;
-              return (
-                <TouchableOpacity
-                  key={p.clave}
-                  style={[styles.pestana, activa && styles.pestanaActiva]}
-                  onPress={() => setColeccion(p.clave)}
-                  activeOpacity={0.8}
-                >
-                  <Text style={[styles.pestanaTexto, activa && styles.pestanaTextoActiva]} numberOfLines={1}>
-                    {p.titulo}
-                  </Text>
+        {coleccion === null ? (
+          /* LA PORTADA: una imagen por colección con su nombre debajo, en dos
+             columnas como la cuadrícula de mensajes. Tocar una la abre. */
+          <ScrollView style={styles.scrollView} contentContainerStyle={styles.grid} showsVerticalScrollIndicator={false}>
+            {portadas.map(p => (
+              <View key={p.clave} style={styles.portadaItem}>
+                <TouchableOpacity style={styles.thumbContainer} onPress={() => setColeccion(p.clave)} activeOpacity={0.8}>
+                  {p.texto !== undefined ? (
+                    <VacileTarjeta texto={p.texto} imagen={p.miniatura} pestana={p.nombre} />
+                  ) : (
+                    <Image source={p.thumb} style={styles.thumbImage} resizeMode="contain" />
+                  )}
                 </TouchableOpacity>
-              );
-            })}
+                <Text style={styles.portadaNombre} numberOfLines={1}>{p.titulo}</Text>
+              </View>
+            ))}
           </ScrollView>
+        ) : (<>
+        {/* Dentro de una colección: su nombre en una barra, entre dos líneas. */}
+        <View style={styles.barraColeccion}>
+          <Text style={styles.barraColeccionTexto} numberOfLines={1}>
+            {portadas.find(p => p.clave === coleccion)?.titulo ?? ''}
+          </Text>
         </View>
 
         {/* Progreso de desbloqueo. Cada colección se gana de una forma, así que
@@ -357,6 +390,7 @@ export default function TauntSelector({
             })}
           </ScrollView>
         )}
+        </>)}
       </View>
     </Modal>
   );
@@ -397,35 +431,32 @@ const styles = StyleSheet.create({
     color: colors.orange,
     fontWeight: '600',
   },
-  pestanas: {
+  // Dentro de una colección: su nombre, centrado, en una barra entre dos líneas
+  // (la de debajo del encabezado y la suya).
+  barraColeccion: {
+    paddingVertical: 14,
+    alignItems: 'center',
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
   },
-  // flexGrow en la fila Y en cada pestaña: con pocas se reparten el ancho
-  // como antes, y cuando no caben la fila se desliza de lado.
-  pestanasFila: {
-    flexGrow: 1,
-  },
-  pestana: {
-    flexGrow: 1,
-    minWidth: 108,
-    paddingVertical: 14,
-    paddingHorizontal: 14,
-    alignItems: 'center',
-    borderBottomWidth: 2,
-    borderBottomColor: 'transparent',
-  },
-  pestanaActiva: {
-    borderBottomColor: colors.orange,
-  },
-  pestanaTexto: {
+  barraColeccionTexto: {
     fontSize: 13,
     fontWeight: '800',
     letterSpacing: 1.2,
-    color: colors.textSecondary,
-  },
-  pestanaTextoActiva: {
     color: colors.orange,
+  },
+  // La portada: cada colección es su imagen (la misma proporción vertical que
+  // un mensaje) con el nombre debajo.
+  portadaItem: {
+    width: THUMB_WIDTH,
+  },
+  portadaNombre: {
+    marginTop: spacing.sm,
+    textAlign: 'center',
+    fontSize: 13,
+    fontWeight: '800',
+    letterSpacing: 1.2,
+    color: colors.textPrimary,
   },
   scrollView: {
     flex: 1,
