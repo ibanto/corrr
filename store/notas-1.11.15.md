@@ -52,18 +52,27 @@ Ahora toca lo siguiente: en la pestaña Retos ya puedes ver lo que viene, el gra
 Vaciles nuevos: al devolver un robo eliges entre colecciones. El mapa abre más rápido. Y el ranking cambia: España, tu ciudad y tus amigos.
 ```
 
-### App Store Connect — "Novedades de esta versión"
+### App Store Connect — "Novedades de esta versión" y "Texto promocional"
 
-**Sin nombrar Android, Google ni Strava** (rechazo del 15-oct, §15).
+**Sin nombrar Android, Google ni Strava** (rechazo del 15-oct, §15). La 1.11.14 ya salió en el
+iPhone con lo de Halloween, el ranking y los retos, así que aquí solo va lo nuevo.
+
+Novedades (máx. 4000):
 
 ```
-Se acabó Halloween. Gracias a todos los que salisteis a cazar calabazas.
+Vaciles nuevos. Al devolver un robo, ahora eliges entre colecciones: toca la que quieras y escoge tu mensaje.
 
-Ahora toca lo siguiente: en la pestaña Retos ya puedes ver lo que viene, el gran reto de Navidad. Con premio.
+El mapa abre más rápido: al entrar ya ves tu territorio.
 
-Vaciles nuevos: al devolver un robo eliges entre colecciones. El mapa abre más rápido. Y el ranking cambia: España, tu ciudad y tus amigos.
+Los logos de los retos vuelven a aparecer a los pocos minutos, para que siempre haya algo que pillar.
 
 Y arreglos por dentro para que no se pierda ninguna carrera.
+```
+
+Texto promocional (máx. 170; esto son 119):
+
+```
+Vaciles nuevos para devolver los robos, mapa más rápido y, en Retos, lo que viene: el gran reto de Navidad, con premio.
 ```
 
 Después de que cada tienda la publique: Android `LATEST_APP_VERSION` = 1.11.15 ·
