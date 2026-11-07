@@ -350,6 +350,38 @@ export async function pestanasVacilesAdmin(db: Db, base = ''): Promise<PestanaVa
  *  prueba para él) que tengan algún mensaje. Sin respuestas propias, las
  *  respuestas son los mismos mensajes: así basta con pegar una lista. En las
  *  de imágenes solo van los mensajes que tienen cartel. */
+/** Las pestañas DIBUJADAS dentro de la app (Clásicos y Halloween) también
+ *  se encienden y apagan desde el panel, en la misma caja que las demás.
+ *  Clásicos va siempre; Halloween tiene su interruptor, guardado como un
+ *  ajuste del juego con los mismos valores que las pestañas del panel
+ *  ('no' / 'prueba:A,B' / 'si'). Mientras nadie lo toque está APAGADA: la
+ *  pestaña no sale en el selector (apps 1.11.15 o más nuevas). Es aparte del
+ *  interruptor del evento de Halloween (`halloween`), que manda en las
+ *  calabazas y en si los mensajes se abren. */
+export const AJUSTE_PESTANA_HALLOWEEN = 'pestana_halloween';
+
+export interface PestanasDibujadas {
+  /** ¿Le sale a este corredor la pestaña HALLOWEEN en el selector? */
+  halloween: boolean;
+}
+
+export function pestanasDibujadasPara(
+  valorHalloween: string | null | undefined,
+  nombre: string | null,
+  leToca: (modo: string, nombre: string | null) => boolean,
+): PestanasDibujadas {
+  return { halloween: leToca(valorHalloween || 'no', nombre) };
+}
+
+/** Un valor guardado ('no' / 'prueba:A,B' / 'si') tal y como lo pinta el
+ *  panel: el interruptor de tres posiciones y quién lo prueba. */
+export function interruptorParaPanel(valor: string | null | undefined): { modo: 'apagado' | 'prueba' | 'todos'; corredores: string } {
+  const v = valor || 'no';
+  if (v === 'si') return { modo: 'todos', corredores: '' };
+  if (v.startsWith('prueba:')) return { modo: 'prueba', corredores: v.slice('prueba:'.length) };
+  return { modo: 'apagado', corredores: '' };
+}
+
 export async function pestanasVacilesPara(
   db: Db,
   nombre: string | null,

@@ -22,6 +22,7 @@ const {
   prepararVaciles, guardarPestanaVaciles, borrarPestanaVaciles, pestanasVacilesAdmin,
   pestanasVacilesPara, lineasDeVaciles, PRIMER_ID_VACILE,
   guardarParejaVacile, quitarParejaVacile, imagenVacile, parteDeCartel,
+  pestanasDibujadasPara, interruptorParaPanel,
 } = await import(join(raiz, 'dist/services/vaciles.js'));
 const fuente = readFileSync(join(raiz, 'src/routes/index.ts'), 'utf8');
 const dist = readFileSync(join(raiz, 'dist/routes/index.js'), 'utf8');
@@ -206,6 +207,17 @@ comprueba('quitar la pareja', await quitarParejaVacile(db, totems.id, 'lobo_nara
 comprueba('quitada: la pestaña se queda vacía y no sale en la app', !(await pestanasVacilesPara(db, 'KarolK', ajusteLeToca)).some(p => p.nombre === 'Tótems'));
 comprueba('pero el vacile de cartel enviado sigue trayendo su cartel',
   (await db.query(sqlUnread, [karol])).rows.find(t => t.taunt_id === lobo.mensajeId)?.imagen_version === g2.version);
+
+// La pestaña HALLOWEEN, dibujada en la app, con su interruptor del panel.
+comprueba('la pestaña Halloween va apagada mientras nadie la toque',
+  !pestanasDibujadasPara(undefined, 'Ibanto', ajusteLeToca).halloween && !pestanasDibujadasPara('no', 'KarolK', ajusteLeToca).halloween);
+comprueba('en prueba solo le sale a quien se diga',
+  pestanasDibujadasPara('prueba:Ibanto', 'Ibanto', ajusteLeToca).halloween && !pestanasDibujadasPara('prueba:Ibanto', 'KarolK', ajusteLeToca).halloween);
+comprueba('encendida le sale a todo el mundo', pestanasDibujadasPara('si', null, ajusteLeToca).halloween);
+const interruptor = interruptorParaPanel('prueba:Ibanto,KarolK');
+comprueba('el interruptor se pinta en el panel como los de las demás',
+  interruptor.modo === 'prueba' && interruptor.corredores === 'Ibanto,KarolK'
+  && interruptorParaPanel('si').modo === 'todos' && interruptorParaPanel(null).modo === 'apagado');
 
 console.log(fallos ? `\n${fallos} fallo(s) en los vaciles.` : '\nVaciles en orden.');
 process.exit(fallos ? 1 : 0);

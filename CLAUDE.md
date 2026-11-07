@@ -130,6 +130,12 @@ APAGADO el mapa sale igualmente pintado con el territorio guardado, sin pantalla
    las dos EN PRUEBA para Ibanto.** Cuando la 1.11.15 esté en las dos tiendas, encenderlas
    desde el panel. Ojo: el `.env` de `apps/backend` lleva desde ese día la `ADMIN_KEY` de
    producción (antes tenía una de pruebas y el servidor decía «Acceso denegado»).
+   **7-nov**: Iban cambió los diez PNG de Tótems (letra nueva, de brocha; el zip de la carpeta
+   es la versión vieja) y se resubieron con el script: mismos ids. Y **la pestaña HALLOWEEN
+   (dibujada en la app) tiene ya su interruptor en la caja Vaciles del panel**, apagada
+   mientras nadie lo toque: solo manda en la 1.11.15 o más nuevas (las anteriores la enseñan
+   siempre). Pedido por Iban: «ahora no tiene sentido Halloween, y pronto vendrán vaciles
+   navideños» (esos irán como una pestaña de carteles más, sin tocar la app).
 
 #### Lo que se hizo la noche del 22 (histórico)
 
@@ -164,7 +170,8 @@ Panel por pestañas (§9-ter) · Calabazas y su interruptor de tres estados
 (§9-bis) · Mapa por tiras · Colores de corredor repartidos por el servidor ·
 Historial de robos (`/robos`) · **Pestañas de vaciles desde el panel** (§9-sexies,
 6-nov-2026: el servidor y el panel ya; la app las enseña desde la **1.11.15**, la
-siguiente a la 1.11.14, que está en revisión de Apple y no se toca).
+siguiente a la 1.11.14, que está en revisión de Apple y no se toca) · **La pestaña HALLOWEEN se
+enciende y apaga desde esa misma caja** (7-nov; manda en la app desde la 1.11.15).
 
 ### Qué lleva la 1.11.11 sobre la 1.11.10
 
@@ -472,6 +479,7 @@ verdad, compilar en **Release** (lleva el código dentro y no necesita nada):
 - Backend cierra el hilo: solo 1 taunt + 1 response por `(from, to, run_id)`.
 - **Desbloqueo progresivo**: el usuario empieza con 1 mensaje + 1 respuesta. Cada 10 robos desbloquea el siguiente. Cap a 10.
 - **Tres familias por el id** (`taunt_id`): clásicos 1-10 y Halloween 101-110 van DIBUJADOS dentro de la app; desde el 1001, los escritos en el panel (§9-sexies), que viajan como texto.
+- **La pestaña HALLOWEEN del selector sale solo si el panel la tiene encendida** (ajuste `pestana_halloween`, §9-sexies; apps 1.11.15+). CLÁSICOS sale siempre.
 
 ### Stats
 
@@ -1073,6 +1081,15 @@ es de uno de dos tipos:
   archivo («lobo naranja»): si a un móvil no le llega el dibujo, enseña la tarjeta con ese
   nombre, nunca un hueco.
 
+**Las dibujadas también se encienden y apagan desde esa caja** (7-nov-2026): Clásicos va
+siempre; **Halloween** tiene su interruptor de tres estados (ajuste `pestana_halloween` en
+`ajustes_juego`, con los mismos valores 'no' / 'prueba:A,B' / 'si'; **apagada mientras nadie
+lo toque**). Apagada, la pestaña HALLOWEEN **no sale** en el selector (apps 1.11.15 o más
+nuevas; las anteriores la enseñan siempre, con «próximamente» si el evento está apagado).
+Es aparte del interruptor del EVENTO de Halloween (§9-bis, en el histórico del panel), que
+sigue mandando en las calabazas y en si los diez mensajes se abren. Cuando vuelva Halloween:
+encender los dos. Los vaciles de Navidad que vendrán son una pestaña de carteles más.
+
 Se mandan y llegan exactamente igual que uno clásico: por `POST /taunts` con el id del
 mensaje, con el mismo hilo de una ida y una vuelta y la misma notificación.
 
@@ -1131,12 +1148,17 @@ Por dentro:
   `texto` (ya con `{nombre}` cambiado por quien lo recibe), `pestana` e `imagen` a los
   vaciles del panel; en los dibujados van a null. Panel: `GET/POST /admin/vaciles`,
   `DELETE /admin/vaciles/:id`.
+  **La pestaña HALLOWEEN**: `GET /app/vaciles` añade `dibujadas.halloween` (si le sale a ese
+  corredor: `pestanasDibujadasPara` sobre el ajuste `pestana_halloween`), `GET /admin/vaciles`
+  lo da como `dibujadas.halloween = { modo, corredores }` (`interruptorParaPanel`) y
+  `POST /admin/vaciles/dibujada` lo guarda pasando por `modoDesdePanel`.
 - **App**: `services/vaciles.ts` pide las pestañas al arrancar y cada vez que se abre el
-  selector, **guarda lo último recibido** (`corrr_vaciles_panel_v1` en AsyncStorage) y
+  selector, **guarda lo último recibido** (`{ pestanas, halloween }` en `corrr_vaciles_panel_v1`
+  de AsyncStorage; vale también la lista a secas que se guardaba antes) y
   **baja por adelantado los carteles** (`Image.prefetch`, miniaturas primero, tope de 8 s):
   sin red salen las de la última vez; si el servidor no contesta no se borra nada. El
-  selector (`TauntSelector.tsx`) pone CLÁSICOS, las del panel y HALLOWEEN en una fila que se
-  desliza si no caben; las del panel están todas abiertas (no se ganan con robos ni
+  selector (`TauntSelector.tsx`) pone CLÁSICOS, las del panel y, **solo si el panel la tiene
+  encendida**, HALLOWEEN, en una fila que se desliza si no caben; las del panel están todas abiertas (no se ganan con robos ni
   calabazas). `VacileTarjeta` pinta el cartel ENCIMA de la tarjeta de texto, **invisible
   hasta que avisa de que ha cargado el suyo**: con la arquitectura nueva, iOS reutiliza la
   vista nativa de una imagen recién desaparecida (la cuadrícula del selector) y, sin eso,
@@ -1145,10 +1167,10 @@ Por dentro:
   Al recibir uno, `MapScreen` enseña el cartel o la tarjeta si no hay dibujo dentro de la app.
 - **Comprobar**: `npm run test:vaciles` (PGlite, como `test:campanas`: crear, editar sin
   cambiar ids, quién ve qué, carteles con sharp, y la consulta de la bandeja tal cual está
-  en el código) y `npm run test:panel`. En la app, `npm run mock` lleva tres pestañas de
-  ejemplo (Navidad y Picantes de texto, Tótems de carteles servidos desde
-  `assets/taunts/vaciles/`) y vaciles de texto y de cartel en la bandeja; `MODO=vacio`,
-  ninguna.
+  en el código) y `npm run test:panel`. En la app, `npm run mock` lleva Tótems y Aura (carteles servidos desde
+  `assets/taunts/vaciles/` y `…/AURA/`; con `MODO=textos`, además Navidad y Picantes de texto) y
+  vaciles de texto y de cartel en la bandeja; la pestaña HALLOWEEN sale con `HALLOWEEN=1` (y con
+  `MODO=vacio`, que no trae ninguna del panel).
 
 ## 9-ter. El panel de administración
 

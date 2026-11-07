@@ -19,6 +19,7 @@ import { sembrar, sembrarFantasmas, recoger, Objeto, LOGO_ES_SUYO } from '../ser
 import {
   prepararVaciles, guardarPestanaVaciles, borrarPestanaVaciles, pestanasVacilesAdmin,
   pestanasVacilesPara, lineasDeVaciles, guardarParejaVacile, quitarParejaVacile,
+  AJUSTE_PESTANA_HALLOWEEN, pestanasDibujadasPara, interruptorParaPanel,
   imagenVacile, direccionesDeCartel,
 } from '../services/vaciles.js';
 import {
@@ -2170,11 +2171,26 @@ Sale UNA vez por persona; para repetirlo, se crea otro. Solo lo ven las apps 1.1
 <div class="caja">
 <h2>Vaciles</h2>
 <p class="nota">Los vaciles son los mensajes que un corredor manda a quien le ha robado, y la respuesta del ladr&oacute;n.
-La app lleva dentro los <b>Cl&aacute;sicos</b> y los de <b>Halloween</b>, dibujados. <b>Las pesta&ntilde;as de aqu&iacute; salen
+La app lleva dentro los <b>Cl&aacute;sicos</b> (siempre) y los de <b>Halloween</b>, dibujados; la pesta&ntilde;a de Halloween se enciende
+y apaga aqu&iacute; abajo, como las dem&aacute;s. <b>Las pesta&ntilde;as de aqu&iacute; salen
 en el selector sin sacar versi&oacute;n</b> (en las apps 1.11.15 o m&aacute;s nuevas). Una pesta&ntilde;a es <b>de textos</b> (frases, una por
 l&iacute;nea, que la app pinta en una tarjeta; <b>{nombre}</b> se cambia por el nombre de quien lo recibe) o <b>de carteles</b> (parejas de PNG
 de 592&times;1280 como los cl&aacute;sicos: la provocaci&oacute;n y la respuesta del ladr&oacute;n). Gu&aacute;rdala en prueba para verla t&uacute; en la app
 antes de encenderla. Los cambios se ven al abrir el selector; lo &uacute;ltimo recibido se queda guardado en el m&oacute;vil por si no hay red.</p>
+<div id="v_dibujadas" style="margin-bottom:6px">
+  <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:8px 0;border-bottom:1px solid #222">
+    <b>Cl&aacute;sicos</b><span style="color:#4caf50">siempre encendida</span><span style="color:#888">dibujada en la app; se gana robando</span></div>
+  <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:8px 0;border-bottom:1px solid #222">
+    <b>Halloween</b><span id="vh_estado" style="color:#888">cargando&hellip;</span><span style="color:#888">dibujada en la app; sus mensajes se abren con calabazas</span>
+    <select id="vh_modo" style="width:auto">
+      <option value="apagado">Apagada &mdash; la pesta&ntilde;a no sale</option>
+      <option value="prueba">En prueba &mdash; solo la ven estos</option>
+      <option value="todos">Encendida para todo el mundo</option>
+    </select>
+    <input id="vh_probadores" placeholder="Ibanto" style="display:none;width:180px">
+    <button class="mini" id="vh_guardar" type="button">Guardar</button></div>
+  <div id="vh_msg" class="resultado" style="display:none"></div>
+</div>
 <div id="v_lista"><p class="nota">Cargando&hellip;</p></div>
 <button class="btn" id="v_nueva" type="button">Nueva pesta&ntilde;a</button>
 <form class="form" id="fv" style="display:none;margin-top:14px">
@@ -2228,7 +2244,8 @@ no cuenta. Se actualiza solo cada minuto.</p>
 <h2>Halloween</h2>
 <p class="nota">La app ya lleva dentro las calabazas y los diez mensajes nuevos, pero <b>apagados</b>.
 Este interruptor los enciende para todo el mundo, sin sacar versión. Mientras esté apagado, en Retos
-sale el cartel de "prepárate" y la pestaña de mensajes de Halloween dice "próximamente".</p>
+sale el cartel de "prepárate" y la pestaña de mensajes de Halloween dice "próximamente".
+<b>Que la pestaña HALLOWEEN salga o no en el selector</b> se decide arriba, en Vaciles (apps 1.11.15 o m&aacute;s nuevas).</p>
 <form class="form" id="fhw">
   <select id="hw_modo">
     <option value="apagado">Apagado — nadie lo ve</option>
@@ -3015,8 +3032,43 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
     return api('/admin/vaciles').then(function (r) {
       vacilesPanel = r.pestanas || [];
       pintarVaciles();
+      pintarDibujada((r.dibujadas || {}).halloween);
     });
   }
+  // La pestaña de Halloween, dibujada dentro de la app: su interruptor va aquí
+  // con las demás (apps 1.11.15 o más nuevas). Clásicos no se apaga.
+  function pintarDibujada(h) {
+    h = h || { modo: 'apagado', corredores: '' };
+    var valor = h.modo === 'todos' ? 'si' : (h.modo === 'prueba' ? 'prueba:' + (h.corredores || '') : 'no');
+    var e = document.getElementById('vh_estado');
+    e.textContent = estadoVacile(valor);
+    e.style.color = h.modo === 'todos' ? '#4caf50' : (h.modo === 'apagado' ? '#888' : '#f59e0b');
+    document.getElementById('vh_modo').value = h.modo;
+    document.getElementById('vh_probadores').value = h.corredores || '';
+    document.getElementById('vh_probadores').style.display = h.modo === 'prueba' ? '' : 'none';
+  }
+  document.getElementById('vh_modo').addEventListener('change', function (ev) {
+    document.getElementById('vh_probadores').style.display = ev.target.value === 'prueba' ? '' : 'none';
+  });
+  document.getElementById('vh_guardar').addEventListener('click', function () {
+    var modo = document.getElementById('vh_modo').value;
+    if (modo === 'todos' && !confirm('¿Encender la pestaña HALLOWEEN para TODO el mundo?')) return;
+    var m = document.getElementById('vh_msg');
+    m.style.display = 'block'; m.style.color = '#bbb'; m.style.borderLeftColor = '#555';
+    m.textContent = 'Un momento…';
+    api('/admin/vaciles/dibujada', { method: 'POST', body: JSON.stringify({
+      clave: 'halloween', modo: modo, corredores: val('vh_probadores'),
+    }) }).then(function (r) {
+      pintarDibujada(r);
+      m.style.color = '#4caf50'; m.style.borderLeftColor = '#4caf50';
+      m.textContent = r.modo === 'todos'
+        ? '✓ Halloween encendida para todos: sale en el selector (apps 1.11.15 o más nuevas).'
+        : (r.modo === 'prueba' ? '✓ Solo la ven ' + r.corredores + '.' : '✓ Apagada: la pestaña Halloween no sale en el selector.');
+    }).catch(function (e) {
+      m.style.color = '#f44336'; m.style.borderLeftColor = '#f44336';
+      m.textContent = '✗ ' + e.message;
+    });
+  });
   cargarVaciles().catch(function (e) {
     document.getElementById('v_lista').innerHTML = '<p class="nota">No se han podido cargar: ' + esc(e.message) + '</p>';
   });
@@ -5709,8 +5761,11 @@ function baseVaciles(req: any): string {
 /** Lo que ve este corredor: las pestañas encendidas, o en prueba para él. */
 app.get('/app/vaciles', { preHandler: requireAuth }, async (req: any, reply) => {
   const { rows } = await db.query('SELECT display_name FROM users WHERE id = $1', [req.userId]);
-  const pestanas = await pestanasVacilesPara(db, rows[0]?.display_name ?? null, ajusteLeToca, baseVaciles(req));
-  return reply.send({ pestanas });
+  const nombre = rows[0]?.display_name ?? null;
+  const pestanas = await pestanasVacilesPara(db, nombre, ajusteLeToca, baseVaciles(req));
+  // Y las dibujadas dentro de la app: si a este corredor le sale HALLOWEEN.
+  const dibujadas = pestanasDibujadasPara(await valorAjuste(AJUSTE_PESTANA_HALLOWEEN), nombre, ajusteLeToca);
+  return reply.send({ pestanas, dibujadas });
 });
 
 /** Los carteles de las pestañas de imágenes: `<id>.png` el cartel entero y
@@ -5757,7 +5812,29 @@ async function modoDesdePanel(modo: unknown, corredores: unknown): Promise<strin
 }
 
 app.get('/admin/vaciles', { preHandler: requireAdmin }, async (req: any, reply) => {
-  return reply.send({ pestanas: await pestanasVacilesAdmin(db, baseVaciles(req)) });
+  return reply.send({
+    pestanas: await pestanasVacilesAdmin(db, baseVaciles(req)),
+    dibujadas: { halloween: interruptorParaPanel(await valorAjuste(AJUSTE_PESTANA_HALLOWEEN)) },
+  });
+});
+
+/** El interruptor de una pestaña dibujada dentro de la app (de momento solo
+ *  Halloween; Clásicos va siempre). Se guarda como ajuste del juego, con los
+ *  mismos tres estados que las pestañas del panel. */
+app.post('/admin/vaciles/dibujada', { preHandler: requireAdmin }, async (req: any, reply) => {
+  const b = req.body ?? {};
+  if (b.clave !== 'halloween') return reply.status(400).send({ error: 'Esa pestaña no se puede encender ni apagar' });
+  try {
+    const valor = await modoDesdePanel(b.modo, b.corredores);
+    await db.query(
+      `INSERT INTO ajustes_juego (clave, valor) VALUES ($1, $2)
+       ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor, cambiado_at = NOW()`,
+      [AJUSTE_PESTANA_HALLOWEEN, valor],
+    );
+    return reply.send({ ok: true, clave: 'halloween', ...interruptorParaPanel(valor) });
+  } catch (e: any) {
+    return reply.status(400).send({ error: e?.message ?? 'No se ha podido guardar' });
+  }
 });
 
 /** Crear o cambiar una pestaña: nombre, orden, interruptor, tipo (texto o

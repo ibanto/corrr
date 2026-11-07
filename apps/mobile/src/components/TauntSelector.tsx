@@ -139,8 +139,10 @@ interface Props {
   // Calabazas recogidas. Cada una desbloquea UN mensaje de Halloween. Con
   // cero, la pestaña entera sale como "próximamente".
   calabazas?: number;
-  // ¿Está Halloween encendido desde el panel? Mientras no lo esté, la pestaña
-  // dice "próximamente" aunque alguien tenga calabazas de una prueba.
+  // ¿Está el EVENTO de Halloween encendido desde el panel? Mientras no lo esté,
+  // la pestaña dice "próximamente" aunque alguien tenga calabazas de una
+  // prueba. Que la pestaña salga o no es otro interruptor (llega con las
+  // pestañas del panel, en `useVaciles`).
   halloweenActivo?: boolean;
   onSend: (messageId: number, mode: TauntMode) => void;
   onClose: () => void;
@@ -154,20 +156,22 @@ export default function TauntSelector({
   const [preview, setPreview] = useState<TauntMessage | null>(null);
   const [coleccion, setColeccion] = useState<Coleccion>('clasicos');
   // Las pestañas escritas desde el panel (§9-sexies): lo guardado en el móvil
-  // al momento, y se vuelve a preguntar cada vez que se abre el selector.
-  const pestanasPanel = useVaciles(visible);
+  // al momento, y se vuelve a preguntar cada vez que se abre el selector. Con
+  // ellas viene si a este corredor le sale HALLOWEEN, que también se enciende
+  // y apaga desde el panel: fuera de temporada la pestaña no está.
+  const { pestanas: pestanasPanel, halloween: conHalloween } = useVaciles(visible);
   const esPanel = coleccion.startsWith(PANEL);
   const pestanaPanel = esPanel ? pestanasPanel.find(p => `${PANEL}${p.id}` === coleccion) : undefined;
   // Si la pestaña que estaba elegida desaparece (la apagan desde el panel),
   // vuelta a Clásicos en vez de quedarse mirando una cuadrícula vacía.
   useEffect(() => {
-    if (esPanel && !pestanaPanel) setColeccion('clasicos');
-  }, [esPanel, pestanaPanel]);
+    if ((esPanel && !pestanaPanel) || (coleccion === 'halloween' && !conHalloween)) setColeccion('clasicos');
+  }, [esPanel, pestanaPanel, coleccion, conHalloween]);
   const pestanas = useMemo(() => [
     { clave: 'clasicos' as Coleccion, titulo: 'CLÁSICOS' },
     ...pestanasPanel.map(p => ({ clave: `${PANEL}${p.id}` as Coleccion, titulo: p.nombre.toUpperCase() })),
-    { clave: 'halloween' as Coleccion, titulo: 'HALLOWEEN' },
-  ], [pestanasPanel]);
+    ...(conHalloween ? [{ clave: 'halloween' as Coleccion, titulo: 'HALLOWEEN' }] : []),
+  ], [pestanasPanel, conHalloween]);
 
   const title = mode === 'taunt' ? 'RESPONDER' : 'DEVOLVER';
   // Clamp al rango [1, 10] por seguridad.
@@ -245,7 +249,8 @@ export default function TauntSelector({
           <View style={{ width: 40 }} />
         </View>
 
-        {/* Las colecciones: Clásicos, las que vengan del panel y Halloween. La
+        {/* Las colecciones: Clásicos, las que vengan del panel y, si el panel
+            la tiene encendida, Halloween. La
             elegida se queda puesta si se cambia de pestaña y se vuelve, que es
             lo que uno espera al comparar. Con dos o tres llenan el ancho; con
             más, la fila se desliza. */}

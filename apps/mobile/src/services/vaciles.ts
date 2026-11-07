@@ -6,6 +6,10 @@
  * CARTELES (parejas de PNG como los clásicos, que el servidor guarda y sirve;
  * cada uno trae además un texto de reserva por si el dibujo no llega).
  *
+ * Con ellas viene si a este corredor le sale la pestaña HALLOWEEN (dibujada
+ * en la app, pero con su interruptor en el panel como las demás): fuera de
+ * temporada no está, y sin saber nada tampoco.
+ *
  * Se piden al arrancar y cada vez que se abre el selector, y lo último
  * recibido se guarda en el móvil: así salen al momento, y sin red se enseña
  * lo de la última vez. Si el servidor no contesta no se borra nada; solo una
@@ -18,8 +22,15 @@ import { Image } from 'react-native';
 import { useEffect, useState } from 'react';
 import { api, MensajeVacile, PestanaVaciles } from './api';
 
+export interface VacilesEnMovil {
+  pestanas: PestanaVaciles[];
+  /** ¿Sale la pestaña HALLOWEEN? (la de la app, encendida desde el panel). */
+  halloween: boolean;
+}
+
 const CLAVE = 'corrr_vaciles_panel_v1';
-let enMemoria: PestanaVaciles[] | null = null;
+const SIN_NADA: VacilesEnMovil = { pestanas: [], halloween: false };
+let enMemoria: VacilesEnMovil | null = null;
 
 const esDireccion = (x: unknown): x is string => typeof x === 'string' && /^https?:\/\//.test(x);
 
@@ -36,11 +47,12 @@ function textos(lista: unknown): MensajeVacile[] {
 }
 
 /** Lo que llega (del servidor o del disco) se mira antes de usarlo: una
- *  pestaña a medias no puede romper el selector. */
-function limpiar(crudo: unknown): PestanaVaciles[] {
-  if (!Array.isArray(crudo)) return [];
+ *  pestaña a medias no puede romper el selector. Vale la forma de ahora
+ *  (`{ pestanas, halloween }`) y la lista a secas que se guardaba antes. */
+function limpiar(crudo: unknown): VacilesEnMovil {
+  const lista = Array.isArray(crudo) ? crudo : (crudo as any)?.pestanas;
   const limpias: PestanaVaciles[] = [];
-  for (const p of crudo as any[]) {
+  for (const p of (Array.isArray(lista) ? lista : []) as any[]) {
     if (!p || typeof p.id !== 'number' || typeof p.nombre !== 'string' || !p.nombre.trim()) continue;
     const mensajes = textos(p.mensajes);
     if (mensajes.length === 0) continue;
@@ -50,7 +62,7 @@ function limpiar(crudo: unknown): PestanaVaciles[] {
       mensajes, respuestas: respuestas.length ? respuestas : mensajes,
     });
   }
-  return limpias;
+  return { pestanas: limpias, halloween: !Array.isArray(crudo) && (crudo as any)?.halloween === true };
 }
 
 /** Los carteles ya pedidos esta sesión: no se vuelven a pedir. */
@@ -79,45 +91,45 @@ export async function precargarCarteles(pestanas: PestanaVaciles[], msTope = 800
 }
 
 /** Lo guardado en el móvil la última vez. */
-export async function vacilesGuardados(): Promise<PestanaVaciles[]> {
+export async function vacilesGuardados(): Promise<VacilesEnMovil> {
   if (enMemoria) return enMemoria;
   try {
     const raw = await AsyncStorage.getItem(CLAVE);
-    enMemoria = limpiar(raw ? JSON.parse(raw) : []);
+    enMemoria = limpiar(raw ? JSON.parse(raw) : null);
   } catch {
-    enMemoria = [];
+    enMemoria = SIN_NADA;
   }
-  precargarCarteles(enMemoria).catch(() => {});
+  precargarCarteles(enMemoria.pestanas).catch(() => {});
   return enMemoria;
 }
 
 /** Pregunta al servidor y guarda. null = no ha contestado (se deja lo de antes). */
-export async function refrescarVaciles(): Promise<PestanaVaciles[] | null> {
+export async function refrescarVaciles(): Promise<VacilesEnMovil | null> {
   const res = await api.getVaciles();
   if (res === undefined) return null;
   enMemoria = limpiar(res);
   try { await AsyncStorage.setItem(CLAVE, JSON.stringify(enMemoria)); } catch {}
-  precargarCarteles(enMemoria).catch(() => {});
+  precargarCarteles(enMemoria.pestanas).catch(() => {});
   return enMemoria;
 }
 
-/** Las pestañas del panel para el selector: primero lo guardado, y al abrirse
- *  (`abierto`) se vuelve a preguntar al servidor. */
-export function useVaciles(abierto: boolean): PestanaVaciles[] {
-  const [pestanas, setPestanas] = useState<PestanaVaciles[]>(enMemoria ?? []);
+/** Las pestañas del panel (y si sale Halloween) para el selector: primero lo
+ *  guardado, y al abrirse (`abierto`) se vuelve a preguntar al servidor. */
+export function useVaciles(abierto: boolean): VacilesEnMovil {
+  const [vaciles, setVaciles] = useState<VacilesEnMovil>(enMemoria ?? SIN_NADA);
   useEffect(() => {
     let vivo = true;
-    vacilesGuardados().then(p => { if (vivo) setPestanas(p); });
-    refrescarVaciles().then(p => { if (vivo && p) setPestanas(p); }).catch(() => {});
+    vacilesGuardados().then(v => { if (vivo) setVaciles(v); });
+    refrescarVaciles().then(v => { if (vivo && v) setVaciles(v); }).catch(() => {});
     return () => { vivo = false; };
   }, []);
   useEffect(() => {
     if (!abierto) return;
     let vivo = true;
-    refrescarVaciles().then(p => { if (vivo && p) setPestanas(p); }).catch(() => {});
+    refrescarVaciles().then(v => { if (vivo && v) setVaciles(v); }).catch(() => {});
     return () => { vivo = false; };
   }, [abierto]);
-  return pestanas;
+  return vaciles;
 }
 
 /** `{nombre}` es quien recibe el vacile. Al elegirlo se enseña con el nombre

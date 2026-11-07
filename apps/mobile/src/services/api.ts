@@ -723,10 +723,12 @@ class ApiService {
   /** Las pestañas de vaciles del panel que me tocan. undefined = no se ha
    *  podido preguntar (no es lo mismo que "no hay ninguna"): el selector tira
    *  entonces de lo último guardado en el móvil. */
-  async getVaciles(): Promise<PestanaVaciles[] | undefined> {
+  async getVaciles(): Promise<{ pestanas: PestanaVaciles[]; halloween: boolean } | undefined> {
     try {
-      const res = await this.request<{ pestanas?: PestanaVaciles[] }>('/app/vaciles');
-      return Array.isArray(res?.pestanas) ? res.pestanas : [];
+      const res = await this.request<{ pestanas?: PestanaVaciles[]; dibujadas?: { halloween?: boolean } }>('/app/vaciles');
+      // `dibujadas.halloween`: si a este corredor le sale la pestaña HALLOWEEN
+      // (dibujada en la app) — otro interruptor del panel. Sin él, no sale.
+      return { pestanas: Array.isArray(res?.pestanas) ? res.pestanas : [], halloween: res?.dibujadas?.halloween === true };
     } catch {
       return undefined;
     }

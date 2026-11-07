@@ -11,6 +11,8 @@
  *   node scripts/mock-api.mjs            # datos de sobra
  *   MODO=vacio node scripts/mock-api.mjs # todo a cero: cuenta recién hecha
  *   MODO=campana node scripts/mock-api.mjs # campaña de marca: logos en vez de calabazas
+ *   MODO=textos node scripts/mock-api.mjs # además de Tótems y Aura, dos pestañas de vaciles de TEXTO
+ *   HALLOWEEN=1 node scripts/mock-api.mjs # la pestaña HALLOWEEN encendida desde el panel (con MODO=vacio sale siempre)
  *
  * Cómo se usa, paso a paso, en el §3 del CLAUDE.md ("Probar la app contra
  * datos de mentira"). Al terminar imprime las rutas que la app pidió y este
@@ -27,6 +29,10 @@ const vacio = MODO === 'vacio';
 // Campaña de marca (1.11.13): Halloween apagado y logos que la app NO lleva
 // dentro. El dibujo viene de fuera, como vendrá el de verdad.
 const campana = MODO === 'campana';
+const textos = MODO === 'textos';
+// La pestaña HALLOWEEN del selector (dibujada en la app) se enciende desde el
+// panel: apagada, no sale. Con MODO=vacio se enseña, como la app de siempre.
+const halloween = vacio || process.env.HALLOWEEN === '1';
 const EVENTO = {
   tipo: 'tienda-prueba', nombre: 'el logo de Tienda Prueba',
   imagen: 'https://raw.githubusercontent.com/ibanto/corrr/main/docs/logo.png',
@@ -173,6 +179,7 @@ const RUTAS = {
   // Las pestañas de vaciles escritas desde el panel (§9-sexies). Con
   // MODO=vacio no hay ninguna: el selector enseña solo Clásicos y Halloween.
   'GET /app/vaciles': () => ({ pestanas: vacio ? [] : [
+    ...(textos ? [
     { id: 1, nombre: 'Navidad', mensajes: [
       { id: 1001, texto: 'Feliz Navidad, {nombre}. Tu calle ya es mía.' },
       { id: 1002, texto: 'Eh {nombre}, esa calle era mía. Voy a por ti.' },
@@ -180,12 +187,12 @@ const RUTAS = {
       { id: 1005, texto: 'Un mensaje largo de los de ciento cuarenta letras, para ver que el texto se encoge hasta caber en la tarjeta sin comerse ni una palabra.' }],
       respuestas: [{ id: 1004, texto: 'Jo, jo, jo, {nombre}. Esa calle ahora es mía.' }] },
     { id: 2, nombre: 'Picantes', mensajes: [{ id: 1006, texto: 'Corres como mi abuela.' }, { id: 1007, texto: '¿Eso era correr o pasear al perro?' }], respuestas: [] },
-    // Una pestaña de CARTELES (los tótems de Iban): los PNG se sirven desde la
-    // carpeta de la app por /vaciles/imagen/<id>.png, como hará el servidor.
-    { id: 3, nombre: 'Tótems', tipo: 'imagen',
-      mensajes: TOTEMS.map((t, i) => ({ id: 2001 + i * 2, texto: t.nombre, imagen: CARTEL(2001 + i * 2), miniatura: CARTEL(2001 + i * 2, true) })),
-      respuestas: TOTEMS.map((t, i) => ({ id: 2002 + i * 2, texto: t.nombre, imagen: CARTEL(2002 + i * 2), miniatura: CARTEL(2002 + i * 2, true) })) },
-  ] }),
+    ] : []),
+    // Las pestañas de CARTELES de Iban (Tótems y Aura): los PNG se sirven desde
+    // las carpetas de la app por /vaciles/imagen/<id>.png, como hace el servidor.
+    { id: 3, nombre: 'Tótems', tipo: 'imagen', mensajes: mensajesDe(COLECCIONES[0], false), respuestas: mensajesDe(COLECCIONES[0], true) },
+    { id: 4, nombre: 'Aura', tipo: 'imagen', mensajes: mensajesDe(COLECCIONES[1], false), respuestas: mensajesDe(COLECCIONES[1], true) },
+  ], dibujadas: { halloween } }),
   'GET /taunts': () => [],
   'GET /friends': () => vacio ? [] : [{ user_id: RIVAL, display_name: 'Lucía M.', city: 'Bilbao', total_points: 28480, total_zones: 87 }],
   'GET /friends/pending': () => vacio ? [] : [{ id: 'fr1', sender_id: RIVAL, sender_name: 'Lucía M.', created_at: haceDias(1) }],
@@ -241,18 +248,30 @@ const DINAMICAS = [
   [/^DELETE \//, () => ({ ok: true })],
 ];
 
-// Los carteles de la pestaña Tótems: id impar = provocación, par = respuesta.
-const CARPETA_TOTEMS = new URL('../assets/taunts/vaciles/', import.meta.url).pathname;
-const TOTEMS = ['lobo_naranja', 'ninja_rosa', 'sombra_azul', 'corona_amarilla', 'soldado_verde'].map(n => ({ nombre: n.replace(/_/g, ' '), archivo: n }));
+// Los carteles de las pestañas de carteles: id impar = provocación, par =
+// respuesta. Tótems (2001-2010) salen de assets/taunts/vaciles y Aura
+// (2011-2020) de assets/taunts/AURA, cada carpeta con su forma de nombrar.
+const CARPETA_TAUNTS = new URL('../assets/taunts/', import.meta.url).pathname;
+const COLECCIONES = [
+  { carpeta: 'vaciles/', primerId: 2001,
+    nombres: ['lobo_naranja', 'ninja_rosa', 'sombra_azul', 'corona_amarilla', 'soldado_verde'],
+    archivo: (n, provocacion, nombre) => `${n}_${provocacion ? '01_PROVOCACION' : '02_RESPUESTA'}_${nombre}.png` },
+  { carpeta: 'AURA/', primerId: 2011,
+    nombres: ['naranja_modo_facil', 'rosa_estrategia', 'azul_hablas_mucho', 'amarillo_rankings', 'verde_silencio'],
+    archivo: (n, provocacion, nombre) => `${n}_${provocacion ? 'PROVOCACION' : 'RESPUESTA'}_${nombre}.png` },
+];
 const CARTEL = (id, mini = false) => `http://localhost:8787/vaciles/imagen/${id}${mini ? '-v.jpg' : '.png'}?v=1`;
+const mensajesDe = (c, respuestas) => c.nombres.map((nombre, i) => {
+  const id = c.primerId + i * 2 + (respuestas ? 1 : 0);
+  return { id, texto: nombre.replace(/_/g, ' '), imagen: CARTEL(id), miniatura: CARTEL(id, true) };
+});
 DINAMICAS.unshift([/^GET \/vaciles\/imagen\/\d+(-v)?\.(png|jpg)$/, (clave) => {
   const id = Number(clave.match(/\/(\d+)/)[1]);
-  const t = TOTEMS[Math.floor((id - 2001) / 2)];
-  if (!t) return {};
-  const cual = id % 2 === 1 ? '01_PROVOCACION' : '02_RESPUESTA';
-  const n = String(Math.floor((id - 2001) / 2) + 1).padStart(2, '0');
+  const c = COLECCIONES.find(x => id >= x.primerId && id < x.primerId + x.nombres.length * 2);
+  if (!c) return {};
+  const i = Math.floor((id - c.primerId) / 2);
   // La miniatura es el mismo PNG: para mirar la app vale.
-  return { __archivo: `${CARPETA_TOTEMS}${n}_${cual}_${t.archivo}.png`, tipo: 'image/png' };
+  return { __archivo: `${CARPETA_TAUNTS}${c.carpeta}${c.archivo(String(i + 1).padStart(2, '0'), (id - c.primerId) % 2 === 0, c.nombres[i])}`, tipo: 'image/png' };
 }]);
 
 const vistas = new Set(); const perdidas = new Set();
