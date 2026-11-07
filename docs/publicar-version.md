@@ -17,7 +17,21 @@ el resto se hace a mano en Xcode, App Store Connect, Play Console y Railway.
 
 - Android: `cd apps/mobile/android && ./gradlew bundleRelease` y copiar a
   `apps/mobile/builds/corrr-vX.Y.Z-vcN.aab`.
-- iPhone: archivar en Xcode (queda en Organizer como `CORRR X.Y.Z (N)`).
+- iPhone: archivar en Xcode (queda en Organizer como `CORRR X.Y.Z (N)`). O por terminal, que
+  también lo deja en Organizer y sube a App Store Connect con la cuenta que ya tiene Xcode:
+
+```bash
+cd apps/mobile/ios
+xcodebuild -workspace CORRR.xcworkspace -scheme CORRR -configuration Release \
+  -destination 'generic/platform=iOS' -allowProvisioningUpdates archive \
+  -archivePath ~/Library/Developer/Xcode/Archives/AAAA-MM-DD/CORRR-X.Y.Z-buildN.xcarchive
+xcodebuild -exportArchive -archivePath <el mismo .xcarchive> \
+  -exportOptionsPlist ../../../docs/ExportOptions-appstore.plist \
+  -exportPath /tmp/export-ios -allowProvisioningUpdates
+```
+
+  (Hecho así el 7-nov-2026 con la 1.11.15. Las advertencias de «Upload Symbols Failed» por los
+  dSYM de React o Hermes no impiden la subida.)
 - Textos de novedades para las dos tiendas.
 
 ## 2. Probar

@@ -38,7 +38,24 @@ AUTO-PAUSA y «Sin señal GPS» con vibración). Las dos, después de Halloween.
 1.11.10 **más de doce horas** después de publicar. No sirve para decidir cuándo
 anunciar; la ficha web sí (ahí sale "Versión 1.11.11" como actual con su fecha).
 
-**1.11.14 (Android vc91, iPhone build 37) — MONTADA el 2-nov. iPhone en TestFlight y probado en la calle el 5-nov: OK. Falta probar el Android.**
+**1.11.15 (Android vc92, iPhone build 38) — MONTADA el 7-nov. iPhone SUBIDO a App Store Connect (TestFlight) el 7-nov ~13:27; falta que Iban suba el AAB a la prueba interna de Play Console y haga la prueba en la calle.**
+Sustituye a la 1.11.14 (vc91 / build 37), que **no se publica** (el Android nunca llegó a la prueba interna).
+Commit `f78d37f` (versión) y `ddfcde7` (panel). AAB en `apps/mobile/builds/corrr-v1.11.15-vc92.aab`
+(95 MB; versión 1.11.15, firma SHA-256 de siempre, servidor de producción), iPhone archivado como
+`CORRR-1.11.15-build38` (Xcode → Organizer). Lleva, además de lo de la 1.11.14: las **pestañas de vaciles
+desde el panel** con la **portada de colecciones** (§9-sexies), el **interruptor de la pestaña Halloween**,
+el **mapa que pinta el último territorio guardado al abrir** (§0, «El mapa, rápido») y el logo de campaña que
+renace a los 5 min. Notas de tienda y pasos en `store/notas-1.11.15.md`. Se tocó `MapScreen.tsx`:
+**hace falta la prueba en la calle** (`docs/prueba-gps.md`) en los dos móviles.
+**Cómo se subió el iPhone sin tocar Xcode** (Iban pidió «las subes tú, yo solo verifico»): `xcodebuild archive`
+con `-allowProvisioningUpdates` y luego `xcodebuild -exportArchive` con `docs/ExportOptions-appstore.plist`
+(`method app-store-connect`, `destination upload`): usa la cuenta de Apple que ya tiene Xcode, sin claves
+nuevas. **El Android NO se puede subir desde aquí**: la herramienta del navegador solo sube archivos de
+menos de 10 MB y no hay clave de la API de Play; lo arrastra Iban a Play Console (Pruebas internas →
+Crear versión). Las tiendas no se tocan más allá de la prueba: producción y anuncio, con su OK.
+**Al publicarla en las dos tiendas**: encender Tótems, Aura (y la pestaña Halloween si se quiere) desde el panel.
+
+**1.11.14 (Android vc91, iPhone build 37) — MONTADA el 2-nov, SUSTITUIDA por la 1.11.15 (no se publica). iPhone en TestFlight y probado en la calle el 5-nov: OK.**
 Sustituye a la 1.11.13 (vc89/vc90, builds 35/36), que solo llegó a prueba: esa no se
 publica. AAB en `apps/mobile/builds/corrr-v1.11.14-vc91.aab`, iPhone archivado como
 `CORRR-1.11.14-build37` (Xcode → Organizer: «CORRR 1.11.14 (37)»). Lleva el ranking con
@@ -136,6 +153,7 @@ APAGADO el mapa sale igualmente pintado con el territorio guardado, sin pantalla
    mientras nadie lo toque: solo manda en la 1.11.15 o más nuevas (las anteriores la enseñan
    siempre). Pedido por Iban: «ahora no tiene sentido Halloween, y pronto vendrán vaciles
    navideños» (esos irán como una pestaña de carteles más, sin tocar la app).
+   **Y en el panel cada pestaña es ya un desplegable con su botón Apagar/Encender** (§9-sexies).
 
 #### Lo que se hizo la noche del 22 (histórico)
 
@@ -1080,6 +1098,20 @@ es de uno de dos tipos:
   memoria del proceso como los logos de campaña). Cada uno lleva de texto el nombre del
   archivo («lobo naranja»): si a un móvil no le llega el dibujo, enseña la tarjeta con ese
   nombre, nunca un hueco.
+
+**Cómo se ve en el panel** (7-nov-2026, pedido por Iban): cada pestaña es un **desplegable**
+(`<details class="vpest">`). Cerrada enseña su nombre, cuántos mensajes o parejas tiene, su
+estado y **el botón Apagar / Encender de la cabecera**; abierta, el formulario de siempre
+(un solo `<form id="fv">` que se MUEVE dentro de la pestaña que se abre; al repintar la lista
+se aparca antes en `#v_guardado`, o se iría con ella). Solo hay una abierta a la vez. El
+botón enciende **para todo el mundo** (pide confirmación) o apaga, y llama a
+`POST /admin/vaciles/modo {id, modo, corredores}`, que cambia SOLO el interruptor (no
+reenvía textos ni toca carteles); «En prueba» se elige dentro. Si se pulsa con el formulario
+abierto, el desplegable del interruptor se sincroniza. Clásicos sale como fila fija, sin
+botón. Halloween es otro desplegable con su botón y, dentro, el selector de tres estados.
+Probado en el navegador con un servidor de mentira (abrir, cerrar, cambiar interruptor,
+guardar y que la pestaña siga abierta con su aviso, «Nueva pestaña»); `test:panel` exige los
+ids `vh_inter` y `v_msg_lista`, `test:vaciles` prueba `cambiarModoPestanaVaciles`.
 
 **Las dibujadas también se encienden y apagan desde esa caja** (7-nov-2026): Clásicos va
 siempre; **Halloween** tiene su interruptor de tres estados (ajuste `pestana_halloween` en
