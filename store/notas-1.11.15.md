@@ -1,7 +1,8 @@
 # Notas de la versión 1.11.15 (Android vc92 · iPhone build 38)
 
-Sustituye a la 1.11.14 (vc91 y build 37), que **no se publicó**: el iPhone se probó en
-TestFlight y el Android nunca llegó a la prueba interna. Sale en **las dos tiendas**.
+En Android sustituye a la 1.11.14 (vc91). En iPhone la 1.11.14 (build 37) **ya está aprobada por Apple y
+pendiente de publicar** (7-nov): hasta que se publique, App Store Connect no deja crear la versión 1.11.15.
+Orden en iPhone: publicar la 1.11.14 → «+» 1.11.15 → build 38 → enviar a revisión. Sale en **las dos tiendas**.
 
 Las de Apple y las de Google **no se sincronizan solas**: hay que pegarlas en
 los dos sitios, y si cambias una, acordarse de la otra.

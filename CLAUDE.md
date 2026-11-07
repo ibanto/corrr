@@ -39,7 +39,12 @@ AUTO-PAUSA y «Sin señal GPS» con vibración). Las dos, después de Halloween.
 anunciar; la ficha web sí (ahí sale "Versión 1.11.11" como actual con su fecha).
 
 **1.11.15 (Android vc92, iPhone build 38) — MONTADA el 7-nov. iPhone SUBIDO a App Store Connect (TestFlight) el 7-nov ~13:27; falta que Iban suba el AAB a la prueba interna de Play Console y haga la prueba en la calle.**
-Sustituye a la 1.11.14 (vc91 / build 37), que **no se publica** (el Android nunca llegó a la prueba interna).
+**La 1.11.14 del iPhone (build 37) YA la aprobó Apple y espera a que Iban pulse «Publicar esta versión»** (visto en
+App Store Connect el 7-nov: «1.11.14 Pendiente de publicación»; antes yo la di por no publicada, error mío).
+**Mientras esté así, App Store Connect NO deja crear la versión 1.11.15** (solo admite una versión nueva a la vez).
+Orden: publicar la 1.11.14 → «+» 1.11.15 → elegir la build 38 → enviar a revisión, **después de la prueba en la calle**.
+Si se publica la 1.11.14, no hace falta anunciarla (`LATEST_IOS_*`) si la 1.11.15 va a salir en pocos días.
+En Android la 1.11.15 (vc92) sustituye a la vc91.
 Commit `f78d37f` (versión) y `ddfcde7` (panel). AAB en `apps/mobile/builds/corrr-v1.11.15-vc92.aab`
 (95 MB; versión 1.11.15, firma SHA-256 de siempre, servidor de producción), iPhone archivado como
 `CORRR-1.11.15-build38` (Xcode → Organizer). Lleva, además de lo de la 1.11.14: las **pestañas de vaciles
@@ -55,7 +60,7 @@ menos de 10 MB y no hay clave de la API de Play; lo arrastra Iban a Play Console
 Crear versión). Las tiendas no se tocan más allá de la prueba: producción y anuncio, con su OK.
 **Al publicarla en las dos tiendas**: encender Tótems, Aura (y la pestaña Halloween si se quiere) desde el panel.
 
-**1.11.14 (Android vc91, iPhone build 37) — MONTADA el 2-nov, SUSTITUIDA por la 1.11.15 (no se publica). iPhone en TestFlight y probado en la calle el 5-nov: OK.**
+**1.11.14 (Android vc91, iPhone build 37) — MONTADA el 2-nov. iPhone: probado en la calle el 5-nov (OK), enviado a Apple y APROBADO, pendiente de publicar (7-nov). Android: la vc92 de la 1.11.15 la sustituye.**
 Sustituye a la 1.11.13 (vc89/vc90, builds 35/36), que solo llegó a prueba: esa no se
 publica. AAB en `apps/mobile/builds/corrr-v1.11.14-vc91.aab`, iPhone archivado como
 `CORRR-1.11.14-build37` (Xcode → Organizer: «CORRR 1.11.14 (37)»). Lleva el ranking con
