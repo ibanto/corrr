@@ -88,7 +88,9 @@ const necesarios = ['fa', 'lista_avisos', 'bstrava', 'strava_msg', 'fb', 'b_quie
   // de subir vaciles nuevos sin sacar versión.
   'v_guardar',
   // El interruptor de la pestaña HALLOWEEN (dibujada en la app) desde esa misma caja.
-  'vh_guardar'];
+  'vh_guardar',
+  // Y el botón de apagar y encender de la cabecera de cada pestaña desplegable.
+  'vh_inter', 'v_msg_lista'];
 for (const id of necesarios) {
   if (!html.includes(`id="${id}"`)) { console.error(`✘ Falta en el panel el elemento "${id}"`); fallos++; }
   if (!scripts.some(s => s.includes(`'${id}'`))) { console.error(`✘ Nadie usa "${id}" en el código del panel`); fallos++; }

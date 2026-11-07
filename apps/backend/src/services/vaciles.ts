@@ -222,6 +222,18 @@ export async function guardarPestanaVaciles(db: Db, entrada: {
   return guardada;
 }
 
+/** Cambia SOLO el interruptor de una pestaña (apagada, en prueba o encendida),
+ *  sin tocar nombre, orden ni mensajes: es el botón de su cabecera en el panel.
+ *  Devuelve el modo guardado ('no', 'si' o 'prueba:A,B'). */
+export async function cambiarModoPestanaVaciles(db: Db, id: number, modo: string): Promise<string> {
+  const { rows } = await db.query(
+    'UPDATE vacile_pestanas SET modo = $2 WHERE id = $1 AND NOT borrada RETURNING modo',
+    [id, modo],
+  );
+  if (!rows[0]) throw new Error('Esa pestaña ya no existe');
+  return String(rows[0].modo);
+}
+
 /** Comprueba que es una imagen y la deja en PNG del tamaño de los carteles
  *  (592×1280, encajada sobre negro si no viene exacta), con su miniatura JPG. */
 async function prepararCartel(entrada: Buffer): Promise<{ png: Buffer; jpg: Buffer; version: string }> {

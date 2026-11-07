@@ -19,7 +19,7 @@ import { dirname, join } from 'node:path';
 
 const raiz = dirname(dirname(fileURLToPath(import.meta.url)));
 const {
-  prepararVaciles, guardarPestanaVaciles, borrarPestanaVaciles, pestanasVacilesAdmin,
+  prepararVaciles, guardarPestanaVaciles, cambiarModoPestanaVaciles, borrarPestanaVaciles, pestanasVacilesAdmin,
   pestanasVacilesPara, lineasDeVaciles, PRIMER_ID_VACILE,
   guardarParejaVacile, quitarParejaVacile, imagenVacile, parteDeCartel,
   pestanasDibujadasPara, interruptorParaPanel,
@@ -218,6 +218,24 @@ const interruptor = interruptorParaPanel('prueba:Ibanto,KarolK');
 comprueba('el interruptor se pinta en el panel como los de las demás',
   interruptor.modo === 'prueba' && interruptor.corredores === 'Ibanto,KarolK'
   && interruptorParaPanel('si').modo === 'todos' && interruptorParaPanel(null).modo === 'apagado');
+
+// El botón de apagar y encender de la cabecera de cada pestaña: solo cambia el interruptor.
+const antesTexto = (await pestanasVacilesAdmin(db)).find(x => x.id === prueba.id);
+comprueba('el botón enciende una pestaña para todos', (await cambiarModoPestanaVaciles(db, prueba.id, 'si')) === 'si');
+const trasCambiar = (await pestanasVacilesAdmin(db)).find(x => x.id === prueba.id);
+comprueba('y no toca ni el nombre, ni el orden, ni los mensajes',
+  trasCambiar.modo === 'si' && trasCambiar.nombre === antesTexto.nombre && trasCambiar.orden === antesTexto.orden
+  && JSON.stringify(trasCambiar.mensajes.map(m => m.texto)) === JSON.stringify(antesTexto.mensajes.map(m => m.texto)));
+comprueba('apagar la deja apagada', (await cambiarModoPestanaVaciles(db, prueba.id, 'no')) === 'no'
+  && !(await pestanasVacilesPara(db, 'Ibanto', ajusteLeToca)).some(x => x.id === prueba.id));
+comprueba('y se puede dejar en prueba', (await cambiarModoPestanaVaciles(db, prueba.id, 'prueba:Ibanto')) === 'prueba:Ibanto');
+const antesCarteles = (await pestanasVacilesAdmin(db)).find(x => x.id === totems.id);
+await cambiarModoPestanaVaciles(db, totems.id, 'no');
+comprueba('en una pestaña de carteles tampoco toca los carteles',
+  (await pestanasVacilesAdmin(db)).find(x => x.id === totems.id).mensajes.length === antesCarteles.mensajes.length);
+saltó = false;
+try { await cambiarModoPestanaVaciles(db, 999999, 'si'); } catch { saltó = true; }
+comprueba('una pestaña que no existe da error', saltó);
 
 console.log(fallos ? `\n${fallos} fallo(s) en los vaciles.` : '\nVaciles en orden.');
 process.exit(fallos ? 1 : 0);

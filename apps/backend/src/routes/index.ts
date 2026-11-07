@@ -17,7 +17,7 @@ import {
 } from '../services/tiras.js';
 import { sembrar, sembrarFantasmas, recoger, Objeto, LOGO_ES_SUYO } from '../services/objetos.js';
 import {
-  prepararVaciles, guardarPestanaVaciles, borrarPestanaVaciles, pestanasVacilesAdmin,
+  prepararVaciles, guardarPestanaVaciles, cambiarModoPestanaVaciles, borrarPestanaVaciles, pestanasVacilesAdmin,
   pestanasVacilesPara, lineasDeVaciles, guardarParejaVacile, quitarParejaVacile,
   AJUSTE_PESTANA_HALLOWEEN, pestanasDibujadasPara, interruptorParaPanel,
   imagenVacile, direccionesDeCartel,
@@ -1987,6 +1987,23 @@ app.get('/admin/panel', {
   /* Lo que borra, en rojo: que se vea antes de pulsarlo. */
   .aviso .mini[data-borrar]{color:var(--rojo);border-color:rgba(244,67,54,.4);}
   #c_lista summary{cursor:pointer;display:flex;align-items:center;gap:12px;}
+  /* Vaciles: cada pestaña es un desplegable. Fuera se ve su nombre, su estado y el
+     botón de encender o apagar; dentro, todo lo demás. */
+  .vpest{background:var(--tarjeta-alt);border:1px solid var(--borde);border-radius:12px;margin-bottom:10px;}
+  .vcab{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:12px 14px;}
+  summary.vcab{cursor:pointer;list-style:none;}
+  summary.vcab::-webkit-details-marker{display:none;}
+  summary.vcab::before{content:'▸';color:var(--apagado);width:12px;}
+  details[open] > summary.vcab::before{content:'▾';}
+  .vcab .vnom{flex:1 1 180px;min-width:0;}
+  .vcab .c_cifras{color:var(--apagado);font-size:13px;font-weight:400;}
+  .vcab .vestado{font-size:12px;font-weight:700;white-space:nowrap;}
+  .vdentro,.vpest > form{padding:0 14px 14px;}
+  .inter{background:transparent;color:var(--texto);border:1px solid var(--borde);border-radius:10px;
+    padding:8px 14px;font:inherit;font-size:13px;font-weight:700;cursor:pointer;min-width:92px;}
+  .inter.enciende{background:var(--naranja);border-color:var(--naranja);color:#111;}
+  .inter.apaga{color:var(--rojo);border-color:rgba(244,67,54,.4);}
+  .inter:disabled{opacity:.45;cursor:not-allowed;}
   #c_lista summary img{width:44px;height:44px;object-fit:contain;background:#333;border-radius:8px;}
   #c_lista .c_cifras{color:var(--apagado);font-size:13px;font-weight:400;}
   #c_lista .c_estado{margin-left:auto;font-size:12px;font-weight:700;color:var(--apagado);white-space:nowrap;}
@@ -2171,29 +2188,39 @@ Sale UNA vez por persona; para repetirlo, se crea otro. Solo lo ven las apps 1.1
 <div class="caja">
 <h2>Vaciles</h2>
 <p class="nota">Los vaciles son los mensajes que un corredor manda a quien le ha robado, y la respuesta del ladr&oacute;n.
-La app lleva dentro los <b>Cl&aacute;sicos</b> (siempre) y los de <b>Halloween</b>, dibujados; la pesta&ntilde;a de Halloween se enciende
-y apaga aqu&iacute; abajo, como las dem&aacute;s. <b>Las pesta&ntilde;as de aqu&iacute; salen
+La app lleva dentro los <b>Cl&aacute;sicos</b> (siempre) y los de <b>Halloween</b>, dibujados; cada pesta&ntilde;a de aqu&iacute; abajo es un desplegable: el bot&oacute;n de su cabecera la <b>enciende o apaga</b> para todo el mundo y, dentro, est&aacute; el resto (probarla solo t&uacute;, textos o carteles, orden). <b>Las pesta&ntilde;as de aqu&iacute; salen
 en el selector sin sacar versi&oacute;n</b> (en las apps 1.11.15 o m&aacute;s nuevas). Una pesta&ntilde;a es <b>de textos</b> (frases, una por
 l&iacute;nea, que la app pinta en una tarjeta; <b>{nombre}</b> se cambia por el nombre de quien lo recibe) o <b>de carteles</b> (parejas de PNG
 de 592&times;1280 como los cl&aacute;sicos: la provocaci&oacute;n y la respuesta del ladr&oacute;n). Gu&aacute;rdala en prueba para verla t&uacute; en la app
 antes de encenderla. Los cambios se ven al abrir el selector; lo &uacute;ltimo recibido se queda guardado en el m&oacute;vil por si no hay red.</p>
-<div id="v_dibujadas" style="margin-bottom:6px">
-  <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:8px 0;border-bottom:1px solid #222">
-    <b>Cl&aacute;sicos</b><span style="color:#4caf50">siempre encendida</span><span style="color:#888">dibujada en la app; se gana robando</span></div>
-  <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:8px 0;border-bottom:1px solid #222">
-    <b>Halloween</b><span id="vh_estado" style="color:#888">cargando&hellip;</span><span style="color:#888">dibujada en la app; sus mensajes se abren con calabazas</span>
-    <select id="vh_modo" style="width:auto">
-      <option value="apagado">Apagada &mdash; la pesta&ntilde;a no sale</option>
-      <option value="prueba">En prueba &mdash; solo la ven estos</option>
-      <option value="todos">Encendida para todo el mundo</option>
-    </select>
-    <input id="vh_probadores" placeholder="Ibanto" style="display:none;width:180px">
-    <button class="mini" id="vh_guardar" type="button">Guardar</button></div>
-  <div id="vh_msg" class="resultado" style="display:none"></div>
+<div id="v_msg_lista" class="resultado" style="display:none;margin-bottom:10px"></div>
+<div id="v_dibujadas">
+  <div class="vpest"><div class="vcab" style="padding-left:38px">
+    <span class="vnom"><b>Cl&aacute;sicos</b><br><span class="c_cifras">dibujada en la app; se gana robando</span></span>
+    <span class="vestado" style="color:#4caf50">SIEMPRE ENCENDIDA</span></div></div>
+  <details class="vpest" id="vh_det">
+    <summary class="vcab">
+      <span class="vnom"><b>Halloween</b><br><span class="c_cifras">dibujada en la app; sus mensajes se abren con calabazas</span></span>
+      <span class="vestado" id="vh_estado" style="color:#888">cargando&hellip;</span>
+      <button class="inter" id="vh_inter" type="button" disabled>&hellip;</button>
+    </summary>
+    <div class="vdentro">
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <select id="vh_modo" style="width:auto">
+          <option value="apagado">Apagada &mdash; la pesta&ntilde;a no sale</option>
+          <option value="prueba">En prueba &mdash; solo la ven estos</option>
+          <option value="todos">Encendida para todo el mundo</option>
+        </select>
+        <input id="vh_probadores" placeholder="Ibanto" style="display:none;width:180px">
+        <button class="mini" id="vh_guardar" type="button">Guardar</button></div>
+      <div id="vh_msg" class="resultado" style="display:none"></div>
+    </div>
+  </details>
 </div>
 <div id="v_lista"><p class="nota">Cargando&hellip;</p></div>
 <button class="btn" id="v_nueva" type="button">Nueva pesta&ntilde;a</button>
-<form class="form" id="fv" style="display:none;margin-top:14px">
+<div id="v_guardado" style="display:none">
+<form class="form" id="fv" style="display:none">
   <input id="v_id" type="hidden">
   <label class="campo">Nombre de la pesta&ntilde;a (corto; en la app sale en may&uacute;sculas)
     <input id="v_nombre" placeholder="Navidad" maxlength="18"></label>
@@ -2230,6 +2257,7 @@ antes de encenderla. Los cambios se ven al abrir el selector; lo &uacute;ltimo r
   </div>
   <div id="v_msg" class="resultado" style="display:none"></div>
 </form>
+</div>
 </div>
 <details class="caja" id="hist_halloween">
 <summary><b>Hist&oacute;rico: Halloween 2026</b> &mdash; acab&oacute; el 1 de noviembre. Aqu&iacute; dentro siguen el interruptor (no se apaga hasta que la 1.11.13 est&eacute; en las dos tiendas), el marcador y la siembra de calabazas.</summary>
@@ -2973,19 +3001,81 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
     if (modo === 'no') return 'APAGADA';
     return 'EN PRUEBA: ' + modo.slice('prueba:'.length);
   }
-  function pintarVaciles() {
+  function msgLista(t, ok) {
+    var m = document.getElementById('v_msg_lista');
+    m.style.display = 'block';
+    m.style.color = ok ? '#4caf50' : '#f44336';
+    m.style.borderLeftColor = ok ? '#4caf50' : '#f44336';
+    m.textContent = t;
+  }
+  function botonInterruptor(encendida, atributo) {
+    return '<button class="inter ' + (encendida ? 'apaga' : 'enciende') + '" type="button" ' + atributo + '>'
+      + (encendida ? 'Apagar' : 'Encender') + '</button>';
+  }
+  // Lo que se ve con la pestaña cerrada: nombre, cuántos mensajes, estado y el botón.
+  function cabeceraVacile(p) {
+    var cuenta = p.tipo === 'imagen'
+      ? p.mensajes.length + (p.mensajes.length === 1 ? ' pareja de carteles' : ' parejas de carteles')
+      : p.mensajes.length + (p.mensajes.length === 1 ? ' mensaje' : ' mensajes')
+        + (p.respuestas.length ? ' y ' + p.respuestas.length + (p.respuestas.length === 1 ? ' respuesta' : ' respuestas') : '');
+    return '<span class="vnom"><b>' + esc(p.nombre) + '</b><br><span class="c_cifras">' + cuenta + '</span></span>'
+      + '<span class="vestado" style="color:' + (p.modo === 'si' ? '#4caf50' : (p.modo === 'no' ? '#888' : '#f59e0b')) + '">'
+      + esc(estadoVacile(p.modo)) + '</span>'
+      + botonInterruptor(p.modo === 'si', 'data-vacile-inter="' + p.id + '"');
+  }
+  // Un solo formulario para todas: se mueve dentro de la pestaña que se abre.
+  function abrirDentro(d) {
+    [].forEach.call(document.querySelectorAll('#v_lista details'), function (o) { if (o !== d) o.open = false; });
+    d.appendChild(document.getElementById('fv'));
+    abrirVacile(vacilesPanel.filter(function (x) { return String(x.id) === d.dataset.id; })[0] || null);
+  }
+  function filaVacile(p) {
+    var d = document.createElement('details');
+    d.className = 'vpest';
+    d.dataset.id = p ? String(p.id) : '';
+    d.innerHTML = '<summary class="vcab">' + (p ? cabeceraVacile(p) : '<span class="vnom"><b>Nueva pestaña</b></span>') + '</summary>';
+    // Al repintar tras guardar, la pestaña se abre por código y escribe su
+    // aviso: sin esta marca, el toggle que llega después volvería a abrirla y
+    // borraría el «✓ Guardada» recién puesto.
+    d.addEventListener('toggle', function () {
+      if (!d.open) { delete d.dataset.yaAbierto; return; }
+      if (!d.dataset.yaAbierto) abrirDentro(d);
+    });
+    return d;
+  }
+  function pintarVaciles(abrir) {
     var lista = document.getElementById('v_lista');
+    // El formulario se aparca antes de vaciar la lista, o se iría con ella.
+    document.getElementById('v_guardado').appendChild(document.getElementById('fv'));
+    lista.innerHTML = '';
     if (!vacilesPanel.length) { lista.innerHTML = '<p class="nota">Todavía no hay ninguna pestaña. Pulsa «Nueva pestaña».</p>'; return; }
-    lista.innerHTML = vacilesPanel.map(function (p) {
-      var cuenta = p.tipo === 'imagen'
-        ? p.mensajes.length + (p.mensajes.length === 1 ? ' pareja de carteles' : ' parejas de carteles')
-        : p.mensajes.length + (p.mensajes.length === 1 ? ' mensaje' : ' mensajes')
-          + (p.respuestas.length ? ' y ' + p.respuestas.length + (p.respuestas.length === 1 ? ' respuesta' : ' respuestas') : '');
-      return '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:8px 0;border-bottom:1px solid #222">'
-        + '<b>' + esc(p.nombre) + '</b><span style="color:' + (p.modo === 'si' ? '#4caf50' : (p.modo === 'no' ? '#888' : '#f59e0b')) + '">'
-        + esc(estadoVacile(p.modo)) + '</span><span style="color:#888">' + cuenta + '</span>'
-        + '<button class="mini" type="button" data-vacile="' + p.id + '">Abrir</button></div>';
-    }).join('');
+    vacilesPanel.forEach(function (p) {
+      var d = filaVacile(p);
+      lista.appendChild(d);
+      if (abrir !== undefined && abrir !== null && String(p.id) === String(abrir)) {
+        d.dataset.yaAbierto = '1';
+        abrirDentro(d);
+        d.open = true;
+      }
+    });
+  }
+  // El botón de la cabecera: enciende para todo el mundo o apaga. «En prueba» se
+  // elige dentro, en el desplegable.
+  function cambiarInterruptor(p, boton) {
+    var quiere = p.modo === 'si' ? 'apagado' : 'todos';
+    if (quiere === 'todos' && !confirm('¿Encender la pestaña «' + p.nombre + '» para TODO el mundo?')) return;
+    boton.disabled = true;
+    api('/admin/vaciles/modo', { method: 'POST', body: JSON.stringify({ id: p.id, modo: quiere, corredores: '' }) }).then(function (r) {
+      p.modo = r.modo;
+      var d = document.querySelector('#v_lista details[data-id="' + p.id + '"]');
+      if (d) {
+        d.querySelector('summary').innerHTML = cabeceraVacile(p);
+        if (d.contains(document.getElementById('fv')) && val('v_id') === String(p.id)) ponerModoVacile(p);
+      }
+      msgLista(quiere === 'todos'
+        ? '✓ «' + p.nombre + '» encendida para todo el mundo: sale al abrir el selector.'
+        : '✓ «' + p.nombre + '» apagada: ya no sale en el selector.', true);
+    }).catch(function (e) { boton.disabled = false; msgLista('✗ ' + e.message, false); });
   }
   var SALTO = String.fromCharCode(10);
   function pintarParejas(p) {
@@ -3003,8 +3093,14 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
         + '<button class="mini" type="button" data-pareja="' + esc(m.texto) + '">Quitar</button></div>';
     }).join('');
   }
-  function abrirVacile(p) {
+  // El interruptor del formulario según la pestaña (también lo usa el botón de la cabecera).
+  function ponerModoVacile(p) {
     var modo = !p || p.modo === 'no' ? 'apagado' : (p.modo === 'si' ? 'todos' : 'prueba');
+    document.getElementById('v_modo').value = modo;
+    document.getElementById('v_probadores').value = p && p.modo.indexOf('prueba:') === 0 ? p.modo.slice('prueba:'.length) : '';
+    document.getElementById('v_probadores_campo').style.display = modo === 'prueba' ? '' : 'none';
+  }
+  function abrirVacile(p) {
     var tipo = p && p.tipo === 'imagen' ? 'imagen' : 'texto';
     // display y no el atributo hidden: la clase .form (display:grid) le gana
     // al hidden del navegador y el formulario se veía siempre.
@@ -3022,27 +3118,31 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
     document.getElementById('v_archivos').value = '';
     pintarParejas(p);
     document.getElementById('v_orden').value = p ? p.orden : (vacilesPanel.length ? vacilesPanel[vacilesPanel.length - 1].orden + 1 : 0);
-    document.getElementById('v_modo').value = modo;
-    document.getElementById('v_probadores').value = p && p.modo.indexOf('prueba:') === 0 ? p.modo.slice('prueba:'.length) : '';
-    document.getElementById('v_probadores_campo').style.display = modo === 'prueba' ? '' : 'none';
+    ponerModoVacile(p);
     document.getElementById('v_eliminar').style.display = p ? '' : 'none';
     document.getElementById('v_msg').style.display = 'none';
   }
-  function cargarVaciles() {
+  function cargarVaciles(abrir) {
     return api('/admin/vaciles').then(function (r) {
       vacilesPanel = r.pestanas || [];
-      pintarVaciles();
+      pintarVaciles(abrir);
       pintarDibujada((r.dibujadas || {}).halloween);
     });
   }
   // La pestaña de Halloween, dibujada dentro de la app: su interruptor va aquí
   // con las demás (apps 1.11.15 o más nuevas). Clásicos no se apaga.
+  var vhModo = 'apagado';
   function pintarDibujada(h) {
     h = h || { modo: 'apagado', corredores: '' };
+    vhModo = h.modo;
     var valor = h.modo === 'todos' ? 'si' : (h.modo === 'prueba' ? 'prueba:' + (h.corredores || '') : 'no');
     var e = document.getElementById('vh_estado');
     e.textContent = estadoVacile(valor);
     e.style.color = h.modo === 'todos' ? '#4caf50' : (h.modo === 'apagado' ? '#888' : '#f59e0b');
+    var b = document.getElementById('vh_inter');
+    b.disabled = false;
+    b.textContent = h.modo === 'todos' ? 'Apagar' : 'Encender';
+    b.className = 'inter ' + (h.modo === 'todos' ? 'apaga' : 'enciende');
     document.getElementById('vh_modo').value = h.modo;
     document.getElementById('vh_probadores').value = h.corredores || '';
     document.getElementById('vh_probadores').style.display = h.modo === 'prueba' ? '' : 'none';
@@ -3050,35 +3150,62 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
   document.getElementById('vh_modo').addEventListener('change', function (ev) {
     document.getElementById('vh_probadores').style.display = ev.target.value === 'prueba' ? '' : 'none';
   });
+  // Lo usan el botón de la cabecera (el aviso sale arriba) y el Guardar de dentro (sale dentro).
+  function guardarDibujada(modo, corredores, decir) {
+    decir('Un momento…', null);
+    return api('/admin/vaciles/dibujada', { method: 'POST', body: JSON.stringify({
+      clave: 'halloween', modo: modo, corredores: corredores,
+    }) }).then(function (r) {
+      pintarDibujada(r);
+      decir(r.modo === 'todos'
+        ? '✓ Halloween encendida para todos: sale en el selector (apps 1.11.15 o más nuevas).'
+        : (r.modo === 'prueba' ? '✓ Solo la ven ' + r.corredores + '.' : '✓ Apagada: la pestaña Halloween no sale en el selector.'), true);
+    }).catch(function (e) {
+      document.getElementById('vh_inter').disabled = false;
+      decir('✗ ' + e.message, false);
+    });
+  }
   document.getElementById('vh_guardar').addEventListener('click', function () {
     var modo = document.getElementById('vh_modo').value;
     if (modo === 'todos' && !confirm('¿Encender la pestaña HALLOWEEN para TODO el mundo?')) return;
     var m = document.getElementById('vh_msg');
-    m.style.display = 'block'; m.style.color = '#bbb'; m.style.borderLeftColor = '#555';
-    m.textContent = 'Un momento…';
-    api('/admin/vaciles/dibujada', { method: 'POST', body: JSON.stringify({
-      clave: 'halloween', modo: modo, corredores: val('vh_probadores'),
-    }) }).then(function (r) {
-      pintarDibujada(r);
-      m.style.color = '#4caf50'; m.style.borderLeftColor = '#4caf50';
-      m.textContent = r.modo === 'todos'
-        ? '✓ Halloween encendida para todos: sale en el selector (apps 1.11.15 o más nuevas).'
-        : (r.modo === 'prueba' ? '✓ Solo la ven ' + r.corredores + '.' : '✓ Apagada: la pestaña Halloween no sale en el selector.');
-    }).catch(function (e) {
-      m.style.color = '#f44336'; m.style.borderLeftColor = '#f44336';
-      m.textContent = '✗ ' + e.message;
+    guardarDibujada(modo, val('vh_probadores'), function (t, ok) {
+      m.style.display = 'block';
+      m.style.color = ok === null ? '#bbb' : (ok ? '#4caf50' : '#f44336');
+      m.style.borderLeftColor = ok === null ? '#555' : (ok ? '#4caf50' : '#f44336');
+      m.textContent = t;
     });
+  });
+  document.getElementById('vh_inter').addEventListener('click', function (ev) {
+    ev.preventDefault();
+    ev.stopPropagation();
+    var quiere = vhModo === 'todos' ? 'apagado' : 'todos';
+    if (quiere === 'todos' && !confirm('¿Encender la pestaña HALLOWEEN para TODO el mundo?')) return;
+    ev.currentTarget.disabled = true;
+    guardarDibujada(quiere, '', function (t, ok) { if (ok === null) msgLista(t, true); else msgLista(t, ok); });
   });
   cargarVaciles().catch(function (e) {
     document.getElementById('v_lista').innerHTML = '<p class="nota">No se han podido cargar: ' + esc(e.message) + '</p>';
   });
   document.getElementById('v_lista').addEventListener('click', function (ev) {
-    var b = ev.target.closest ? ev.target.closest('button[data-vacile]') : null;
+    var b = ev.target.closest ? ev.target.closest('button[data-vacile-inter]') : null;
     if (!b) return;
-    var p = vacilesPanel.filter(function (x) { return String(x.id) === b.getAttribute('data-vacile'); })[0];
-    if (p) { abrirVacile(p); document.getElementById('fv').scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+    // Que no abra ni cierre el desplegable: es solo el botón.
+    ev.preventDefault();
+    ev.stopPropagation();
+    var p = vacilesPanel.filter(function (x) { return String(x.id) === b.getAttribute('data-vacile-inter'); })[0];
+    if (p) cambiarInterruptor(p, b);
   });
-  document.getElementById('v_nueva').addEventListener('click', function () { abrirVacile(null); });
+  document.getElementById('v_nueva').addEventListener('click', function () {
+    var lista = document.getElementById('v_lista');
+    var ya = lista.querySelector('details[data-id=""]');
+    var d = ya || filaVacile(null);
+    if (!ya) {
+      if (!vacilesPanel.length) lista.innerHTML = '';
+      lista.appendChild(d);
+    }
+    d.open = true;
+  });
   document.getElementById('v_tipo').addEventListener('change', function (ev) {
     document.getElementById('v_zona_texto').style.display = ev.target.value === 'texto' ? '' : 'none';
     document.getElementById('v_zona_imagen').style.display = ev.target.value === 'imagen' ? '' : 'none';
@@ -3150,7 +3277,7 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
           }).then(function () { subidas++; });
         });
       }, Promise.resolve());
-      return cola.then(function () { return cargarVaciles(); }).then(function () {
+      return cola.then(function () { return cargarVaciles(p.id); }).then(function () {
         b.disabled = false;
         var ahora = vacilesPanel.filter(function (x) { return x.id === p.id; })[0] || p;
         abrirVacile(ahora);
@@ -3174,7 +3301,7 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
     var id = val('v_id');
     if (!id || !confirm('¿Quitar la pareja «' + nombre + '» de la pestaña? Los vaciles ya enviados con ella se siguen viendo.')) return;
     api('/admin/vaciles/quitar-pareja', { method: 'POST', body: JSON.stringify({ pestanaId: Number(id), nombre: nombre }) })
-      .then(function () { return cargarVaciles(); })
+      .then(function () { return cargarVaciles(id); })
       .then(function () {
         var ahora = vacilesPanel.filter(function (x) { return String(x.id) === id; })[0];
         if (ahora) abrirVacile(ahora);
@@ -5867,6 +5994,20 @@ function direccionesDePestana(p: { mensajes: any[]; respuestas: any[] }, base: s
   const con = (m: any) => (m.imagen ? { ...m, imagen: base + m.imagen, miniatura: base + m.miniatura } : m);
   return { mensajes: p.mensajes.map(con), respuestas: p.respuestas.map(con) };
 }
+
+/** El botón de apagar y encender de la cabecera de cada pestaña: cambia solo
+ *  el interruptor, sin tocar lo demás (los textos o carteles no se reenvían). */
+app.post('/admin/vaciles/modo', { preHandler: requireAdmin }, async (req: any, reply) => {
+  const b = req.body ?? {};
+  const id = Number(b.id);
+  if (!Number.isInteger(id)) return reply.status(400).send({ error: 'Identificador de pestaña raro' });
+  try {
+    const modo = await cambiarModoPestanaVaciles(db, id, await modoDesdePanel(b.modo, b.corredores));
+    return reply.send({ ok: true, id, modo });
+  } catch (e: any) {
+    return reply.status(400).send({ error: e?.message ?? 'No se ha podido cambiar' });
+  }
+});
 
 /** Una pareja de carteles (provocación + respuesta, PNG en base64 como los
  *  manda el panel) para una pestaña de imágenes. Una petición por pareja:
