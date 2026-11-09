@@ -158,6 +158,7 @@ APAGADO el mapa sale igualmente pintado con el territorio guardado, sin pantalla
    mientras nadie lo toque: solo manda en la 1.11.15 o más nuevas (las anteriores la enseñan
    siempre). Pedido por Iban: «ahora no tiene sentido Halloween, y pronto vendrán vaciles
    navideños» (esos irán como una pestaña de carteles más, sin tocar la app).
+   **7-nov: pestaña «Navidad» subida con el script** (id 3, 4 parejas, mensajes 1021-1028, **EN PRUEBA para Ibanto**; carpeta `apps/mobile/assets/taunts/navidad/`, sin commitear; el `LEEME.txt` de la carpeta dice qué archivo era cuál). Los PNG de Iban son 941×1670: el servidor los encaja en 592×1280 con una banda negra fina arriba y abajo. Cuando la 1.11.15 esté en las dos tiendas, encenderla desde el panel.
    **Y en el panel cada pestaña es ya un desplegable con su botón Apagar/Encender** (§9-sexies).
 
 #### Lo que se hizo la noche del 22 (histórico)
