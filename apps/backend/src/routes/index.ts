@@ -23,7 +23,7 @@ import {
   imagenVacile, direccionesDeCartel,
 } from '../services/vaciles.js';
 import {
-  celdasEncerradas, cajaDe, cajaDeTrabajo, gruposDeCeldas,
+  celdasEncerradas, cajaDe, cajaDeTrabajo, gruposDeCeldas, celdasParaGuardar,
   MAX_CELDAS_CERCO, MAX_CAJA_CERCO, Celda,
 } from '../services/territorio.js';
 import {
@@ -3944,20 +3944,21 @@ const RUN_SPAN_FLOOR_M = 300;
  *  2,5 km² — veinte veces la mayor conquista real registrada. */
 const MAX_CELLS_PER_RUN = 25_000;
 
-/** Tope de celdas que acepta `POST /runs` en una carrera. No es el de arriba,
+/** Tope de celdas que `POST /runs` apunta de una carrera. No es el de arriba,
  *  que solo MARCA.
  *
- *  La app manda el recorrido MÁS el interior relleno de la vuelta que cierra,
- *  y todo cuenta como pisado (§9-bis). El 22-oct-2026 el tope era 50.000 y
- *  tiró una carrera real de ~61.000 celdas (una vuelta de unos 6 km² con su
- *  interior): 400, y la app la guardaba para «mandarla sola» y fallaba
- *  siempre. Ahora es el mismo número que el cerco (10 km²).
+ *  La app manda el recorrido MÁS el interior relleno de cada vuelta que cierra
+ *  (`claimLoopInterior`, solo si la vuelta cabe en unos 5×5 km), y todo cuenta
+ *  como pisado (§9-bis). El 22-oct-2026 el tope era 50.000 y tiró una carrera
+ *  real de ~61.000 celdas: 400, y la app la guardaba para «mandarla sola» y
+ *  fallaba siempre. Desde el 23 es el mismo número que el cerco (10 km²).
  *
  *  Medido con 100.000: el cuerpo pesa ~2,4 MB (el bodyLimit es 10 MB) y las
- *  consultas van en bloque (unnest), no una por celda. Por encima sigue el 400
- *  de siempre: para vueltas de más de 10 km² está `soloElBorde` en
- *  services/territorio.ts, sin usar a propósito hasta después de Halloween
- *  (cambia cómo se reparte el interior, y eso lo decide Iban). */
+ *  consultas van en bloque (unnest), no una por celda. Por encima ya no hay
+ *  400: se apunta solo el borde y lo de dentro pasa por la regla de los cercos
+ *  (`celdasParaGuardar`, services/territorio.ts). Una vuelta compacta de
+ *  13-20 km que vuelve a la salida manda 100.000-245.000 celdas, y se perdía
+ *  entera con sus kilómetros. */
 const MAX_CELDAS_POR_PETICION = MAX_CELDAS_CERCO;
 
 /** Velocidad máxima sostenida creíble. El récord de maratón ronda los 21 km/h;
@@ -4088,7 +4089,8 @@ app.post('/runs', {
   // dejar runs falsos en la BD. Top-cap a valores físicos creíbles:
   //   - distanceKm: máx 100 km por carrera (ultramarathon teórico).
   //   - durationSecs: máx 24h.
-  //   - claimedCells: máx MAX_CELDAS_POR_PETICION (100.000, ver la constante).
+  //   - claimedCells: se apuntan como mucho MAX_CELDAS_POR_PETICION (100.000,
+  //     ver la constante); por encima, solo el borde.
   //   - zones: máx 200.
   const isFiniteNum = (v: any) => typeof v === 'number' && Number.isFinite(v);
 
@@ -4121,11 +4123,22 @@ app.post('/runs', {
   // se guarda la carrera, sin esa celda (validateClaimedCellsGeometry, más
   // abajo, sigue mirando lo que llegó en bruto).
   const celdasEnBruto: any[] = Array.isArray(claimedCells) ? claimedCells : [];
-  const celdas: Celda[] = celdasEnBruto.filter((c: any) =>
+  const celdasValidas: Celda[] = celdasEnBruto.filter((c: any) =>
     Number.isInteger(c?.x) && Number.isInteger(c?.y)
     && Math.abs(c.x) <= MAX_CELL_COORD && Math.abs(c.y) <= MAX_CELL_COORD);
-  if (celdas.length > MAX_CELDAS_POR_PETICION) {
+  // Una vuelta de más de 10 km² ya no tira la carrera: se apunta el borde y lo
+  // de dentro (`dentroSinApuntar`) lo decide el cerco, más abajo.
+  const paraGuardar = celdasParaGuardar(celdasValidas, MAX_CELDAS_POR_PETICION);
+  if (!paraGuardar) {
     return reply.status(400).send({ error: 'claimedCells inválido o demasiado grande' });
+  }
+  const celdas = paraGuardar.celdas;
+  const dentroSinApuntar = paraGuardar.dentro;
+  if (dentroSinApuntar > 0) {
+    req.log.warn(
+      { userId: req.userId, llegaron: celdasValidas.length, borde: celdas.length, dentro: dentroSinApuntar },
+      '[runs] vuelta de más de 10 km²: se apunta el borde y lo de dentro va al cerco',
+    );
   }
 
   // ── Cuándo se corrió ─────────────────────────────────────────────────────
@@ -4598,6 +4611,10 @@ app.post('/runs', {
             { userId, celdas: celdas.length },
             '[cerco] la carrera abarca más de 10 km de lado, no se mira el cerco',
           );
+          // Si además se quedó lo de dentro sin apuntar, el corredor vería
+          // desaparecer su vuelta sin saber por qué: mismo aviso que un cerco
+          // que no cabe.
+          if (dentroSinApuntar > 0) await avisarCercoEnorme(client, userId, dentroSinApuntar);
         }
         await client.query('RELEASE SAVEPOINT cerco');
       } catch (e) {

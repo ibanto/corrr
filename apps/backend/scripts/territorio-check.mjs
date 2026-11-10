@@ -7,7 +7,7 @@
  * mapa le estaría dando a alguien territorio que no ha rodeado — o quitándole
  * el que sí — así que no se sube nada con esto en rojo.
  */
-import { celdasEncerradas, cajaDe, cajaDeTrabajo, gruposDeCeldas, soloElBorde } from '../dist/services/territorio.js';
+import { celdasEncerradas, cajaDe, cajaDeTrabajo, gruposDeCeldas, soloElBorde, celdasParaGuardar } from '../dist/services/territorio.js';
 
 let fallos = 0;
 function comprueba(nombre, ok, detalle) {
@@ -142,7 +142,8 @@ function marco(n) {
 // cerco. Si el borde no encerrase lo de dentro, la vuelta se perdería en
 // silencio: por eso se comprueba con el MISMO cálculo de cercos.
 
-/** Disco relleno de radio r (en celdas), como lo deja fillEnclosedCells. */
+/** Disco relleno de radio r (en celdas), como lo deja la app al rellenar una
+ *  vuelta (claimLoopInterior). */
 function discoRelleno(r, cx = 0, cy = 0) {
   const c = [];
   for (let y = -r; y <= r; y++) {
@@ -196,9 +197,77 @@ function discoRelleno(r, cx = 0, cy = 0) {
 }
 
 {
-  // Lo que la app no rellena nunca (caja de más de 2.000.000) no se toca.
-  comprueba('una caja que la app no rellena se rechaza',
-    soloElBorde([{ x: 0, y: 0 }, { x: 3000, y: 3000 }]) === null, 'null');
+  // Dos vueltas rellenas lejos una de otra: la caja de la carrera no cabe en
+  // la rejilla (más de 4.000.000) y va por el Set. Tiene que dar lo mismo que
+  // mirar cada vuelta por su cuenta.
+  const a = discoRelleno(150, 0, 0), b = discoRelleno(150, 3000, 3000);
+  const juntas = soloElBorde([...a, ...b]).length;
+  const separadas = soloElBorde(a).length + soloElBorde(b).length;
+  comprueba('dos vueltas lejos (caja de más de 4.000.000) dan el mismo borde que por separado',
+    juntas === separadas, `${juntas} celdas (esperadas ${separadas})`);
+  comprueba('y dos celdas sueltas en una caja enorme son las dos borde',
+    soloElBorde([{ x: 0, y: 0 }, { x: 3000, y: 3000 }]).length === 2);
+}
+
+// ── Qué se apunta de una carrera (celdasParaGuardar, POST /runs) ───────────
+// Hasta el 10-nov-2026, por encima de 100.000 celdas el servidor contestaba
+// 400 y la carrera se perdía ENTERA, kilómetros incluidos.
+
+/** Rectángulo relleno de a × b celdas: lo que manda la app al cerrar una
+ *  vuelta de a/100 × b/100 km (el recorrido es su contorno). */
+function rectanguloRelleno(a, b, x0 = 0, y0 = 0) {
+  const c = [];
+  for (let y = 0; y < b; y++) for (let x = 0; x < a; x++) c.push({ x: x + x0, y: y + y0 });
+  return c;
+}
+
+{
+  // Lo de siempre no cambia: hasta 100.000 se apunta todo, tal cual.
+  const vuelta = rectanguloRelleno(300, 300);
+  const r = celdasParaGuardar(vuelta);
+  comprueba('una vuelta de 3 × 3 km (90.000) se apunta entera, como siempre',
+    r !== null && r.celdas === vuelta && r.dentro === 0, `${r?.celdas.length} celdas`);
+}
+
+{
+  // El caso que se perdía: vuelta de 4 × 3 km, 14 km corridos, 120.000 celdas.
+  const vuelta = rectanguloRelleno(400, 300, 17000, 460000);
+  const r = celdasParaGuardar(vuelta);
+  comprueba('una vuelta de 4 × 3 km (120.000) ya no se rechaza: se apunta el borde',
+    r !== null && r.celdas.length <= 100_000, r ? `${r.celdas.length} celdas, ${r.dentro} para el cerco` : 'rechazada');
+  const fuera = (c) => c.x === 17000 || c.x === 17399 || c.y === 460000 || c.y === 460299;
+  const contorno = vuelta.filter(fuera).length;
+  comprueba('y el borde es todo el contorno de la vuelta (lo que da al exterior)',
+    r !== null && r.celdas.length === contorno && r.celdas.every(fuera), `${contorno} celdas`);
+  const caja = r ? cajaDeTrabajo(r.celdas, 300) : null;
+  const dentro = caja ? celdasEncerradas(r.celdas, caja) : [];
+  comprueba('el cerco ve dentro todo lo que no se apuntó (más de 100.000: avisará)',
+    r !== null && dentro.length === r.dentro && dentro.length > 100_000, `${dentro.length} celdas`);
+}
+
+{
+  // Justo por encima: una vuelta de casi 10 km² más 10 km de ida y vuelta
+  // hasta ella. Pasa de 100.000 entre las dos cosas, pero lo de dentro cabe en
+  // el tope del cerco: el corredor lo recupera entero al guardar.
+  const vuelta = rectanguloRelleno(316, 316);
+  const ida = Array.from({ length: 1000 }, (_, i) => ({ x: -1 - i, y: 150 }));
+  const carrera = [...vuelta, ...ida];
+  const r = celdasParaGuardar(carrera);
+  const caja = r ? cajaDeTrabajo(r.celdas, 300) : null;
+  const dentro = caja ? celdasEncerradas(r.celdas, caja) : [];
+  comprueba('justo por encima del tope, lo de dentro vuelve entero por el cerco',
+    carrera.length > 100_000 && r !== null && dentro.length === r.dentro && dentro.length <= 100_000
+      && r.celdas.length + dentro.length === carrera.length,
+    `${carrera.length} → ${r?.celdas.length} apuntadas + ${dentro.length} por el cerco`);
+}
+
+{
+  // Una petición fabricada que no es una vuelta (todo borde, un tablero de
+  // ajedrez) sigue rechazándose: ni el borde cabe.
+  const tablero = [];
+  for (let y = 0; y < 500; y++) for (let x = 0; x < 500; x++) if ((x + y) % 2 === 0) tablero.push({ x, y });
+  comprueba('un tablero de 125.000 celdas sueltas se sigue rechazando',
+    tablero.length > 100_000 && celdasParaGuardar(tablero) === null, `${tablero.length} celdas`);
 }
 
 {

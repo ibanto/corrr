@@ -160,6 +160,11 @@ APAGADO el mapa sale igualmente pintado con el territorio guardado, sin pantalla
    navideños» (esos irán como una pestaña de carteles más, sin tocar la app).
    **7-nov: pestaña «Navidad» subida con el script** (id 3, 4 parejas, mensajes 1021-1028, **EN PRUEBA para Ibanto**; carpeta `apps/mobile/assets/taunts/navidad/`, sin commitear; el `LEEME.txt` de la carpeta dice qué archivo era cuál). Los PNG de Iban son 941×1670: el servidor los encaja en 592×1280 con una banda negra fina arriba y abajo. Cuando la 1.11.15 esté en las dos tiendas, encenderla desde el panel.
    **Y en el panel cada pestaña es ya un desplegable con su botón Apagar/Encender** (§9-sexies).
+8. **Vueltas de más de 10 km² (10-nov)**: el arreglo del servidor está hecho y
+   en un commit, **SIN SUBIR** (§9, «El servidor tiraba las vueltas grandes
+   enteras»). Subirlo es `git push`, que despliega en Railway: con el OK de
+   Iban, antes del Medio Maratón de Sevilla (13-dic). Después, esperar ~60 s y
+   mirar `/health`.
 
 #### Lo que se hizo la noche del 22 (histórico)
 
@@ -477,7 +482,7 @@ verdad, compilar en **Release** (lleva el código dentro y no necesita nada):
 - **Claim**: el usuario "claimea" una cell al pisarla durante un run. La cell apunta a `owner_id`.
 - **Robo / Steal**: pisar una cell de OTRO usuario te la roba. Backend trackea via UPSERT `ON CONFLICT (cell_x, cell_y) DO UPDATE`.
 - **Line bridge**: entre dos lecturas GPS consecutivas, rellenamos las cells del camino con `cellLine` (4-connected). Evita huecos.
-- **Flood fill**: al cerrar un loop, las cells INTERIORES se claimean también. Función `fillEnclosedCells`.
+- **Relleno de vueltas**: al cerrar un circuito, las cells INTERIORES se claimean también. Lo hace `claimLoopInterior` en `runTracker.ts`, vuelta a vuelta y solo si la caja de esa vuelta no pasa de 250.000 celdas (~5×5 km) y la vuelta mide como mucho 50 km. `fillEnclosedCells` sigue en el archivo pero es **código muerto** desde la 1.11.5.
 - **Stationary detector** (mobile): si las últimas 6 lecturas GPS caben en un círculo de 15m, NO claimemos (anti-drift).
 
 ### Zonas (sistema legacy v1.5, mantenido para compatibilidad)
@@ -672,13 +677,34 @@ verdad, compilar en **Release** (lleva el código dentro y no necesita nada):
   mismo que el cerco), con `cajaDe` en vez de `Math.min(...xs)` (el spread
   revienta la pila hacia 110.000 en Node 20), un SAVEPOINT alrededor del cerco
   (un fallo ahí dejaba la transacción abortada y se perdía la carrera) y las
-  celdas con coordenadas raras fuera en vez de un 500. Por encima de 100.000
-  sigue el 400: `soloElBorde` (services/territorio.ts) está escrito y probado
-  para guardar el borde y mandar el interior al cerco, pero **no se usa**:
-  cambia el reparto del interior y se decide después de Halloween. Ojo también:
-  en Android la copia pendiente no se relee por encima de ~2 MiB (cursor de
-  AsyncStorage), para la próxima build. La carrera perdida (21raulnicolas,
-  15,8 km) se metió a mano con un script a medida en `soporte/` (fuera de git).
+  celdas con coordenadas raras fuera en vez de un 500. La carrera perdida
+  (21raulnicolas, 15,8 km) se metió a mano con un script a medida en `soporte/`
+  (fuera de git).
+  **Y por encima de 100.000 ya no hay 400** (10-nov-2026, servidor, sin build;
+  decisión de Iban del 27-oct, «opción A»): `celdasParaGuardar`
+  (services/territorio.ts) apunta solo el BORDE (`soloElBorde`) y lo de
+  dentro lo decide la regla de los cercos al guardar: si cabe en su tope de
+  10 km² lo da (`ocuparCercadas`), y si no, aviso «Cerco demasiado grande»
+  (`avisarCercoEnorme`, que también sale cuando la carrera pasa de 10 km de lado
+  y el cerco ni se mira). La carrera se guarda siempre, con sus km y su racha;
+  los puntos son los del recorrido, no el tope de 20.000 que daría el
+  interior, y a los demás no se les quita nada de dentro. Solo se rechaza si ni
+  el borde cabe (eso no es un recorrido, es una petición fabricada). Medido el
+  27-oct con el `RunTracker` de verdad y los recorridos oficiales
+  (`soporte/vueltas-grandes-27oct/`, fuera de git): el **Maratón de Valencia
+  manda ~55.000 celdas** y ya se guardaba (luego el cerco le da ~59.000 más);
+  lo que se perdía eran las **vueltas compactas de 12,8 a 20 km que vuelven a
+  la salida** (3,2×3,2 km → 102.450 celdas; 5×4,9 km → 244.482). Por encima de
+  ~5×5 km la app ya no rellena y no pasa nada. Probado de punta a punta con el
+  servidor de verdad y Postgres en memoria (`soporte/vueltas-grandes-27oct/e2e/`,
+  `node probar.mjs 4 3`): antes 400, ahora 201 con los 14 km, 1.395 celdas de
+  borde y el aviso; con `3.16 3.16 12` (101.365 celdas) lo de dentro vuelve
+  entero por el cerco. Ojo: el borde es lo que da al EXTERIOR, así que la cara
+  interior del recorrido y lo pisado por dentro de la vuelta caen con el
+  relleno. **Sigue pendiente, en la app**: en Android la copia pendiente no se
+  relee por encima de ~2 MiB (≈ 90.000 celdas, cursor de AsyncStorage). Una
+  vuelta así que no se manda a la primera (meta con la red saturada) se pierde
+  igual; eso no lo arregla el servidor.
 - **El mapa se comía la cuota gratis de Supabase** (24-oct-2026, arreglado en
   el servidor sin build): el plan gratis da 5 GB/mes de datos de SALIDA
   (egress) y CORRR gastaba ~1,1 GB AL DÍA; el ciclo anterior se pasó ~6 veces

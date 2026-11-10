@@ -66,9 +66,14 @@ export function cajaDe(celdas: Celda[], margen = 1): Caja {
   };
 }
 
-/** Caja máxima para `soloElBorde`: 4 MB de rejilla. La app solo rellena la
- *  vuelta si su caja no pasa de 2.000.000 de celdas (`fillEnclosedCells`), así
- *  que una carrera rellena de verdad cabe siempre, con margen. */
+/** Hasta esta caja `soloElBorde` usa una rejilla (4 MB, lo rápido); por encima,
+ *  un Set con solo las celdas que hay.
+ *
+ *  La app rellena cada vuelta por separado (`claimLoopInterior`, desde la
+ *  1.11.5; `fillEnclosedCells` ya no se usa) y solo si la caja de ESA vuelta
+ *  no pasa de 250.000 celdas, unos 5×5 km. Pero una carrera puede llevar dos
+ *  vueltas rellenas lejos una de otra, y entonces la caja de toda la carrera
+ *  no tiene tope: por eso hay camino de reserva en vez de rechazarla. */
 export const MAX_CAJA_BORDE = 4_000_000;
 
 /** Las celdas de un conjunto que tocan el exterior, sin el relleno.
@@ -88,16 +93,15 @@ export const MAX_CAJA_BORDE = 4_000_000;
  *  Lo que se pierde: lo pisado por DENTRO de la vuelta (cruzarla por el medio)
  *  no se distingue del relleno y cae con él.
  *
- *  Las repetidas salen una sola vez. Devuelve null si la caja pasa de
- *  `MAX_CAJA_BORDE`: eso no lo ha rellenado la app. Las celdas tienen que ser
- *  enteras (quien llama ya las ha filtrado). */
-export function soloElBorde(celdas: Celda[]): Celda[] | null {
+ *  Las repetidas salen una sola vez. Las celdas tienen que ser enteras (quien
+ *  llama ya las ha filtrado). */
+export function soloElBorde(celdas: Celda[]): Celda[] {
   if (celdas.length === 0) return [];
   // Margen de una celda: así las vecinas de las del filo caen dentro de la
   // rejilla y valen 0 (fuera), sin comprobar los bordes de la caja.
   const { x0, x1, y0, y1 } = cajaDe(celdas, 1);
   const ancho = x1 - x0 + 1, alto = y1 - y0 + 1;
-  if (!(ancho * alto <= MAX_CAJA_BORDE)) return null;
+  if (ancho * alto > MAX_CAJA_BORDE) return bordeSinRejilla(celdas, x0, y0, ancho);
   const en = new Uint8Array(ancho * alto);
   for (const c of celdas) en[(c.y - y0) * ancho + (c.x - x0)] = 1;
   const borde: Celda[] = [];
@@ -110,6 +114,50 @@ export function soloElBorde(celdas: Celda[]): Celda[] | null {
     }
   }
   return borde;
+}
+
+/** `soloElBorde` para cajas que no caben en la rejilla. Misma cuenta con un
+ *  Set de números: la clave es la posición en la caja, que con coordenadas de
+ *  hasta ±1.600.000 no pasa de 10¹³ y cabe entera en un número de JavaScript.
+ *  Con el margen de una celda, ±1 nunca salta de fila. */
+function bordeSinRejilla(celdas: Celda[], x0: number, y0: number, ancho: number): Celda[] {
+  const clave = (c: Celda) => (c.y - y0) * ancho + (c.x - x0);
+  const en = new Set<number>();
+  for (const c of celdas) en.add(clave(c));
+  const vistas = new Set<number>();
+  const borde: Celda[] = [];
+  for (const c of celdas) {
+    const k = clave(c);
+    if (vistas.has(k)) continue;
+    vistas.add(k);
+    if (!en.has(k - 1) || !en.has(k + 1) || !en.has(k - ancho) || !en.has(k + ancho)) {
+      borde.push({ x: c.x, y: c.y });
+    }
+  }
+  return borde;
+}
+
+/** Qué celdas de una carrera se apuntan en `POST /runs`.
+ *
+ *  Hasta `tope` (10 km², el del cerco), todas: recorrido e interior de la
+ *  vuelta, como siempre. Por encima, solo el BORDE, y lo de dentro lo decide
+ *  la regla de los cercos al guardar la carrera: si cabe en su tope lo da, y si
+ *  no, avisa al corredor («Cerco demasiado grande»). Antes, por encima del
+ *  tope se rechazaba la carrera entera con un 400, kilómetros incluidos, y la
+ *  app la reenviaba para siempre (decidido por Iban el 27-oct-2026, opción A:
+ *  la carrera se guarda siempre; el interior gordo no se reparte de golpe).
+ *
+ *  `dentro` son las que se quedan sin apuntar. Devuelve null solo si ni el
+ *  borde cabe en el tope: eso no es un recorrido (100 km corridos son unas
+ *  20.000 celdas de rastro), es una petición fabricada. */
+export function celdasParaGuardar(
+  celdas: Celda[],
+  tope = MAX_CELDAS_CERCO,
+): { celdas: Celda[]; dentro: number } | null {
+  if (celdas.length <= tope) return { celdas, dentro: 0 };
+  const borde = soloElBorde(celdas);
+  if (borde.length > tope) return null;
+  return { celdas: borde, dentro: celdas.length - borde.length };
 }
 
 /** La caja para buscar el cerco de una carrera: la de sus celdas con el mayor
