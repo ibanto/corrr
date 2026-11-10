@@ -11,8 +11,9 @@ llegaran los tres arreglos del 10-nov. Esos arreglos van al iPhone como 1.11.16.
 - La copia de la carrera en el móvil se guarda más pequeña cuando es una vuelta grande.
 
 **Estado:** build 40 subida a TestFlight el 10-nov a las 19:51. Versión 1.11.16 creada en App Store Connect con
-los textos de abajo, la build 40 elegida y «Publicar esta versión manualmente». Falta la prueba en la calle del
-iPhone y enviar a revisión (antes, «¿Está viva?» en el panel, §15 del CLAUDE.md).
+los textos de abajo, la build 40 elegida y «Publicar esta versión manualmente». **Enviada a revisión de Apple el
+10-nov a las 21:05** (la cuenta de revisión no existía; Iban la creó antes en el panel, §15 del CLAUDE.md). Falta
+la prueba en la calle del iPhone, mientras Apple revisa.
 
 ## App Store Connect
 

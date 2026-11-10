@@ -59,16 +59,17 @@ dentro dejaría el aviso de «nueva versión» saliendo siempre. Por eso se mont
 la vc93 de Android, solo cambia el número. Archivada como `CORRR-1.11.16-build40`, comprobada por dentro y **subida a
 TestFlight el 10-nov a las 19:51**. En App Store Connect **la versión 1.11.16 ya está creada** (la creó Claude con el Chrome
 de Iban, a petición suya) con su texto promocional, sus novedades (`store/notas-1.11.16.md`), **la build 40 ya elegida** y
-«Publicar esta versión manualmente». Está «En preparación para el envío»: **solo falta «Añadir a revisión»**, con el OK de Iban.
+«Publicar esta versión manualmente». **Enviada a revisión el 10-nov a las 21:05** (ver el punto 1 del plan).
 **Android se queda en 1.11.15 vc93** (la probada en la calle): se promociona de prueba interna a producción, sin volver a
 subir nada. **El repo ya está en 1.11.16**: en `build.gradle` y `app.json` pone `versionCode 94`, pero **el AAB vc94 NO se
 ha montado**; el próximo AAB será 1.11.16 vc94 o posterior (lo que hay en Play es el commit `4607a90`).
 **Plan de Iban (10-nov): publicar en las dos tiendas a la vez, en cuanto Apple apruebe.** Orden:
-1. iPhone: la versión 1.11.16 ya tiene la build 40 → «¿Está viva?» en el panel → «Añadir a revisión» y enviar. La prueba
-   en la calle del iPhone, mientras Apple revisa. **OJO: el 10-nov (~21:15) `GET /admin/cuenta-revision` contestó
-   `{"existe":false}` para `applereview@corrr.es`: LA CUENTA DE REVISIÓN NO EXISTE.** Antes de enviar a Apple hay que
-   crearla en el panel (`/admin` → Herramientas → «Cuenta para la revisión de Apple» → «Crear o reparar la cuenta», con la
-   misma contraseña que hay en App Store Connect) y comprobarla con «¿Está viva?». Eso lo hace Iban (§15).
+1. iPhone: **HECHO el 10-nov a las 21:05: la 1.11.16 (build 40) está «Pendiente de revisión» en Apple** (hasta 48 h),
+   con «Publicar esta versión manualmente». Antes faltaba la cuenta de revisión: `GET /admin/cuenta-revision` decía
+   `{"existe":false}` para `applereview@corrr.es`; Iban la creó en el panel (Herramientas → «Cuenta para la revisión de
+   Apple») y el servidor ya contesta `puedeEntrar: true`. **Regla de siempre (§15): antes de cada envío a Apple, mirar
+   que esa cuenta existe; se había vuelto a perder.** Falta la prueba en la calle del iPhone (TestFlight, 1.11.16 (40)),
+   que puede hacerse mientras Apple revisa.
 2. Android: **HECHO el 10-nov (~21:20), por Claude con el Chrome de Iban y su OK**: la **93 (1.11.15) está en «Cambios en
    revisión»** de Google, producción al 100 %, con las notas de producción. Con la «Publicación gestionada» se queda
    esperando aunque Google la apruebe. Cómo se llegó: «Producción» salía en gris («El canal ya tiene una versión en
