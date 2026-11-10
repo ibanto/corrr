@@ -42,6 +42,8 @@ anunciar; la ficha web sí (ahí sale "Versión 1.11.11" como actual con su fech
 Lleva, además de lo de abajo, tres arreglos de la app (§9): **la carrera ya no se cuelga al mirar el móvil tras
 mucho rato con la pantalla apagada** (**falta la prueba en la calle: 20 min sin mirar el móvil y luego mirarlo**), **la copia de una vuelta grande se puede volver a
 leer en Android** y **el GPS de una carrera que murió sin PARAR se apaga al abrir la app**. Notas en `store/notas-1.11.15.md`.
+Commit `4607a90`, **subido a GitHub el 10-nov a las 17:30 con el OK de Iban** (`/health` → `4607a90`; el servidor no cambia
+con él, y `/app/version` sigue anunciando Android 1.11.12 e iPhone 1.11.11: no se anuncia nada hasta que cada tienda publique).
 AAB en `apps/mobile/builds/corrr-v1.11.15-vc93.aab` (95 MB; por dentro: 1.11.15, vc93, firma SHA-256 de siempre, servidor de
 producción, sin depuración). iPhone archivado como `CORRR-1.11.15-build39` y **SUBIDO a App Store Connect (TestFlight) el 10-nov
 a las 17:26**. **Falta**: que Iban suba el AAB a la prueba interna de Play Console, y la prueba en la calle en los dos móviles
