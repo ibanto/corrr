@@ -58,13 +58,14 @@ solo compara el NÚMERO de versión (`isNewerVersion` en `checkForUpdates.ts`), 
 dentro dejaría el aviso de «nueva versión» saliendo siempre. Por eso se montó la **1.11.16 (build 40)**: el mismo código que
 la vc93 de Android, solo cambia el número. Archivada como `CORRR-1.11.16-build40`, comprobada por dentro y **subida a
 TestFlight el 10-nov a las 19:51**. En App Store Connect **la versión 1.11.16 ya está creada** (la creó Claude con el Chrome
-de Iban, a petición suya) con su texto promocional y sus novedades (`store/notas-1.11.16.md`).
+de Iban, a petición suya) con su texto promocional, sus novedades (`store/notas-1.11.16.md`), **la build 40 ya elegida** y
+«Publicar esta versión manualmente». Está «En preparación para el envío»: **solo falta «Añadir a revisión»**, con el OK de Iban.
 **Android se queda en 1.11.15 vc93** (la probada en la calle): se promociona de prueba interna a producción, sin volver a
 subir nada. **El repo ya está en 1.11.16**: en `build.gradle` y `app.json` pone `versionCode 94`, pero **el AAB vc94 NO se
 ha montado**; el próximo AAB será 1.11.16 vc94 o posterior (lo que hay en Play es el commit `4607a90`).
 **Plan de Iban (10-nov): publicar en las dos tiendas a la vez, en cuanto Apple apruebe.** Orden:
-1. iPhone: en la versión 1.11.16, elegir la **build 40** cuando Apple termine de procesarla → «¿Está viva?» en el panel →
-   enviar a revisión con «Publicar esta versión manualmente». La prueba en la calle del iPhone, mientras Apple revisa.
+1. iPhone: la versión 1.11.16 ya tiene la build 40 → «¿Está viva?» en el panel → «Añadir a revisión» y enviar. La prueba
+   en la calle del iPhone, mientras Apple revisa.
 2. Android: Pruebas internas → «Promocionar versión» → Producción, con las notas de producción, y enviarla a revisión YA;
    con la «Publicación gestionada» se queda esperando aunque Google la apruebe.
 3. Con las dos aprobadas: «Publicar esta versión» en App Store Connect y «Publicar 1 cambio» en Play Console.
