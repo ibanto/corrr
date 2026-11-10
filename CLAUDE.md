@@ -38,11 +38,19 @@ AUTO-PAUSA y «Sin señal GPS» con vibración). Las dos, después de Halloween.
 1.11.10 **más de doce horas** después de publicar. No sirve para decidir cuándo
 anunciar; la ficha web sí (ahí sale "Versión 1.11.11" como actual con su fecha).
 
+**10-nov: la 1.11.15 se vuelve a montar como Android vc93 / iPhone build 39** (la vc92 / build 38 no se publica).
+Lleva, además de lo de abajo, tres arreglos de la app (§9): **la carrera ya no se cuelga al mirar el móvil tras
+mucho rato con la pantalla apagada** (**falta la prueba en la calle: 20 min sin mirar el móvil y luego mirarlo**), **la copia de una vuelta grande se puede volver a
+leer en Android** y **el GPS de una carrera que murió sin PARAR se apaga al abrir la app**. Notas en `store/notas-1.11.15.md`.
+AAB en `apps/mobile/builds/corrr-v1.11.15-vc93.aab` (95 MB; por dentro: 1.11.15, vc93, firma SHA-256 de siempre, servidor de
+producción, sin depuración). iPhone archivado como `CORRR-1.11.15-build39` y **SUBIDO a App Store Connect (TestFlight) el 10-nov
+a las 17:26**. **Falta**: que Iban suba el AAB a la prueba interna de Play Console, y la prueba en la calle en los dos móviles
+(`docs/prueba-gps.md`, con «la larga»: 20 min sin mirar el móvil). Si puede, que la pruebe también el corredor del audio.
 **1.11.15 (Android vc92, iPhone build 38) — MONTADA el 7-nov. iPhone SUBIDO a App Store Connect (TestFlight) el 7-nov ~13:27; falta que Iban suba el AAB a la prueba interna de Play Console y haga la prueba en la calle.**
 **La 1.11.14 del iPhone (build 37) YA la aprobó Apple y espera a que Iban pulse «Publicar esta versión»** (visto en
 App Store Connect el 7-nov: «1.11.14 Pendiente de publicación»; antes yo la di por no publicada, error mío).
 **Mientras esté así, App Store Connect NO deja crear la versión 1.11.15** (solo admite una versión nueva a la vez).
-Orden: publicar la 1.11.14 → «+» 1.11.15 → elegir la build 38 → enviar a revisión, **después de la prueba en la calle**.
+Orden: publicar la 1.11.14 → «+» 1.11.15 → elegir la **build 39** (la del 10-nov, no la 38) → enviar a revisión, **después de la prueba en la calle**.
 Si se publica la 1.11.14, no hace falta anunciarla (`LATEST_IOS_*`) si la 1.11.15 va a salir en pocos días.
 En Android la 1.11.15 (vc92) sustituye a la vc91.
 Commit `f78d37f` (versión) y `ddfcde7` (panel). AAB en `apps/mobile/builds/corrr-v1.11.15-vc92.aab`
@@ -160,11 +168,9 @@ APAGADO el mapa sale igualmente pintado con el territorio guardado, sin pantalla
    navideños» (esos irán como una pestaña de carteles más, sin tocar la app).
    **7-nov: pestaña «Navidad» subida con el script** (id 3, 4 parejas, mensajes 1021-1028, **EN PRUEBA para Ibanto**; carpeta `apps/mobile/assets/taunts/navidad/`, sin commitear; el `LEEME.txt` de la carpeta dice qué archivo era cuál). Los PNG de Iban son 941×1670: el servidor los encaja en 592×1280 con una banda negra fina arriba y abajo. Cuando la 1.11.15 esté en las dos tiendas, encenderla desde el panel.
    **Y en el panel cada pestaña es ya un desplegable con su botón Apagar/Encender** (§9-sexies).
-8. **Vueltas de más de 10 km² (10-nov)**: el arreglo del servidor está hecho y
-   en un commit, **SIN SUBIR** (§9, «El servidor tiraba las vueltas grandes
-   enteras»). Subirlo es `git push`, que despliega en Railway: con el OK de
-   Iban, antes del Medio Maratón de Sevilla (13-dic). Después, esperar ~60 s y
-   mirar `/health`.
+8. **Vueltas de más de 10 km² (10-nov)**: el servidor ya las guarda (commit
+   `1e8d52d`, subido con el OK de Iban, `/health` → `1e8d52d`). La parte de la
+   app (la copia que Android no relee) va en la 1.11.15 vc93 / build 39 (§9).
 
 #### Lo que se hizo la noche del 22 (histórico)
 
@@ -701,10 +707,81 @@ verdad, compilar en **Release** (lleva el código dentro y no necesita nada):
   borde y el aviso; con `3.16 3.16 12` (101.365 celdas) lo de dentro vuelve
   entero por el cerco. Ojo: el borde es lo que da al EXTERIOR, así que la cara
   interior del recorrido y lo pisado por dentro de la vuelta caen con el
-  relleno. **Sigue pendiente, en la app**: en Android la copia pendiente no se
-  relee por encima de ~2 MiB (≈ 90.000 celdas, cursor de AsyncStorage). Una
-  vuelta así que no se manda a la primera (meta con la red saturada) se pierde
-  igual; eso no lo arregla el servidor.
+  relleno. Desplegado el 10-nov (`/health` → `1e8d52d`).
+- **La copia de una vuelta grande no se podía volver a leer en Android**
+  (10-nov-2026, arreglado en la app, 1.11.15 vc93 / build 39): la carrera se
+  guarda en el móvil ANTES de mandarla (`@corrr_carrera_pendiente`) y se
+  reenvía sola al abrir la app si el envío falló. Pero AsyncStorage guarda en
+  SQLite y en Android una fila de más de ~2 MiB se ESCRIBE y no se puede LEER
+  (no cabe en la ventana del cursor): una vuelta rellena de 3×3 km son 89.881
+  casillas, 1,97 MiB; la de 5×4,9 km, 5,36 MiB (y la base entera tiene un tope
+  de 6 MB). Si no se mandaba a la primera (meta con la red saturada), se perdía
+  aunque estuviera en el disco. Ahora `src/tracking/copiaCarrera.ts` guarda las
+  casillas en TIRAS (fila, primera x, cuántas) cuando la copia pasa de 500.000
+  caracteres: la de 3×3 km queda en **5,7 KB** y la de 5×4,9 km en **9,3 KB**,
+  y vuelven todas. Por debajo del umbral la copia es idéntica a la de antes, y
+  las copias viejas se leen igual. Al servidor se le manda siempre la carrera
+  de siempre. Probado con el `RunTracker` de verdad en `scripts/copia-check.ts`
+  (dentro de `npm run test:gps`). **Al guardar algo grande en AsyncStorage,
+  medirlo: en Android lo que pasa de 2 MiB no vuelve.**
+- **La carrera se colgaba al mirar el móvil tras mucho rato con la pantalla
+  apagada** (10-nov-2026, un corredor por audio; arreglado en la 1.11.15 vc93 /
+  build 39): «si miro el móvil cada 10 minutos no pasa nada; si paso más de 15
+  sin mirarlo, al abrirlo tarda en ponerse al día, un segundo por cada minuto,
+  y cuando pasa de 15 segundos se cuelga y se para». La causa, leída en el
+  código de React Native (`FabricUIManager.onHostPause` →
+  `mDispatchUIFrameCallback.pause()`): **en Android, con la app en segundo
+  plano los cambios de pantalla NO se aplican, se ENCOLAN, y al volver se
+  aplican todos de golpe** en el hilo principal. Y la app pintaba con cada
+  tanda de puntos que entraba con la pantalla apagada (`handleReading` hacía
+  `setCurrentPath`, `setClaimedCellsTick`, `setDistance`…): el trazo ENTERO y
+  los polígonos del territorio, que siguen montados debajo de la pantalla de
+  carrera. Medido en el emulador: en 10 minutos apagada la tarea de fondo
+  entregó 74 tandas, o sea 74 repintados encolados (con territorio grande, más
+  caros). Si el hilo principal pasa de 5 s sin responder, Android saca «CORRR
+  no responde» y cerrar la app se lleva la carrera (no hay rescate, §14).
+  **Arreglo** (`MapScreen.tsx`): sin pantalla (`appALaVista()`,
+  `AppState.currentState !== 'background'`) el punto entra en el registro (km,
+  celdas, trazo, pausas, logos) y NO se pinta ni se mueve la cámara; al volver
+  (`handleAppState`, 'active') `pintarCarrera()` lo pinta todo UNA vez. Con la
+  pantalla encendida no cambia nada. En iPhone no había cola (ahí se pinta al
+  momento), pero se ahorra pintar a ciegas. **Regla: con la app en segundo
+  plano no se toca el estado de React en cada punto; se guarda en referencias
+  y se pinta al volver.**
+  **Qué se probó y qué no** (emulador, `-PcorrrDebuggable=1` contra el servidor
+  de mentira en `MODO=vacio`, GPS a 12 km/h con `adb emu geo fix`): SIN el
+  arreglo, 10 min apagada → 2,25 km bien contados y la pantalla al día a los
+  ~10 s de encender (con territorio vacío y una recta; con territorio de
+  verdad cada repintado pesa mucho más). CON el arreglo, lo corrido con la
+  pantalla apagada se cuenta igual (1,09 km en los 4,3 min que el emulador
+  entregó puntos) y al volver sale de golpe, con su auto-pausa. **La prueba de
+  10 min con el arreglo NO se pudo completar**: el Mac estaba renderizando en
+  After Effects y el emulador se ahogó (disco y CPU del Android simulado
+  saturados; ANR de `TaskJobService` y de los servicios de Google, no de la
+  app). **Lo confirma la prueba en la calle**: 20 min con la pantalla apagada y
+  mirar el móvil. Ojo al probar en el emulador: recién arrancado y con el Mac
+  cargado da ANR él solo; mirar `adb shell cat /proc/pressure/io` antes de
+  creerse un cuelgue.
+- **El GPS seguía encendido con la app cerrada** (10-nov-2026, un usuario:
+  «aun estando cerrada sigue haciendo llamadas al GPS»; arreglado en la 1.11.15
+  vc93 / build 39). Si la app muere a mitad de carrera sin PARAR, la tarea de
+  fondo se queda registrada: en Android sobrevive a la muerte del proceso y
+  vuelve tras reiniciar o actualizar (receptor de expo-task-manager), y en
+  iPhone, además de GPS, se apunta al «cambio de ubicación significativo» y
+  iOS vuelve a abrir la app por detrás. Solo la paraba el MAPA al montarse, y
+  el mapa no se monta sin sesión: con el iPhone bloqueado SecureStore no deja
+  leer el token y la app arranca sin sesión, así que el huérfano no se limpiaba
+  nunca. Ahora `pararSeguimientoHuerfano()` (MapScreen.tsx) se llama también
+  desde App.tsx al arrancar, antes de leer la sesión; misma regla de siempre
+  (solo sin carrera viva) y sin tocar los puntos del disco (§14). **Queda sin
+  arreglar**: en Android, el huérfano que vuelve tras reiniciar el móvil sigue
+  hasta que se abre la app (pararlo desde la propia tarea toca la pieza
+  delicada); en iPhone se pide el permiso «Siempre» en cada carrera y no hace
+  falta (con «Mientras se usa» la tarea funciona, y sin «Siempre» iOS no
+  relanza la app); y `getCurrentPositionAsync` al abrir el mapa no tiene tope
+  en Android (si no hay señal, el GPS sigue buscando un rato aunque salgas).
+  Revisión entera del 10-nov: tarea de fondo, mapa, HealthKit y detector de
+  carrera; lo demás no pide ubicación con la app cerrada.
 - **El mapa se comía la cuota gratis de Supabase** (24-oct-2026, arreglado en
   el servidor sin build): el plan gratis da 5 GB/mes de datos de SALIDA
   (egress) y CORRR gastaba ~1,1 GB AL DÍA; el ciclo anterior se pasó ~6 veces
@@ -1579,6 +1656,11 @@ marca `es_bot` y sacarlos de:
   cómo se graba — solo rescatar lo que ya hay.
   Ya existe la pieza que lo hace: `src/tracking/importWorkout.ts` repasa una
   ruta entera por el mismo `RunTracker` (es lo que hace con las del reloj).
+  **10-nov-2026: encontrada una de las causas, y arreglada en la 1.11.15 vc93**
+  (§9, «La carrera se colgaba al mirar el móvil»): con la pantalla apagada mucho
+  rato, al volver la app se bloqueaba poniéndose al día y Android ofrecía
+  cerrarla. Encaja con el del audio del 14-oct («congelada en 0,0 km · 7 s,
+  luego cerrada»). El rescate de lo que queda en disco sigue pendiente.
   **Decisión de Iban (14-oct): se hace DESPUÉS de Halloween.** "Si hacemos este
   arreglo y reventamos el mapa, la gente se desmotiva." Toca la pieza más
   delicada a ocho días de subir, y el evento manda.

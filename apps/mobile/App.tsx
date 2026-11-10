@@ -23,7 +23,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { colors } from './src/theme';
 import { api } from './src/services/api';
 import OnboardingScreen from './src/screens/OnboardingScreen';
-import MapScreen from './src/screens/MapScreen';
+import MapScreen, { pararSeguimientoHuerfano } from './src/screens/MapScreen';
 import StatsScreen from './src/screens/StatsScreen';
 import RankingScreen from './src/screens/RankingScreen';
 import RetosScreen from './src/screens/RetosScreen';
@@ -157,6 +157,10 @@ export default function App() {
 
   // Al montar, intentar restaurar sesión guardada
   useEffect(() => {
+    // Antes que nada y sin esperar: si quedó encendido el GPS de una carrera
+    // que murió sin PARAR, se apaga aunque luego no haya sesión y el mapa no
+    // llegue a montarse (ver pararSeguimientoHuerfano).
+    pararSeguimientoHuerfano();
     (async () => {
       try {
         let token = await SecureStore.getItemAsync(TOKEN_KEY);

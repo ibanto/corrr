@@ -34,6 +34,14 @@ Android y otra en iPhone.
 | 7 | Abrir Estadísticas | La carrera está, con los mismos km que el resumen |
 | 8 | Mirar el mapa | Solo está pintado por donde pasaste. Ninguna cuña entre el inicio y el final |
 
+**Y una vez, la larga** (desde la 1.11.15 vc93, 10-nov-2026): una carrera de
+verdad con la pantalla apagada **20 minutos seguidos sin mirar el móvil**, y
+entonces encenderlo. Los km y el tiempo tienen que salir al día **al momento**,
+sin que la app se quede parada ni salga «CORRR no responde». Antes tardaba un
+segundo por cada minuto sin mirar, y pasados los 15 se colgaba y se perdía la
+carrera (CLAUDE.md §9, «La carrera se colgaba al mirar el móvil»). Sobre todo
+en Android.
+
 ## 3. Apple Watch — en iPhone, con el reloj
 
 Solo si se ha tocado la importación (`src/services/healthkit.ts`,

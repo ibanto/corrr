@@ -17,6 +17,8 @@
     "gps-check.ts",
     "map-check.ts",
     "../src/tracking/runTracker.ts",
-    "../src/map/territory.ts"
+    "../src/map/territory.ts",
+    "copia-check.ts",
+    "../src/tracking/copiaCarrera.ts"
   ]
 }

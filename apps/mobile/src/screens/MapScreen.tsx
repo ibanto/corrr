@@ -37,6 +37,7 @@ import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { colors, spacing, radius } from '../theme';
 import { api, RemoteZone, MapTerritory, ObjetoMapa, TauntInbox, CellRunPayload, TipoObjeto } from '../services/api';
+import { apretarCarrera, soltarCarrera } from '../tracking/copiaCarrera';
 import ZonePopup, { PopupType } from '../components/ZonePopup';
 import BuscadorCiudad from '../components/BuscadorCiudad';
 import ShareRunCard, { ShareRunData, ShareSteal } from '../components/ShareRunCard';
@@ -183,6 +184,21 @@ const toReading = (loc: Location.LocationObject): GpsReading => ({
 // disco hasta volver a la app y se procesaban con otras reglas.
 let bgReadingsListener: ((readings: GpsReading[]) => void) | null = null;
 
+/** ¿Está la app a la vista? Con la pantalla apagada NO se pinta nada.
+ *
+ *  Por qué (10-nov-2026, un corredor por audio: «si paso más de 15 minutos sin
+ *  mirar el móvil, al abrirlo tarda en ponerse al día, un segundo por minuto, y
+ *  luego se cuelga y se para»): en Android, con la app en segundo plano React
+ *  Native APARCA los cambios de pantalla (FabricUIManager.onHostPause) y los
+ *  aplica TODOS de golpe al volver. Cada punto del GPS cambiaba el trazo entero,
+ *  el territorio y los km: unas 20 tandas por minuto, todas encoladas. Con 15
+ *  minutos son 300, el móvil se queda sin responder más de 5 s y Android
+ *  ofrece cerrar la app, que se lleva la carrera.
+ *
+ *  Ahora, sin pantalla, el punto entra en el registro (km, celdas, trazo) y
+ *  NO se pinta; al volver se pinta UNA vez lo que haya (pintarCarrera). */
+const appALaVista = () => AppState.currentState !== 'background';
+
 /** La carrera en marcha, guardada FUERA de la pantalla.
  *
  *  Por qué existe (23-oct-2026, reproducido en el emulador): en Android, cuando
@@ -283,6 +299,32 @@ async function borrarCopiaSiEsLaMisma(enviada: string): Promise<void> {
   } catch (e) {
     console.warn('[pendiente] no se pudo borrar la copia ya mandada:', e);
   }
+}
+
+/** Si quedó en marcha el seguimiento de una carrera que ya no existe, se para.
+ *
+ *  Pasa cuando la app muere a mitad de carrera sin pulsar PARAR: la tarea de
+ *  fondo se queda registrada y el GPS sigue (en iPhone, además, el sistema
+ *  vuelve a abrir la app por detrás). Solo sin carrera viva: con ella, el
+ *  JavaScript es el mismo y la carrera sigue (ver el efecto de montaje).
+ *
+ *  Se llama también desde App.tsx al arrancar (10-nov-2026): antes solo lo
+ *  hacía el mapa al montarse, y el mapa no se monta sin sesión (iPhone
+ *  bloqueado, sesión caducada) ni con la pantalla de «actualiza la app». Un
+ *  usuario: «aun estando cerrada sigue haciendo llamadas al GPS».
+ *
+ *  Los puntos que dejó en disco NO se tocan: son lo único que queda de esa
+ *  carrera (§14). */
+export async function pararSeguimientoHuerfano(): Promise<void> {
+  if (carreraViva) return;
+  try {
+    const vivo = await TaskManager.isTaskRegisteredAsync(BACKGROUND_LOCATION_TASK);
+    // Otra vez tras esperar: si entretanto se ha empezado una carrera, la
+    // tarea registrada es la suya.
+    if (!vivo || carreraViva) return;
+    await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
+    console.warn('[BG Location] había un seguimiento huérfano de una carrera anterior; parado');
+  } catch {}
 }
 
 /** Ver restaurarCarreraViva: margen para que entre antes la tanda de puntos
@@ -1072,7 +1114,9 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       // borra (o falla): así una pantalla rehecha entretanto no la repite.
       guardandoCarrera++;
       try {
-        const carrera = JSON.parse(guardada) as CellRunPayload;
+        // Una vuelta grande se guardó apretada (ver copiaCarrera): aquí vuelve
+        // a ser la carrera de siempre, con todas sus casillas.
+        const carrera = soltarCarrera<CellRunPayload>(guardada);
         const res = await api.saveRun(carrera);
         await borrarCopiaSiEsLaMisma(guardada);
         if (cancelado) return;
@@ -1128,6 +1172,10 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
   useEffect(() => {
     const handleAppState = async (nextState: AppStateStatus) => {
       if (!isRunningRef.current || nextState !== 'active') return;
+      // Lo corrido con la pantalla apagada, pintado de una vez (ver
+      // appALaVista). Antes que nada: es lo que el corredor viene a mirar.
+      // Solo usa referencias y setters, así que vale la del primer pintado.
+      pintarCarrera();
       // Check for new robo notifications and incoming taunts.
       checkUnreadTaunts();
       // Force-recompute runTime from Date.now() math — catches up the timer
@@ -1206,15 +1254,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       restaurarCarreraViva(viva);
       return;
     }
-    (async () => {
-      try {
-        const vivo = await TaskManager.isTaskRegisteredAsync(BACKGROUND_LOCATION_TASK);
-        if (vivo) {
-          await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
-          console.warn('[BG Location] había un seguimiento huérfano de una carrera anterior; parado');
-        }
-      } catch {}
-    })();
+    pararSeguimientoHuerfano();
   }, []);
 
   // Las animaciones del antiguo loading screen (pulseAnim + rotateAnim)
@@ -2257,23 +2297,27 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
     const out = tr.addReading(r);
     if (out.kind === 'duplicate' || out.kind === 'skip') return out;
 
+    // Sin pantalla, el punto se apunta pero no se pinta (ver appALaVista): lo
+    // pinta pintarCarrera al volver. Solo cambia lo que se VE; km, celdas,
+    // trazo, pausas y logos cogidos van igual que siempre.
+    const pintar = appALaVista();
     lastGoodPointRef.current = Date.now();
     if (out.kind === 'teleport') {
       // Hueco sin puntos (túnel, señal perdida): tramo visual nuevo.
       if (pathRef.current.length > 1) {
         const done = [...pathRef.current];
         segmentosRef.current = [...segmentosRef.current, done];
-        setPathSegments(segmentosRef.current);
+        if (pintar) setPathSegments(segmentosRef.current);
       }
       pathRef.current = [out.coord];
-      setCurrentPath([out.coord]);
+      if (pintar) setCurrentPath([out.coord]);
     } else {
       pathRef.current = [...pathRef.current, out.coord];
-      setCurrentPath([...pathRef.current]);
+      if (pintar) setCurrentPath([...pathRef.current]);
       // Velocidad con EMA: un spike aislado de deriva apenas mueve la aguja.
-      if (out.moved) setCurrentSpeed(prev => prev * 0.7 + out.speedKmh * 0.3);
+      if (out.moved && pintar) setCurrentSpeed(prev => prev * 0.7 + out.speedKmh * 0.3);
       if (out.cellsChanged) {
-        setClaimedCellsTick(t => t + 1);
+        if (pintar) setClaimedCellsTick(t => t + 1);
         // ¿Había un objeto en esta celda? El servidor es quien lo da por
         // bueno al guardar la carrera; esto es solo para que se entere en
         // el momento, que es la gracia.
@@ -2287,39 +2331,65 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
           : (Math.abs(o.x - celda.x) <= RADIO_LOGO && Math.abs(o.y - celda.y) <= RADIO_LOGO));
         if (pillado) {
           objetosRef.current = objetosRef.current.filter(o => o.id !== pillado.id);
-          setObjetos(objetosRef.current);
-          setObjetoCogido(pillado);
+          // La vibración sí, también con el móvil en el bolsillo: no pinta nada.
           Vibration.vibrate([0, 120, 80, 120]);
-          setTimeout(() => setObjetoCogido(null), 4000);
+          if (pintar) {
+            setObjetos(objetosRef.current);
+            setObjetoCogido(pillado);
+            setTimeout(() => setObjetoCogido(null), 4000);
+          }
         }
       }
     }
     if (out.resumed) {
-      setIsAutoPaused(false);
+      if (pintar) setIsAutoPaused(false);
       if (pauseStartedAtRef.current) {
         // Con la hora del punto, no la de ahora: ver finDePausa.
         pausedAccumulatedRef.current += finDePausa(pauseStartedAtRef.current, r);
         pauseStartedAtRef.current = null;
       }
     }
-    setDistance(tr.distanceKm);
-    setDistancePosDelta(tr.positionKm);
-    setSpeedWarning(false);
-    // La señal ha vuelto YA, no en el próximo repaso del vigilante (cada 3 s).
-    // Hace falta por "Buscando GPS…": si el vigilante ya la daba por débil
-    // mientras se buscaba, al llegar el primer punto dejaría de buscarse y,
-    // hasta ese repaso, saltaría "Sin señal" con vibración justo al engancharse.
-    setGpsWeak(false);
+    if (pintar) {
+      setDistance(tr.distanceKm);
+      setDistancePosDelta(tr.positionKm);
+      setSpeedWarning(false);
+      // La señal ha vuelto YA, no en el próximo repaso del vigilante (cada 3 s).
+      // Hace falta por "Buscando GPS…": si el vigilante ya la daba por débil
+      // mientras se buscaba, al llegar el primer punto dejaría de buscarse y,
+      // hasta ese repaso, saltaría "Sin señal" con vibración justo al engancharse.
+      setGpsWeak(false);
+    }
 
-    if (live && out.kind === 'accept' && !loopDetected && pathRef.current.length >= 10) {
+    if (live && pintar && out.kind === 'accept' && !loopDetected && pathRef.current.length >= 10) {
       if (checkLoop(pathRef.current)) closeLoop([...pathRef.current]);
     }
     return out;
   };
 
+  /** Pinta de una vez la carrera tal como está en el registro. Al volver a la
+   *  app: con la pantalla apagada los puntos se apuntan sin pintarse (ver
+   *  appALaVista), y esto es lo que la pone al día de golpe, en UN solo cambio
+   *  de pantalla en vez de cientos. */
+  const pintarCarrera = () => {
+    const tr = trackerRef.current;
+    if (!tr || !isRunningRef.current) return;
+    setPathSegments(segmentosRef.current);
+    setCurrentPath([...pathRef.current]);
+    setClaimedCellsTick(t => t + 1);
+    setObjetos(objetosRef.current);
+    setDistance(tr.distanceKm);
+    setDistancePosDelta(tr.positionKm);
+    setIsAutoPaused(tr.autoPaused);
+    setSpeedWarning(false);
+    // La misma cuenta que el vigilante de señal, sin esperar a su repaso.
+    setGpsWeak(Date.now() - lastGoodPointRef.current > 25000);
+  };
+
   const handleLocationUpdate = (loc: Location.LocationObject) => {
     const out = handleReading(toReading(loc), true);
-    if (!out || out.kind !== 'accept') return;
+    // Sin pantalla, la cámara tampoco se mueve: cada movimiento se quedaba en
+    // la cola de Android y al volver se hacían todos seguidos (ver appALaVista).
+    if (!out || out.kind !== 'accept' || !appALaVista()) return;
     // El mapa sigue al corredor. El zoom se fija UNA vez, en el primer
     // punto: antes se imponía en cada lectura, así que si abrías el mapa a
     // mitad de carrera y te alejabas para ver el barrio, el siguiente punto
@@ -2701,8 +2771,15 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
         envioTerminado = true;
         guardandoCarrera--;
       };
-      const copia = JSON.stringify(carrera);
-      try { await AsyncStorage.setItem(CARRERA_PENDIENTE, copia); } catch {}
+      // Apretada si es una vuelta grande (10-nov-2026, ver copiaCarrera): en
+      // Android una copia de más de ~2 MiB se escribía pero no se podía volver
+      // a leer, y la carrera se perdía aunque estuviera en el disco.
+      const copia = apretarCarrera(carrera);
+      try {
+        await AsyncStorage.setItem(CARRERA_PENDIENTE, copia);
+      } catch (e) {
+        console.warn('[pendiente] no se pudo guardar la copia en el móvil:', e);
+      }
 
       api.saveRun(carrera).then(async (res) => {
         // Confirmada: ya no hace falta la copia del móvil — si sigue siendo
