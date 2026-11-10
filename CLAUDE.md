@@ -67,7 +67,11 @@ ha montado**; el próximo AAB será 1.11.16 vc94 o posterior (lo que hay en Play
 1. iPhone: la versión 1.11.16 ya tiene la build 40 → «¿Está viva?» en el panel → «Añadir a revisión» y enviar. La prueba
    en la calle del iPhone, mientras Apple revisa.
 2. Android: Pruebas internas → «Promocionar versión» → Producción, con las notas de producción, y enviarla a revisión YA;
-   con la «Publicación gestionada» se queda esperando aunque Google la apruebe.
+   con la «Publicación gestionada» se queda esperando aunque Google la apruebe. **OJO (visto en Play Console el 10-nov,
+   ~21:00): «Producción» sale en gris** con el aviso «El canal ya tiene una versión en borrador». Es la **89 (1.11.13)**,
+   que se mandó a producción el 2-nov, Google aprobó y sigue esperando en Resumen de publicación («Cambios listos para
+   publicarse»). Esa NO se publica: hay que quitarla (Resumen de publicación → «Eliminar cambios»; y si el canal sigue
+   con borrador, Producción → Versiones → descartarla) y entonces ya deja promocionar la 93. En producción sigue la vc88.
 3. Con las dos aprobadas: «Publicar esta versión» en App Store Connect y «Publicar 1 cambio» en Play Console.
 4. Cuando cada ficha enseñe la suya: anunciarlas (Android `LATEST_APP_VERSION` 1.11.15 / `LATEST_APP_VC` 93; iPhone
    `LATEST_IOS_VERSION` 1.11.16 / `LATEST_IOS_BUILD` 40; lo hace Claude con un push, con el OK de Iban) y encender Tótems,
