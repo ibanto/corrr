@@ -1,4 +1,8 @@
-# Notas de la versión 1.11.15 (Android vc93 · iPhone build 39)
+# Notas de la versión 1.11.15 (Android vc93 · iPhone build 38)
+
+**OJO, 10-nov-2026 por la tarde:** en el iPhone la 1.11.15 que aprobó Apple es la **build 38** (la del 7-nov, sin
+los arreglos del 10-nov). La build 39 no se usa. Los arreglos van al iPhone como **1.11.16 (build 40)**:
+`store/notas-1.11.16.md`. Lo de la «build 39» de más abajo vale solo como historia. En Android sí: 1.11.15 vc93.
 
 **10-nov-2026: se vuelve a montar como vc93 / build 39** (la vc92 / build 38 del 7-nov no se
 publica: subir y probar la nueva). Lleva, además de lo de abajo:
