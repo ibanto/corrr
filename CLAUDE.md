@@ -65,13 +65,18 @@ subir nada. **El repo ya está en 1.11.16**: en `build.gradle` y `app.json` pone
 ha montado**; el próximo AAB será 1.11.16 vc94 o posterior (lo que hay en Play es el commit `4607a90`).
 **Plan de Iban (10-nov): publicar en las dos tiendas a la vez, en cuanto Apple apruebe.** Orden:
 1. iPhone: la versión 1.11.16 ya tiene la build 40 → «¿Está viva?» en el panel → «Añadir a revisión» y enviar. La prueba
-   en la calle del iPhone, mientras Apple revisa.
-2. Android: Pruebas internas → «Promocionar versión» → Producción, con las notas de producción, y enviarla a revisión YA;
-   con la «Publicación gestionada» se queda esperando aunque Google la apruebe. **OJO (visto en Play Console el 10-nov,
-   ~21:00): «Producción» sale en gris** con el aviso «El canal ya tiene una versión en borrador». Es la **89 (1.11.13)**,
-   que se mandó a producción el 2-nov, Google aprobó y sigue esperando en Resumen de publicación («Cambios listos para
-   publicarse»). Esa NO se publica: hay que quitarla (Resumen de publicación → «Eliminar cambios»; y si el canal sigue
-   con borrador, Producción → Versiones → descartarla) y entonces ya deja promocionar la 93. En producción sigue la vc88.
+   en la calle del iPhone, mientras Apple revisa. **OJO: el 10-nov (~21:15) `GET /admin/cuenta-revision` contestó
+   `{"existe":false}` para `applereview@corrr.es`: LA CUENTA DE REVISIÓN NO EXISTE.** Antes de enviar a Apple hay que
+   crearla en el panel (`/admin` → Herramientas → «Cuenta para la revisión de Apple» → «Crear o reparar la cuenta», con la
+   misma contraseña que hay en App Store Connect) y comprobarla con «¿Está viva?». Eso lo hace Iban (§15).
+2. Android: **HECHO el 10-nov (~21:20), por Claude con el Chrome de Iban y su OK**: la **93 (1.11.15) está en «Cambios en
+   revisión»** de Google, producción al 100 %, con las notas de producción. Con la «Publicación gestionada» se queda
+   esperando aunque Google la apruebe. Cómo se llegó: «Producción» salía en gris («El canal ya tiene una versión en
+   borrador») porque quedaba la **89 (1.11.13)** del 2-nov, aprobada y sin publicar, más un borrador vacío. Se quitó la 89
+   de «listos para publicarse» (Resumen de publicación → «Eliminar cambios»; vuelve a «aún no enviados», no se borra) y la 93
+   se metió en el borrador vacío con «Añadir de la biblioteca» (Producción → Versiones → «Editar versión»); al guardarla
+   sustituyó a la 89. **Lección: si «Promocionar a producción» sale en gris, mirar Producción → Versiones.** En producción
+   sigue la vc88 (1.11.12) hasta que se publique la 93.
 3. Con las dos aprobadas: «Publicar esta versión» en App Store Connect y «Publicar 1 cambio» en Play Console.
 4. Cuando cada ficha enseñe la suya: anunciarlas (Android `LATEST_APP_VERSION` 1.11.15 / `LATEST_APP_VC` 93; iPhone
    `LATEST_IOS_VERSION` 1.11.16 / `LATEST_IOS_BUILD` 40; lo hace Claude con un push, con el OK de Iban) y encender Tótems,
