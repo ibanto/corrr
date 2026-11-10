@@ -40,14 +40,25 @@ anunciar; la ficha web sí (ahí sale "Versión 1.11.11" como actual con su fech
 
 **10-nov: la 1.11.15 se vuelve a montar como Android vc93 / iPhone build 39** (la vc92 / build 38 no se publica).
 Lleva, además de lo de abajo, tres arreglos de la app (§9): **la carrera ya no se cuelga al mirar el móvil tras
-mucho rato con la pantalla apagada** (**falta la prueba en la calle: 20 min sin mirar el móvil y luego mirarlo**), **la copia de una vuelta grande se puede volver a
+mucho rato con la pantalla apagada** (**probado en la calle en Android**, ver abajo), **la copia de una vuelta grande se puede volver a
 leer en Android** y **el GPS de una carrera que murió sin PARAR se apaga al abrir la app**. Notas en `store/notas-1.11.15.md`.
 Commit `4607a90`, **subido a GitHub el 10-nov a las 17:30 con el OK de Iban** (`/health` → `4607a90`; el servidor no cambia
 con él, y `/app/version` sigue anunciando Android 1.11.12 e iPhone 1.11.11: no se anuncia nada hasta que cada tienda publique).
 AAB en `apps/mobile/builds/corrr-v1.11.15-vc93.aab` (95 MB; por dentro: 1.11.15, vc93, firma SHA-256 de siempre, servidor de
 producción, sin depuración). iPhone archivado como `CORRR-1.11.15-build39` y **SUBIDO a App Store Connect (TestFlight) el 10-nov
-a las 17:26**. **Falta**: que Iban suba el AAB a la prueba interna de Play Console, y la prueba en la calle en los dos móviles
-(`docs/prueba-gps.md`, con «la larga»: 20 min sin mirar el móvil). Si puede, que la pruebe también el corredor del audio.
+a las 17:26**.
+**PRUEBA EN LA CALLE, ANDROID: OK** (Iban, 10-nov, con la vc93 desde la prueba interna): carrera de 30 minutos, **20 de ellos con
+la pantalla apagada sin mirar el móvil**; al encender, todo al día y ningún error. Es la confirmación del arreglo del cuelgue que
+no se pudo acabar en el emulador. **Falta**: la misma prueba en el iPhone (build 39, TestFlight) y, si puede, que la pruebe el
+corredor del audio.
+**Plan de Iban (10-nov): publicar en las dos tiendas a la vez, en cuanto Apple apruebe.** Orden:
+1. iPhone: publicar la 1.11.14 (aprobada y en espera) → «+» 1.11.15 → elegir la **build 39** → enviar a revisión (antes, el
+   botón «¿Está viva?» del panel y repasar las Novedades, §15).
+2. Android: subir la vc93 a Producción y enviarla a revisión YA; con la «Publicación gestionada» se queda esperando aunque
+   Google la apruebe.
+3. Con las dos aprobadas: «Publicar esta versión» en App Store Connect y «Publicar 1 cambio» en Play Console.
+4. Cuando cada ficha enseñe la 1.11.15: anunciarla (`LATEST_APP_VERSION` 1.11.15 / `LATEST_APP_VC` 93 y `LATEST_IOS_VERSION`
+   1.11.15 / `LATEST_IOS_BUILD` 39; lo hace Claude con un push, con el OK de Iban) y encender Tótems, Aura y Navidad en el panel.
 **1.11.15 (Android vc92, iPhone build 38) — MONTADA el 7-nov. iPhone SUBIDO a App Store Connect (TestFlight) el 7-nov ~13:27; falta que Iban suba el AAB a la prueba interna de Play Console y haga la prueba en la calle.**
 **La 1.11.14 del iPhone (build 37) YA la aprobó Apple y espera a que Iban pulse «Publicar esta versión»** (visto en
 App Store Connect el 7-nov: «1.11.14 Pendiente de publicación»; antes yo la di por no publicada, error mío).
@@ -760,8 +771,9 @@ verdad, compilar en **Release** (lleva el código dentro y no necesita nada):
   10 min con el arreglo NO se pudo completar**: el Mac estaba renderizando en
   After Effects y el emulador se ahogó (disco y CPU del Android simulado
   saturados; ANR de `TaskJobService` y de los servicios de Google, no de la
-  app). **Lo confirma la prueba en la calle**: 20 min con la pantalla apagada y
-  mirar el móvil. Ojo al probar en el emulador: recién arrancado y con el Mac
+  app). **Lo confirmó la prueba en la calle** (Iban, 10-nov, Android, vc93): 30
+  minutos de carrera, 20 con la pantalla apagada sin mirar el móvil, y al
+  encender todo al día y sin un error. Ojo al probar en el emulador: recién arrancado y con el Mac
   cargado da ANR él solo; mirar `adb shell cat /proc/pressure/io` antes de
   creerse un cuelgue.
 - **El GPS seguía encendido con la app cerrada** (10-nov-2026, un usuario:
