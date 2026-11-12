@@ -1320,6 +1320,7 @@ servidor:
     de git; su `LEEME.txt` dice cómo arrancarlo). `MODO=campana npm run mock` enseña también los cuatro casos.
   - **Pendiente, sin hacer**: avisar a los apuntados cuando el reto termina (hoy, un aviso a mano desde el panel) y poder
     quitar a un tramposo de los ganadores (las bases dicen que se revisa el top 3).
+- **Puntos por logo (12-nov-2026, Iban: «puntos por logo 1, no entiendo por qué hay que poner 200»)**: la casilla «Puntos de cada logo» del panel traía 200 por defecto (copiado de las calabazas); ahora trae **1** (commit `f9be519`, sin build: los puntos van en cada logo al sembrar y la app solo enseña lo que manda el servidor). Los logos que se siembren con otro valor, lo llevan. Los logos de dentro de un círculo cerrado en la MISMA carrera ya los daba `recoger` (el relleno entra como celdas de la carrera); los cercos entre días siguen sin darlos.
 - **Las apps de antes de la 1.11.13 no saben nada**: con Halloween apagado no ven los
   logos; encendido, los pintan como calabazas. Antes de lanzar una campaña de verdad,
   que la 1.11.13 esté en las dos tiendas (y valorar `MIN_APP_VERSION`, §9).
