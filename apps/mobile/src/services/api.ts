@@ -187,6 +187,13 @@ export interface Reto {
   /** Sus logos solo los ve y los coge quien se apunta. */
   apuntado: boolean;
   apuntados: number;
+  /** Alguna de sus ciudades es la mía. Los retos se ven todos, sean de donde sean. */
+  deAqui?: boolean;
+  /** Sus logos han caducado: ya no se apunta ni se borra nadie, y hay ganadores. */
+  finalizado?: boolean;
+  /** Los primeros de la clasificación final; cuántos, lo dice el panel. Vacío si
+   *  nadie cogió nada. Solo viene en los terminados. */
+  ganadores?: RankingObjeto[];
 }
 
 /** El anuncio de "Próximamente" en Retos (lo decide el servidor). */
@@ -688,7 +695,10 @@ class ApiService {
    *  ha podido preguntar. */
   async getRetos(): Promise<{ retos: Reto[]; proximamente: Proximamente | null } | undefined> {
     try {
-      const res = await this.request<{ retos?: Reto[]; proximamente?: Proximamente | null }>('/app/retos');
+      // v=2: «sé pintar un reto terminado». Sin él, el servidor mete el FINALIZADO
+      // y los ganadores dentro de los textos, que es lo que entienden las apps
+      // de hasta la 1.11.16.
+      const res = await this.request<{ retos?: Reto[]; proximamente?: Proximamente | null }>('/app/retos?v=2');
       return { retos: res?.retos ?? [], proximamente: res?.proximamente ?? null };
     } catch {
       return undefined;
@@ -734,11 +744,13 @@ class ApiService {
     }
   }
 
-  /** Quién lleva más calabazas, y cuántas llevo yo. */
+  /** Quién lleva más calabazas (o más logos de un reto), y cuántas llevo yo.
+   *  v=2: también la de un reto terminado, que aquí se pinta como clasificación
+   *  final (a las apps de antes el servidor no se la manda). */
   async getRankingCalabazas(tipo = 'calabaza'): Promise<{ mias: number; ranking: RankingObjeto[] }> {
     try {
       const res = await this.request<{ mias?: number; ranking?: RankingObjeto[] }>(
-        `/objetos/ranking?tipo=${encodeURIComponent(tipo)}`,
+        `/objetos/ranking?tipo=${encodeURIComponent(tipo)}&v=2`,
       );
       return { mias: res?.mias ?? 0, ranking: res?.ranking ?? [] };
     } catch {

@@ -7,8 +7,14 @@ import { colors, spacing, radius } from '../theme';
 import { api, RankingObjeto, Reto, Proximamente } from '../services/api';
 
 /**
- * RetosScreen — la LISTA DE RETOS de mi ciudad, y si no hay ninguno,
- * "Próximamente".
+ * RetosScreen — la LISTA DE RETOS, y si no hay ninguno, "Próximamente".
+ *
+ *  Salen los de todas las ciudades (Iban, 12-nov-2026: «todo el mundo puede
+ *  ver los retos de todas las ciudades y se pueden apuntar a cualquier reto»):
+ *  primero los de la mía, y cada uno dice dónde es. Los TERMINADOS van al
+ *  final, con su sello de FINALIZADO, sin botón de apuntarse y con la lista de
+ *  ganadores (los primeros de la clasificación; cuántos, lo dice el panel).
+ *  Qué está terminado y quién gana lo decide el servidor.
  *
  *  Cada reto se escribe en el panel y sale entero del servidor (dibujo, fechas,
  *  título, texto, premio): un reto nuevo no pide versión nueva. Se entra en él y
@@ -113,6 +119,8 @@ export default function RetosScreen() {
   }
 
   if (reto) {
+    const acabado = reto.finalizado === true;
+    const ganadores = reto.ganadores ?? [];
     return (
       <ScrollView
         style={styles.fondo}
@@ -129,7 +137,11 @@ export default function RetosScreen() {
           <Text style={styles.volverTexto}>‹ Retos</Text>
         </TouchableOpacity>
         <LogoReto reto={reto} estilo={styles.calabaza} />
-        {!!reto.fechas && <Text style={styles.fechas}>{reto.fechas}</Text>}
+        {acabado && (
+          <View style={styles.finalizado}><Text style={styles.finalizadoTexto}>FINALIZADO</Text></View>
+        )}
+        {!!reto.fechas && <Text style={[styles.fechas, acabado && styles.pasado]}>{reto.fechas}</Text>}
+        {!!reto.ciudad && <Text style={styles.donde}>{reto.ciudad.toUpperCase()}</Text>}
         <Text style={styles.titulo}>{reto.titulo || reto.nombre}</Text>
         {reto.apuntado && (
           <View style={styles.tuyas}>
@@ -137,32 +149,58 @@ export default function RetosScreen() {
             <Text style={styles.tuyasTexto}>{mias === 1 ? 'cogido' : 'cogidos'}</Text>
           </View>
         )}
-        {!!reto.texto && <Text style={styles.parrafo}>{reto.texto}</Text>}
+        {/* Terminado: en vez de cómo se juega, quién ha ganado. */}
+        {!acabado && !!reto.texto && <Text style={styles.parrafo}>{reto.texto}</Text>}
+        {acabado && ganadores.length > 0 && (
+          <View style={[styles.tabla, styles.ganadores]}>
+            <Text style={styles.premioTitulo}>{ganadores.length === 1 ? 'GANADOR' : 'GANADORES'}</Text>
+            {ganadores.map((g, i) => (
+              <View key={g.userId} style={[styles.fila, g.mine && styles.filaMia]}>
+                <Text style={[styles.puesto, styles.puestoGanador]}>{i + 1}.º</Text>
+                <Text style={[styles.nombre, g.mine && styles.textoMio]} numberOfLines={1}>
+                  {g.name}
+                </Text>
+                <Text style={[styles.cuantas, g.mine && styles.textoMio]}>{g.cuantos}</Text>
+              </View>
+            ))}
+            {ganadores.some(g => g.mine) && (
+              <Text style={styles.enhorabuena}>¡Enhorabuena! Estás entre los ganadores.</Text>
+            )}
+          </View>
+        )}
+        {acabado && ganadores.length === 0 && (
+          <Text style={styles.parrafo}>Nadie cogió ningún logo: este reto se queda sin ganadores.</Text>
+        )}
         {!!reto.premio && (
           <View style={styles.premio}>
             <Text style={styles.premioTitulo}>EL PREMIO</Text>
             <Text style={styles.avisoTexto}>{reto.premio}</Text>
           </View>
         )}
-        <TouchableOpacity
-          style={[styles.boton, reto.apuntado && styles.botonSalir, enviando && styles.botonEnviando]}
-          onPress={() => cambiarApuntado(reto)}
-          disabled={enviando}
-        >
-          <Text style={[styles.botonTexto, reto.apuntado && styles.botonSalirTexto]}>
-            {reto.apuntado ? 'DESAPUNTARME' : 'ME APUNTO'}
-          </Text>
-        </TouchableOpacity>
-        <Text style={styles.nota}>
-          {fallo
-            ? 'No ha salido. Prueba otra vez.'
-            : reto.apuntado
-              ? 'Ya estás dentro: sus logos salen en tu mapa.'
-              : 'Sus logos solo salen en el mapa de quien se apunta.'}
+        {!acabado && (
+          <TouchableOpacity
+            style={[styles.boton, reto.apuntado && styles.botonSalir, enviando && styles.botonEnviando]}
+            onPress={() => cambiarApuntado(reto)}
+            disabled={enviando}
+          >
+            <Text style={[styles.botonTexto, reto.apuntado && styles.botonSalirTexto]}>
+              {reto.apuntado ? 'DESAPUNTARME' : 'ME APUNTO'}
+            </Text>
+          </TouchableOpacity>
+        )}
+        <Text style={[styles.nota, acabado && styles.notaFinal]}>
+          {acabado
+            ? 'Este reto ha terminado. Ya no se puede apuntar nadie.'
+            : fallo
+              ? 'No ha salido. Prueba otra vez.'
+              : reto.apuntado
+                ? 'Ya estás dentro: sus logos salen en tu mapa.'
+                : 'Sus logos solo salen en el mapa de quien se apunta.'}
         </Text>
-        {ranking.length > 0 && (
+        {/* La tabla entera solo aporta algo si hay más gente que ganadores. */}
+        {ranking.length > 0 && (!acabado || ranking.length > ganadores.length) && (
           <View style={styles.tabla}>
-            <Text style={styles.tablaTitulo}>QUIÉN VA GANANDO</Text>
+            <Text style={styles.tablaTitulo}>{acabado ? 'CLASIFICACIÓN FINAL' : 'QUIÉN VA GANANDO'}</Text>
             {ranking.slice(0, 8).map((r, i) => (
               <View key={r.userId} style={[styles.fila, r.mine && styles.filaMia]}>
                 <Text style={[styles.puesto, r.mine && styles.textoMio]}>{i + 1}</Text>
@@ -190,15 +228,22 @@ export default function RetosScreen() {
         <Text style={styles.tituloLista}>RETOS</Text>
         {retos.map(r => (
           <TouchableOpacity key={r.tipo} style={styles.tarjeta} onPress={() => setAbierto(r.tipo)}>
-            <LogoReto reto={r} estilo={styles.tarjetaLogo} />
+            <LogoReto reto={r} estilo={[styles.tarjetaLogo, r.finalizado && styles.logoPasado]} />
             <View style={styles.tarjetaTextos}>
-              <Text style={styles.tarjetaTitulo} numberOfLines={2}>{r.titulo || r.nombre}</Text>
-              {!!r.fechas && <Text style={styles.tarjetaFechas} numberOfLines={1}>{r.fechas}</Text>}
-              <Text style={styles.tarjetaCifra}>
+              <Text style={[styles.tarjetaTitulo, r.finalizado && styles.tituloPasado]} numberOfLines={2}>
+                {r.titulo || r.nombre}
+              </Text>
+              {!!r.fechas && (
+                <Text style={[styles.tarjetaFechas, r.finalizado && styles.pasado]} numberOfLines={1}>{r.fechas}</Text>
+              )}
+              <Text style={styles.tarjetaCifra} numberOfLines={1}>
                 {r.apuntados === 1 ? '1 apuntado' : `${r.apuntados} apuntados`}
+                {r.ciudad ? ` · ${r.ciudad}` : ''}
               </Text>
             </View>
-            {r.apuntado && (
+            {r.finalizado ? (
+              <View style={styles.selloFin}><Text style={styles.selloFinTexto}>FINALIZADO</Text></View>
+            ) : r.apuntado && (
               <View style={styles.sello}><Text style={styles.selloTexto}>DENTRO</Text></View>
             )}
           </TouchableOpacity>
@@ -274,6 +319,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.sm, paddingVertical: 4,
   },
   selloTexto: { color: '#000', fontSize: 11, fontWeight: '900', letterSpacing: 1 },
+  // Un reto terminado: sello gris, logo apagado y nada en naranja.
+  selloFin: {
+    borderRadius: radius.sm, borderWidth: 1, borderColor: colors.textSecondary,
+    paddingHorizontal: spacing.sm, paddingVertical: 4,
+  },
+  selloFinTexto: { color: colors.textSecondary, fontSize: 10, fontWeight: '900', letterSpacing: 1 },
+  logoPasado: { opacity: 0.45 },
+  tituloPasado: { color: colors.textSecondary },
+  pasado: { color: colors.textSecondary },
   volver: { alignSelf: 'flex-start', marginBottom: spacing.sm },
   volverTexto: { color: colors.orange, fontSize: 16, fontWeight: '800' },
   boton: {
@@ -287,6 +341,21 @@ const styles = StyleSheet.create({
   nota: {
     color: colors.textMuted, fontSize: 13, textAlign: 'center',
     marginTop: spacing.sm, marginBottom: spacing.md,
+  },
+  notaFinal: { color: colors.textSecondary, marginTop: spacing.lg },
+  finalizado: {
+    borderRadius: radius.sm, borderWidth: 1, borderColor: colors.textPrimary,
+    paddingHorizontal: spacing.md, paddingVertical: 6, marginTop: spacing.md,
+  },
+  finalizadoTexto: { color: colors.textPrimary, fontSize: 14, fontWeight: '900', letterSpacing: 3 },
+  donde: {
+    color: colors.textSecondary, fontSize: 11, fontWeight: '800',
+    letterSpacing: 2, marginTop: 4, textAlign: 'center',
+  },
+  ganadores: { borderColor: colors.orange, marginTop: 0, marginBottom: spacing.md },
+  puestoGanador: { color: colors.orange, width: 30 },
+  enhorabuena: {
+    color: colors.orange, fontSize: 14, fontWeight: '800', textAlign: 'center', marginTop: spacing.md,
   },
 
   proximo: { flexGrow: 1, alignItems: 'center', justifyContent: 'center' },

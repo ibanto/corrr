@@ -10,7 +10,8 @@
  *
  *   node scripts/mock-api.mjs            # datos de sobra
  *   MODO=vacio node scripts/mock-api.mjs # todo a cero: cuenta recién hecha
- *   MODO=campana node scripts/mock-api.mjs # campaña de marca: logos en vez de calabazas
+ *   MODO=campana node scripts/mock-api.mjs # campaña de marca: logos en vez de calabazas. En Retos: uno en marcha,
+ *                                          # uno de otra ciudad, uno FINALIZADO con ganadores y otro sin ninguno
  *   MODO=textos node scripts/mock-api.mjs # además de Tótems y Aura, dos pestañas de vaciles de TEXTO
  *   HALLOWEEN=1 node scripts/mock-api.mjs # la pestaña HALLOWEEN encendida desde el panel (con MODO=vacio sale siempre)
  *
@@ -41,13 +42,37 @@ const EVENTO = {
   texto: 'Hay logos escondidos por tu barrio. Pisa uno corriendo y son 200 puntos.',
   premio: 'Unas zapatillas para quien más coja. Se recogen en la tienda.',
 };
-// Dos retos para ver la lista; los apuntados se guardan mientras dure el mock.
+// Cuatro retos para ver la lista: uno en marcha de mi ciudad, uno de otra, y
+// dos TERMINADOS (con ganadores y sin ninguno). Los apuntados se guardan
+// mientras dure el mock; en los terminados ya no se apunta nadie.
 const RETOS = [
-  { ...EVENTO, ciudad: 'Madrid', apuntados: 12 },
+  { ...EVENTO, ciudad: 'Madrid', deAqui: true, apuntados: 12 },
   { ...EVENTO, tipo: 'reto-panchito', nombre: 'el logo de Panchito', cartel: '¡PANCHITO! +{puntos}',
-    titulo: 'RETO PANCHITO', fechas: 'DEL 17 AL 23 DE NOVIEMBRE', ciudad: 'Madrid', apuntados: 3 },
+    titulo: 'RETO PANCHITO', fechas: 'DEL 17 AL 23 DE NOVIEMBRE', ciudad: 'Bilbao, Barakaldo', deAqui: false, apuntados: 3 },
+  { ...EVENTO, tipo: 'reto-zapateria', nombre: 'el logo de La Zapatería', cartel: '¡LA ZAPATERÍA! +{puntos}',
+    titulo: 'RETO DE LA ZAPATERÍA', fechas: 'DEL 20 AL 31 DE OCTUBRE', ciudad: 'Madrid', deAqui: true, apuntados: 5,
+    finalizado: true, dentro: true, ganadores: [
+      { userId: '22222222-2222-2222-2222-222222222222', name: 'Lucía M.', cuantos: 42, puntos: 8400, mine: false },
+      { userId: '33333333-3333-3333-3333-333333333333', name: 'carlos', cuantos: 26, puntos: 5200, mine: false },
+      { userId: '11111111-1111-1111-1111-111111111111', name: 'Auditor', cuantos: 19, puntos: 3800, mine: true }] },
+  { ...EVENTO, tipo: 'reto-desierto', nombre: 'LA TIENDA', titulo: 'CAZA EL LOGO Y GANA EL PREMIO',
+    fechas: 'DEL 5 AL 7 DE NOVIEMBRE', premio: 'Un desayuno de campeones', ciudad: 'Madrid', deAqui: true, apuntados: 1,
+    finalizado: true, ganadores: [] },
 ];
-const apuntado = new Set();
+const apuntado = new Set(RETOS.filter(r => r.dentro).map(r => r.tipo));
+/** Lo mismo que hace el servidor (`retoParaAppDeAntes`) con las apps de hasta
+ *  la 1.11.16, que no piden `?v=2`: el FINALIZADO y los ganadores van dentro
+ *  de los textos, y la ciudad delante de las fechas si no es la mía. */
+function retoParaAppDeAntes(r) {
+  const donde = [r.deAqui ? '' : r.ciudad.toUpperCase(), r.fechas].filter(Boolean).join(' · ');
+  if (!r.finalizado) return { ...r, fechas: donde };
+  const lista = r.ganadores.map((g, i) => `${i + 1}.º ${g.name} · ${g.cuantos} ${g.cuantos === 1 ? 'logo' : 'logos'}`);
+  return { ...r, fechas: ['FINALIZADO', donde].filter(Boolean).join(' · '),
+    texto: lista.length
+      ? `Este reto ha terminado. Ya no se puede apuntar nadie.\n\n${lista.length === 1 ? 'GANADOR' : 'GANADORES'}\n${lista.join('\n')}`
+      : 'Este reto ha terminado sin ganadores: nadie cogió ningún logo.' };
+}
+const pideV2 = url => /[?&]v=2\b/.test(url);
 const YO = '11111111-1111-1111-1111-111111111111';
 const RIVAL = '22222222-2222-2222-2222-222222222222';
 const ahora = () => new Date().toISOString();
@@ -141,13 +166,25 @@ const RUTAS = {
     { id: 201, x: CX + 19, y: CY + 24, puntos: -1000, tipo: 'fantasma' },
     { id: 202, x: CX + 25, y: CY + 16, puntos: 0, tipo: 'fantasma' },
   ] }),
-  'GET /objetos/ranking': () => vacio ? { ranking: [], mias: 0 } : ({ mias: 7, ranking: [
-    { userId: RIVAL, name: 'Lucía M.', cuantos: 14, puntos: 700, mine: false },
-    { userId: YO, name: 'Auditor', cuantos: 7, puntos: 350, mine: true }] }),
+  'GET /objetos/ranking': (_clave, url) => {
+    if (vacio) return { ranking: [], mias: 0 };
+    // La de un reto terminado es su clasificación final: los ganadores y dos
+    // más. A las apps de antes (sin `v=2`) no se les manda la tabla.
+    const acabado = campana && RETOS.find(r => r.finalizado && url.includes('tipo=' + r.tipo));
+    if (acabado) return { mias: acabado.ganadores.length ? 19 : 0, ranking: !pideV2(url) || !acabado.ganadores.length ? [] : [
+      ...acabado.ganadores,
+      { userId: '44444444-4444-4444-4444-444444444444', name: 'Oriol15', cuantos: 19, puntos: 3800, mine: false },
+      { userId: '55555555-5555-5555-5555-555555555555', name: 'Marta', cuantos: 5, puntos: 1000, mine: false }] };
+    return { mias: 7, ranking: [
+      { userId: RIVAL, name: 'Lucía M.', cuantos: 14, puntos: 700, mine: false },
+      { userId: YO, name: 'Auditor', cuantos: 7, puntos: 350, mine: true }] };
+  },
   'GET /app/ajustes': () => ({ halloween: !vacio && !campana, halloween_para: null }),
   // Con MODO=vacio no hay anuncio: así se ve el «Próximamente» de siempre.
-  'GET /app/retos': () => ({ retos: campana
-    ? RETOS.map(r => ({ ...r, apuntado: apuntado.has(r.tipo), apuntados: r.apuntados + (apuntado.has(r.tipo) ? 1 : 0) }))
+  'GET /app/retos': (_clave, url) => ({ retos: campana
+    ? RETOS.map(({ dentro: _dentro, ...r }) => ({ ...r, apuntado: apuntado.has(r.tipo),
+        apuntados: r.apuntados + (apuntado.has(r.tipo) && !r.finalizado ? 1 : 0) }))
+      .map(r => pideV2(url) ? r : retoParaAppDeAntes(r))
     : [], proximamente: vacio ? null : {
     titulo: 'GRAN RETO\nDE NAVIDAD', destacado: '¡CON PREMIO!', texto: 'Muy pronto, aquí. Ve calentando.' } }),
   'GET /app/aviso': () => (vacio || avisoVisto) ? { aviso: null } : ({ aviso: { id: 9, titulo: 'Llega Halloween',

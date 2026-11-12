@@ -8,10 +8,11 @@
  * están en src/routes/index.ts y la recogida de src/services/objetos.ts. No
  * toca ninguna base de datos de verdad.
  *
- * Cada caso es una regla del juego. Si uno falla, o alguien ve un reto que no
- * es de su ciudad, o alguien coge un logo sin haberse apuntado, o los logos
+ * Cada caso es una regla del juego. Si uno falla, o alguien deja de ver un
+ * reto encendido, o alguien coge un logo sin haberse apuntado, o los logos
  * dejan de cogerse al apagar Halloween (que es justo lo que pasaba hasta el
- * 6-nov-2026). No se sube nada con esto en rojo.
+ * 6-nov-2026), o un reto terminado vuelve a parecer en marcha (12-nov-2026).
+ * No se sube nada con esto en rojo.
  */
 import { PGlite } from '@electric-sql/pglite';
 import { readFileSync } from 'node:fs';
@@ -32,6 +33,12 @@ function comprueba(nombre, ok, detalle) {
 /** Una función suelta del JS compilado, tal cual la ejecuta el servidor. */
 function sacar(nombre) {
   const i = dist.indexOf(`function ${nombre}(`);
+  if (i < 0) throw new Error('No encuentro ' + nombre + ' en dist/routes/index.js');
+  return dist.slice(i, dist.indexOf('\n}\n', i) + 2);
+}
+/** Lo mismo para las que hablan con la base de datos (`async function`). */
+function sacarAsync(nombre) {
+  const i = dist.indexOf(`async function ${nombre}(`);
   if (i < 0) throw new Error('No encuentro ' + nombre + ' en dist/routes/index.js');
   return dist.slice(i, dist.indexOf('\n}\n', i) + 2);
 }
@@ -101,11 +108,12 @@ await db.query(`INSERT INTO campanas (tipo, datos, modo) VALUES ('tienda', $1, '
 const sqlRetos = consulta('async function retosPara', '`SELECT c.datos, c.modo,', 'ORDER BY c.creada_at DESC`');
 const deAqui = async (id, ciudad, tipo) =>
   (await db.query(sqlRetos, [id, ciudad])).rows.find(r => r.datos.tipo === tipo)?.de_aqui;
-comprueba('reto de dos ciudades: lo ve uno de Badalona', await deAqui(karol, 'Badalona', 'tienda') === true);
-comprueba('reto de dos ciudades: lo ve uno de Barcelona', await deAqui(iban, 'Barcelona', 'tienda') === true);
-comprueba('reto de dos ciudades: NO lo ve uno de Sevilla', await deAqui(sevi, 'Sevilla', 'tienda') === false);
-comprueba('campaña de antes: la ve uno de «malaga» sin tilde', await deAqui(malaga, 'malaga', 'vieja') === true);
-comprueba('campaña de antes: NO la ve uno de Sevilla', await deAqui(sevi, 'Sevilla', 'vieja') === false);
+// Desde el 12-nov-2026 el reto lo ve todo el mundo; «de aquí» solo lo ordena.
+comprueba('reto de dos ciudades: es de la ciudad de uno de Badalona', await deAqui(karol, 'Badalona', 'tienda') === true);
+comprueba('reto de dos ciudades: es de la ciudad de uno de Barcelona', await deAqui(iban, 'Barcelona', 'tienda') === true);
+comprueba('reto de dos ciudades: NO es de la ciudad de uno de Sevilla', await deAqui(sevi, 'Sevilla', 'tienda') === false);
+comprueba('campaña de antes: es de la ciudad de uno de «malaga» sin tilde', await deAqui(malaga, 'malaga', 'vieja') === true);
+comprueba('campaña de antes: NO es de la ciudad de uno de Sevilla', await deAqui(sevi, 'Sevilla', 'vieja') === false);
 
 // /runs: ¿tiene retos a los que apuntarse la recogida?
 const sqlTiene = consulta("let tieneRetos = false", '`SELECT 1 FROM campana_apuntados', "c.modo <> 'no' LIMIT 1`");
@@ -137,6 +145,89 @@ const t = (await db.query(sqlPanel)).rows.find(f => f.datos.tipo === 'tienda');
 comprueba('el panel recibe el «Hasta» de los logos puestos',
   t.hasta && new Date(t.hasta).toISOString() === futuro, String(t.hasta));
 comprueba('y cuenta bien libres y cogidos', t.libres === 1 && t.cogidos === 2, `libres ${t.libres}, cogidos ${t.cogidos}`);
+
+// ── Retos de todas las ciudades y retos terminados (12-nov-2026) ──
+// Las funciones del servidor TAL CUAL, hablando con este Postgres de mentira.
+const lineaEvento = dist.slice(dist.indexOf('const DE_ESTE_EVENTO'), dist.indexOf('\n', dist.indexOf('const DE_ESTE_EVENTO')) + 1);
+const { retosPara, clasificacionDe, retoTerminado, cuantosGanan, retoParaAppDeAntes } = new Function('db', 'ajusteLeToca',
+  lineaEvento + sacar('cuantosGanan') + sacar('retoParaAppDeAntes') + sacarAsync('clasificacionDe')
+  + sacarAsync('retoTerminado') + sacarAsync('retosPara')
+  + '; return { retosPara, clasificacionDe, retoTerminado, cuantosGanan, retoParaAppDeAntes };')(db, ajusteLeToca);
+
+const ana = await alta('Ana', 'Sevilla');
+const hace = (horas) => new Date(Date.now() - horas * 3600000).toISOString();
+await db.query(`INSERT INTO campanas (tipo, datos, modo, creada_at) VALUES
+  ('acabado', $1, 'si', NOW() - INTERVAL '3 days'), ('desierto', $2, 'si', NOW() - INTERVAL '4 days'),
+  ('oculto', $3, 'no', NOW()), ('enprueba', $4, 'prueba:Ibanto', NOW() - INTERVAL '5 days')`,
+  [JSON.stringify({ tipo: 'acabado', nombre: 'Acabado', ciudad: 'Sevilla', fechas: 'DEL 1 AL 7', texto: 'Cómo va', ganan: 2 }),
+   JSON.stringify({ tipo: 'desierto', nombre: 'Desierto', ciudad: 'Barcelona', fechas: '', texto: 'Cómo va' }),
+   JSON.stringify({ tipo: 'oculto', nombre: 'Oculto', ciudad: 'Barcelona' }),
+   JSON.stringify({ tipo: 'enprueba', nombre: 'En prueba', ciudad: 'Sevilla' })]);
+// «acabado»: sus logos caducaron hace una hora. Ibanto y KarolK empatan a 3,
+// pero Ibanto llegó antes; Ana cogió 1; Sevillano cogió 5 SIN apuntarse.
+const cogido = (tipo, quien, cuando, hasta) => db.query(
+  `INSERT INTO objetos (tipo, cell_x, cell_y, puntos, desde, hasta, tomado_por, tomado_at)
+   VALUES ($1, 1, 1, 200, $4, $5, $2, $3)`, [tipo, quien, cuando, hace(200), hasta]);
+const finAcabado = hace(1);
+for (const h of [50, 40, 30]) await cogido('acabado', iban, hace(h), finAcabado);
+for (const h of [45, 35, 20]) await cogido('acabado', karol, hace(h), finAcabado);
+await cogido('acabado', ana, hace(25), finAcabado);
+for (const h of [60, 59, 58, 57, 56]) await cogido('acabado', sevi, hace(h), finAcabado);
+await db.query(`INSERT INTO campana_apuntados (tipo, user_id) VALUES ('acabado', $1), ('acabado', $2), ('acabado', $3)`,
+  [iban, karol, ana]);
+// «desierto»: caducó y nadie cogió nada. Y unas calabazas viejas, que no son un reto.
+await db.query(`INSERT INTO objetos (tipo, cell_x, cell_y, puntos, desde, hasta) VALUES
+  ('desierto', 5, 5, 200, $1, $2), ('calabaza', 900, 900, 200, $1, $2)`, [hace(200), hace(2)]);
+
+const deSevi = await retosPara(sevi, true);
+const deIban = await retosPara(iban, true);
+const el = (lista, tipo) => lista.find(x => x.tipo === tipo);
+comprueba('uno de Sevilla ve el reto de Barcelona y Badalona', !!el(deSevi, 'tienda') && el(deSevi, 'tienda').deAqui === false);
+comprueba('y el suyo le sale marcado como de su ciudad', el(deSevi, 'acabado')?.deAqui === true);
+comprueba('el apagado no lo ve nadie', !el(deSevi, 'oculto') && !el(deIban, 'oculto'));
+comprueba('el que está en prueba solo lo ve quien lo prueba', !el(deSevi, 'enprueba') && !!el(deIban, 'enprueba'));
+comprueba('no viajan los límites de la ciudad', !('limites' in el(deSevi, 'tienda')) && !('zonas' in el(deSevi, 'tienda')));
+comprueba('en marcha delante (los de su ciudad primero) y terminados al final',
+  deIban.map(x => x.tipo).join(',') === 'tienda,vieja,enprueba,desierto,acabado', deIban.map(x => x.tipo).join(','));
+comprueba('con logos sin caducar: en marcha y sin ganadores', el(deIban, 'tienda').finalizado === false && !el(deIban, 'tienda').ganadores);
+comprueba('sin logos sembrados: ni terminado ni fecha de fin', el(deIban, 'vieja').finalizado === false && el(deIban, 'vieja').hasta === null);
+const acabado = el(deIban, 'acabado');
+comprueba('logos caducados: terminado, con su fecha de fin', acabado.finalizado === true && acabado.hasta === finAcabado, acabado.hasta);
+comprueba('ganan los que diga el panel (2), en orden, y el empate es para quien llegó antes',
+  acabado.ganadores.map(g => g.name).join(',') === 'Ibanto,KarolK', acabado.ganadores.map(g => `${g.name} ${g.cuantos}`).join(', '));
+comprueba('el ganador se reconoce a sí mismo', acabado.ganadores[0].mine === true && acabado.ganadores[1].mine === false
+  && el(deSevi, 'acabado').ganadores.every(g => !g.mine));
+comprueba('quien no se apuntó no gana aunque cogiera más', !(await clasificacionDe('acabado', 20)).some(g => g.display_name === 'Sevillano'));
+comprueba('la clasificación final entera: Ibanto, KarolK, Ana',
+  (await clasificacionDe('acabado', 20)).map(g => `${g.display_name} ${g.cuantos}`).join(', ') === 'Ibanto 3, KarolK 3, Ana 1');
+const desierto = el(deIban, 'desierto');
+comprueba('terminado sin que nadie cogiera nada: sin ganadores', desierto.finalizado === true && desierto.ganadores.length === 0);
+comprueba('sin nada escrito en el panel ganan 3', desierto.ganan === 3 && acabado.ganan === 2);
+comprueba('cuántos ganan: ni cero, ni letras, ni más de veinte',
+  cuantosGanan({ ganan: '1' }) === 1 && cuantosGanan({ ganan: 0 }) === 3 && cuantosGanan({ ganan: 'x' }) === 3
+  && cuantosGanan({ ganan: 99 }) === 20 && cuantosGanan(null) === 3);
+comprueba('retoTerminado: el acabado sí, el que sigue no, y las calabazas viejas no son un reto',
+  await retoTerminado('acabado') === true && await retoTerminado('tienda') === false
+  && await retoTerminado('vieja') === false && await retoTerminado('calabaza') === false);
+
+// Lo que reciben las apps de hasta la 1.11.16, que no saben de retos terminados.
+const viejoAcabado = retoParaAppDeAntes(acabado);
+comprueba('app de antes: el terminado lleva FINALIZADO delante de las fechas', viejoAcabado.fechas === 'FINALIZADO · SEVILLA · DEL 1 AL 7', viejoAcabado.fechas);
+comprueba('app de antes: los ganadores van en el texto',
+  viejoAcabado.texto === 'Este reto ha terminado. Ya no se puede apuntar nadie.\n\nGANADORES\n1.º Ibanto · 3 logos\n2.º KarolK · 3 logos',
+  JSON.stringify(viejoAcabado.texto));
+comprueba('app de antes: al de esa ciudad no se le repite la ciudad', retoParaAppDeAntes(el(deSevi, 'acabado')).fechas === 'FINALIZADO · DEL 1 AL 7');
+const viejoDesierto = retoParaAppDeAntes(desierto);
+comprueba('app de antes: terminado sin ganadores, y lo dice', viejoDesierto.fechas === 'FINALIZADO' && /sin ganadores/.test(viejoDesierto.texto), viejoDesierto.fechas);
+comprueba('app de antes: un reto en marcha de su ciudad va tal cual', retoParaAppDeAntes(el(deIban, 'tienda')) === el(deIban, 'tienda'));
+comprueba('app de antes: un reto en marcha de otra ciudad dice dónde es',
+  retoParaAppDeAntes(el(deSevi, 'tienda')).fechas === 'BARCELONA, BADALONA' && retoParaAppDeAntes(el(deSevi, 'tienda')).texto === el(deSevi, 'tienda').texto);
+
+// Sembrar más logos con otra fecha en un reto terminado lo vuelve a poner en marcha.
+await db.query(`INSERT INTO objetos (tipo, cell_x, cell_y, puntos, desde, hasta) VALUES ('acabado', 7, 7, 200, $1, $2)`, [antes, futuro]);
+comprueba('si se vuelve a sembrar con otra fecha, vuelve a estar en marcha y de cero',
+  el(await retosPara(iban, true), 'acabado').finalizado === false && await retoTerminado('acabado') === false
+  && (await clasificacionDe('acabado', 20)).length === 0);
 
 console.log(fallos ? `\n${fallos} fallo(s) en las campañas.` : '\nCampañas en orden.');
 process.exit(fallos ? 1 : 0);

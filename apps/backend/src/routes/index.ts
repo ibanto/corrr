@@ -2330,14 +2330,18 @@ que tenga territorio, que es como hay que sembrar un evento.</p>
 <section id="p-campanas" role="tabpanel" hidden>
 <div class="caja">
 <h2>Campa&ntilde;as</h2>
-<p class="nota">Cada campa&ntilde;a sale como un reto en la pantalla de Retos de la app, para la gente de <b>sus ciudades</b>.
+<p class="nota">Cada campa&ntilde;a sale como un reto en la pantalla de Retos de la app. Encendida, la ve <b>todo el mundo</b>, sea de la ciudad que sea,
+y se apunta quien quiera; los logos se plantan en <b>sus ciudades</b>.
 Los logos solo los ve y los coge quien pulsa <b>Me apunto</b>, y se cogen pasando <b>a 20 metros</b>. Orden: subir el logo,
 guardar en prueba (para ti y, si quiere, el cliente), sembrar y, cuando est&eacute; bien, encender. El logo, mejor un PNG con el fondo transparente.</p>
+<p class="nota">Un reto <b>termina cuando caducan sus logos</b> (el &laquo;Hasta&raquo; de la siembra). Desde ese momento sale en la app como
+<b>FINALIZADO</b>, con la lista de ganadores, y ya no se apunta ni se borra nadie. Se queda a la vista hasta que lo apagues o lo elimines.</p>
 <button class="btn" id="c_nueva" type="button">Nueva campa&ntilde;a</button>
 </div>
 <div id="c_lista"></div>
 <div id="c_guardado" hidden>
 <form class="form" id="fc">
+  <div id="c_final" class="resultado" style="display:none"></div>
   <label class="campo">Identificador (corto, sin espacios: tienda-pepe)
     <input id="c_tipo" placeholder="tienda-pepe"></label>
   <label class="campo">Nombre (c&oacute;mo se cuenta: el logo de Tienda Pepe)
@@ -2347,7 +2351,7 @@ guardar en prueba (para ti y, si quiere, el cliente), sembrar y, cuando est&eacu
   <input id="c_imagen" type="hidden">
   <div id="c_logo_previo" style="display:none;background:#333;padding:8px;border-radius:8px;width:max-content">
     <img id="c_logo_img" style="width:88px;height:88px;object-fit:contain"></div>
-  <label class="campo">Ciudades, una o varias separadas por comas (ah&iacute; se planta, y solo sale en la lista de quien sea de ah&iacute;)
+  <label class="campo">Ciudades, una o varias separadas por comas (ah&iacute; se plantan los logos; el reto lo ve todo el mundo, y a los de ah&iacute; les sale el primero)
     <input id="c_ciudad" placeholder="Barcelona, Badalona"></label>
   <p class="nota" id="c_lugar"></p>
   <label class="campo">Cartel al pisarlo ({puntos} se cambia por los puntos)
@@ -2360,10 +2364,12 @@ guardar en prueba (para ti y, si quiere, el cliente), sembrar y, cuando est&eacu
     <textarea id="c_texto" rows="3"></textarea></label>
   <label class="campo">Retos &middot; el premio y d&oacute;nde se recoge
     <textarea id="c_premio" rows="2"></textarea></label>
+  <label class="campo">Cu&aacute;ntos ganan cuando termine (los primeros de la clasificaci&oacute;n: 1, 3, 5&hellip;)
+    <input id="c_ganan" type="number" min="1" max="20" value="3"></label>
   <select id="c_modo">
     <option value="apagado">Apagada &mdash; nadie la ve</option>
     <option value="prueba">En prueba &mdash; solo la ven los de abajo</option>
-    <option value="todos">Encendida para sus ciudades</option>
+    <option value="todos">Encendida &mdash; la ve todo el mundo</option>
   </select>
   <label class="campo" id="c_probadores_campo">Qui&eacute;n la prueba: su nombre en la app o su correo, separados por comas (la ven aunque sean de otra ciudad)
     <input id="c_probadores" placeholder="Ibanto, nombre_del_cliente"></label>
@@ -2813,6 +2819,9 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
   var retosPanel = [];
   var ORDEN_MODO = { todos: 0, prueba: 1, apagado: 2 };
   var TEXTO_MODO = { todos: 'ENCENDIDA', prueba: 'EN PRUEBA', apagado: 'APAGADA' };
+  function cuandoAcabo(iso) {
+    return new Date(iso).toLocaleString('es-ES', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' });
+  }
   function fechaLocal(d) {
     var dos = function (n) { return (n < 10 ? '0' : '') + n; };
     return d.getFullYear() + '-' + dos(d.getMonth() + 1) + '-' + dos(d.getDate()) + 'T' + dos(d.getHours()) + ':' + dos(d.getMinutes());
@@ -2823,6 +2832,19 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
     // El identificador es el que llevan sus logos y sus apuntados: no se cambia.
     document.getElementById('c_tipo').readOnly = !!c.tipo;
     document.getElementById('c_archivo').value = '';
+    document.getElementById('c_ganan').value = r.ganan || c.ganan || 3;
+    // Terminado: cuándo y quién ha ganado, lo mismo que ve la gente en la app.
+    var fin = document.getElementById('c_final');
+    fin.style.display = r.finalizado ? 'block' : 'none';
+    if (r.finalizado) {
+      var gana = r.ganadores || [];
+      fin.textContent = 'Este reto terminó el ' + cuandoAcabo(r.fin) + '. '
+        + (gana.length
+          ? (gana.length === 1 ? 'Ganador: ' : 'Ganadores: ') + gana.map(function (g, i) {
+              return (i + 1) + '.º ' + g.name + ' (' + g.cuantos + ')'; }).join(' · ') + '.'
+          : 'Sin ganadores: nadie cogió ningún logo.')
+        + ' En la app sale como FINALIZADO hasta que lo apagues o lo elimines. Si siembras más logos con otra fecha, vuelve a empezar de cero.';
+    }
     var zonas = c.zonas && c.zonas.length ? c.zonas : (c.lugar ? [{ lugar: c.lugar }] : []);
     document.getElementById('c_lugar').innerHTML = zonas.length
       ? 'Se planta en:' + zonas.map(function (z) { return '<br>&middot; ' + esc(z.lugar); }).join('') : '';
@@ -2867,7 +2889,8 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
       + (c.imagen ? '<img src="' + esc(c.imagen) + '" alt="">' : '')
       + '<span><b>' + esc(c.nombre || 'Nueva campaña') + '</b>'
       + (c.tipo ? '<br><span class="c_cifras">' + esc(c.ciudad) + ' · ' + r.apuntados + (r.apuntados === 1 ? ' apuntado · ' : ' apuntados · ')
-        + r.libres + ' logos en el mapa · ' + r.cogidos + ' cogidos</span>' : '') + '</span>'
+        + r.libres + ' logos en el mapa · ' + r.cogidos + ' cogidos'
+        + (r.finalizado ? ' · <b>FINALIZADO</b> el ' + esc(cuandoAcabo(r.fin)) : '') + '</span>' : '') + '</span>'
       + (c.tipo ? '<span class="c_estado ' + r.modo + '">' + TEXTO_MODO[r.modo] + '</span>' : '')
       + '</summary>';
     // El aviso se escribe nada más repintar y el toggle llega después: sin esta
@@ -2913,7 +2936,8 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
   function guardarCampana() {
     var cuerpo = { modo: document.getElementById('c_modo').value, corredores: val('c_probadores') };
     CAMPOS_CAMPANA.forEach(function (k) { cuerpo[k] = val('c_' + k); });
-    if (cuerpo.modo === 'todos' && !confirm('¿Encender la campaña para la gente de ' + cuerpo.ciudad + '?')) return null;
+    cuerpo.ganan = val('c_ganan');
+    if (cuerpo.modo === 'todos' && !confirm('¿Encender la campaña? La verá todo el mundo en Retos. Los logos se plantan en ' + cuerpo.ciudad + '.')) return null;
     return api('/admin/campana', { method: 'POST', body: JSON.stringify(cuerpo) });
   }
   document.getElementById('c_guardar').addEventListener('click', function () {
@@ -2921,7 +2945,7 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
     if (!guardando) return;
     guardando.then(function (r) {
       return cargarCampanasPanel(r.campana.tipo).then(function () {
-        msgCampana(r.modo === 'todos' ? '✓ Guardada y encendida para ' + r.campana.ciudad + '.'
+        msgCampana(r.modo === 'todos' ? '✓ Guardada y encendida: la ve todo el mundo. Logos en ' + r.campana.ciudad + '.'
           : (r.modo === 'prueba' ? '✓ Guardada en prueba. Solo la ven: ' + r.corredor + '.' : '✓ Guardada, apagada.'), true);
       });
     }).catch(function (e) { msgCampana('✗ ' + e.message, false); });
@@ -7705,7 +7729,17 @@ type Campana = {
   /** Una por ciudad (Iban, 6-nov: «poder poner varias ciudades y no solo una»).
    *  Las campañas guardadas antes no la llevan: valen `ciudad` y `limites`. */
   zonas?: { ciudad: string; lugar: string; limites: NonNullable<Campana['limites']> }[];
+  /** Cuántos ganan cuando el reto termina: los primeros de la clasificación
+   *  (Iban, 12-nov: «lo elijo en cada reto»). Las de antes no lo llevan: 3. */
+  ganan?: number;
 };
+
+/** Un reto con tres premios tiene tres ganadores y uno con un desayuno, uno:
+ *  se escribe en el panel. Sin nada escrito, el podio. */
+function cuantosGanan(c: { ganan?: unknown } | null | undefined): number {
+  const n = Math.floor(Number(c?.ganan));
+  return n >= 1 ? Math.min(n, 20) : 3;
+}
 type Caja = { x0: number; x1: number; y0: number; y1: number };
 
 /** Las zonas de la campaña en celdas, una por ciudad: el municipio entero
@@ -7756,11 +7790,16 @@ async function campanaDe(tipo: string): Promise<Campana | null> {
   return rows[0]?.datos ?? null;
 }
 
-/** Los retos que ESTE corredor ve en la app: los encendidos de su ciudad y los
- *  que ya tiene apuntados aunque se haya mudado, para que pueda borrarse. La
- *  comparación va por corrr_ciudad, como toda comparación de ciudad (§9,
- *  Valencia partida). El que prueba un reto lo ve aunque sea de otra ciudad. */
-async function retosPara(userId: string) {
+/** Los retos que ESTE corredor ve en la app: TODOS los encendidos, sean de la
+ *  ciudad que sean, y los que está probando. Hasta el 12-nov-2026 solo veía los
+ *  de la ciudad de su perfil; Iban: «todo el mundo puede ver los retos de todas
+ *  las ciudades y se pueden apuntar a cualquier reto de cualquier ciudad» (el
+ *  de Navidad es para quien CORRA en Sant Cugat, viva donde viva). Las ciudades
+ *  del reto ya solo dicen dónde se plantan los logos; `deAqui` dice si alguna
+ *  es la suya, para ponerle esos retos los primeros. La comparación va por
+ *  corrr_ciudad, como toda comparación de ciudad (§9, Valencia partida).
+ *  `conGanadores` añade a los terminados su lista de ganadores. */
+async function retosPara(userId: string, conGanadores = false) {
   const { rows: yo } = await db.query('SELECT display_name, city FROM users WHERE id = $1', [userId]);
   const { rows } = await db.query(
     `SELECT c.datos, c.modo,
@@ -7769,17 +7808,84 @@ async function retosPara(userId: string) {
                       jsonb_build_array(jsonb_build_object('ciudad', c.datos->>'ciudad')))) z
                      WHERE corrr_ciudad(z->>'ciudad') = corrr_ciudad($2)) AS de_aqui,
             EXISTS (SELECT 1 FROM campana_apuntados a WHERE a.tipo = c.tipo AND a.user_id = $1) AS apuntado,
-            (SELECT COUNT(*)::int FROM campana_apuntados a WHERE a.tipo = c.tipo) AS apuntados
+            (SELECT COUNT(*)::int FROM campana_apuntados a WHERE a.tipo = c.tipo) AS apuntados,
+            -- Cuándo acaba: la fecha de fin de sus logos (el «Hasta» de la
+            -- siembra), la más alta, igual que DE_ESTE_EVENTO. Sin logos
+            -- sembrados no hay fecha y el reto no ha terminado.
+            (SELECT MAX(o.hasta) FROM objetos o WHERE o.tipo = c.tipo) AS fin,
+            COALESCE((SELECT MAX(o.hasta) FROM objetos o WHERE o.tipo = c.tipo) <= NOW(), FALSE) AS finalizado
        FROM campanas c WHERE c.modo <> 'no' ORDER BY c.creada_at DESC`,
     [userId, yo[0]?.city ?? null],
   );
-  return rows
-    .filter((r: any) => ajusteLeToca(r.modo, yo[0]?.display_name ?? null)
-      && (r.modo !== 'si' || r.de_aqui === true || r.apuntado))
+  const retos: any[] = rows
+    .filter((r: any) => ajusteLeToca(r.modo, yo[0]?.display_name ?? null))
     .map((r: any) => {
       const { limites: _limites, lugar: _lugar, zonas: _zonas, ...c } = r.datos;
-      return { ...c, apuntado: r.apuntado, apuntados: r.apuntados };
+      return {
+        ...c, apuntado: r.apuntado, apuntados: r.apuntados,
+        deAqui: r.de_aqui === true,
+        finalizado: r.finalizado === true,
+        hasta: r.fin ? new Date(r.fin).toISOString() : null,
+        ganan: cuantosGanan(r.datos),
+      };
     });
+  // Los que siguen en marcha, delante, y los terminados al final de la lista;
+  // dentro de cada grupo, primero los de su ciudad.
+  retos.sort((a, b) => (Number(a.finalizado) - Number(b.finalizado)) || (Number(b.deAqui) - Number(a.deAqui)));
+  if (conGanadores) {
+    for (const r of retos) {
+      if (!r.finalizado) continue;
+      r.ganadores = (await clasificacionDe(r.tipo, r.ganan)).map((g: any) => ({
+        userId: g.id, name: g.display_name, cuantos: g.cuantos, puntos: g.puntos, mine: g.id === userId,
+      }));
+    }
+  }
+  return retos;
+}
+
+/** UN RETO TERMINADO SE VE TERMINADO (Iban, 12-nov-2026).
+ *
+ *  «Cuando un reto ha finalizado, debe aparecer como finalizado y que salgan
+ *  los que han ganado en una lista. Ahora veo que ha finalizado, pero parece
+ *  que sigue activo, el de prueba.» El servidor no sabía que un reto se acaba:
+ *  lo mandaba igual que uno en marcha, con su ME APUNTO y su «QUIÉN VA
+ *  GANANDO», hasta que alguien lo apagaba en el panel.
+ *
+ *  Un reto termina cuando caducan sus logos (`fin`, arriba). Entonces:
+ *   - ganan los `ganan` primeros de la clasificación (panel: «Cuántos ganan»),
+ *   - nadie se apunta ni se borra ya: la clasificación final no se mueve,
+ *   - y sigue saliendo en Retos, al final de la lista, hasta que se apague o
+ *     se elimine en el panel. Si se siembran más logos con otra fecha de fin,
+ *     vuelve a estar en marcha y empieza de cero (DE_ESTE_EVENTO). */
+async function retoTerminado(tipo: string): Promise<boolean> {
+  const { rows } = await db.query(
+    `SELECT COALESCE(MAX(o.hasta) <= NOW(), FALSE) AS terminado
+       FROM objetos o WHERE o.tipo = $1 AND EXISTS (SELECT 1 FROM campanas c WHERE c.tipo = o.tipo)`,
+    [tipo],
+  );
+  return rows[0]?.terminado === true;
+}
+
+/** Las apps de hasta la 1.11.16 no saben qué es un reto terminado: pintan lo
+ *  que se les mande con su botón y su tabla. Para ellas el «FINALIZADO» y los
+ *  ganadores van DENTRO de los textos que sí pintan (las fechas y el «cómo
+ *  va»), y así lo ve todo el mundo sin pasar por las tiendas. Las que ya saben
+ *  piden `/app/retos?v=2` y reciben el reto tal cual, con `finalizado` y
+ *  `ganadores` aparte. */
+function retoParaAppDeAntes(r: any) {
+  // Tampoco pintan la ciudad, y desde el 12-nov ven los retos de todas: al que
+  // no es de ahí se le dice dónde es, delante de las fechas.
+  const donde = [r.deAqui ? '' : String(r.ciudad ?? '').toUpperCase(), r.fechas].filter(Boolean).join(' · ');
+  if (!r.finalizado) return donde === (r.fechas ?? '') ? r : { ...r, fechas: donde };
+  const lista: string[] = (r.ganadores ?? []).map((g: any, i: number) =>
+    `${i + 1}.º ${g.name} · ${g.cuantos} ${g.cuantos === 1 ? 'logo' : 'logos'}`);
+  return {
+    ...r,
+    fechas: ['FINALIZADO', donde].filter(Boolean).join(' · '),
+    texto: lista.length > 0
+      ? `Este reto ha terminado. Ya no se puede apuntar nadie.\n\n${lista.length === 1 ? 'GANADOR' : 'GANADORES'}\n${lista.join('\n')}`
+      : 'Este reto ha terminado sin ganadores: nadie cogió ningún logo.',
+  };
 }
 
 app.get('/campana/logo/:archivo', async (req: any, reply) => {
@@ -7844,16 +7950,21 @@ app.get('/app/evento', { preHandler: requireAuth }, async (_req: any, reply) => 
 });
 
 app.get('/app/retos', { preHandler: requireAuth }, async (req: any, reply) => {
-  return reply.send({ retos: await retosPara(req.userId), proximamente: PROXIMAMENTE });
+  const retos = await retosPara(req.userId, true);
+  const sabeDeTerminados = Number(req.query?.v) >= 2;
+  return reply.send({
+    retos: sabeDeTerminados ? retos : retos.map(retoParaAppDeAntes),
+    proximamente: PROXIMAMENTE,
+  });
 });
 
 app.post('/app/retos/:tipo/apuntarme', { preHandler: requireAuth }, async (req: any, reply) => {
   const tipo = String(req.params.tipo);
   // Solo a lo que le sale en la lista: una dirección a mano no apunta a nadie a
   // un reto apagado o de otra ciudad.
-  if (!(await retosPara(req.userId)).some((r: any) => r.tipo === tipo)) {
-    return reply.status(404).send({ error: 'Ese reto no está disponible' });
-  }
+  const reto = (await retosPara(req.userId)).find((r: any) => r.tipo === tipo);
+  if (!reto) return reply.status(404).send({ error: 'Ese reto no está disponible' });
+  if (reto.finalizado) return reply.status(409).send({ error: 'Ese reto ya ha terminado' });
   await db.query(
     'INSERT INTO campana_apuntados (tipo, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
     [tipo, req.userId],
@@ -7861,9 +7972,13 @@ app.post('/app/retos/:tipo/apuntarme', { preHandler: requireAuth }, async (req: 
   return reply.send({ ok: true });
 });
 
-/** Lo cogido se queda en `objetos`: quien vuelve a apuntarse lo recupera. */
+/** Lo cogido se queda en `objetos`: quien vuelve a apuntarse lo recupera.
+ *  De un reto terminado ya no se borra nadie: en la clasificación solo salen
+ *  los apuntados, y un ganador que se borrara desaparecería de la lista. */
 app.delete('/app/retos/:tipo/apuntarme', { preHandler: requireAuth }, async (req: any, reply) => {
-  await db.query('DELETE FROM campana_apuntados WHERE tipo = $1 AND user_id = $2', [String(req.params.tipo), req.userId]);
+  const tipo = String(req.params.tipo);
+  if (await retoTerminado(tipo)) return reply.status(409).send({ error: 'Ese reto ya ha terminado' });
+  await db.query('DELETE FROM campana_apuntados WHERE tipo = $1 AND user_id = $2', [tipo, req.userId]);
   return reply.send({ ok: true });
 });
 
@@ -7879,15 +7994,27 @@ app.get('/admin/campanas', { preHandler: requireAdmin }, async (_req, reply) => 
             -- fin más alta (DE_ESTE_EVENTO), y una tanda con otra fecha dejaba
             -- fuera todo lo cogido antes.
             (SELECT MAX(o.hasta) FROM objetos o WHERE o.tipo = c.tipo AND o.tomado_por IS NULL
-               AND o.hasta > NOW()) AS hasta
+               AND o.hasta > NOW()) AS hasta,
+            -- Cuándo acaba el reto y si ya ha acabado, como en retosPara.
+            (SELECT MAX(o.hasta) FROM objetos o WHERE o.tipo = c.tipo) AS fin,
+            COALESCE((SELECT MAX(o.hasta) FROM objetos o WHERE o.tipo = c.tipo) <= NOW(), FALSE) AS finalizado
        FROM campanas c ORDER BY c.creada_at DESC`,
   );
-  return reply.send({ retos: rows.map((r: any) => ({
-    campana: r.datos,
-    modo: r.modo === 'si' ? 'todos' : (r.modo.startsWith('prueba:') ? 'prueba' : 'apagado'),
-    corredor: r.modo.startsWith('prueba:') ? r.modo.slice('prueba:'.length).split(',').join(', ') : '',
-    apuntados: r.apuntados, libres: r.libres, cogidos: r.cogidos, hasta: r.hasta,
-  })) });
+  const retos = [];
+  for (const r of rows as any[]) {
+    retos.push({
+      campana: r.datos,
+      modo: r.modo === 'si' ? 'todos' : (r.modo.startsWith('prueba:') ? 'prueba' : 'apagado'),
+      corredor: r.modo.startsWith('prueba:') ? r.modo.slice('prueba:'.length).split(',').join(', ') : '',
+      apuntados: r.apuntados, libres: r.libres, cogidos: r.cogidos, hasta: r.hasta,
+      fin: r.fin, finalizado: r.finalizado === true, ganan: cuantosGanan(r.datos),
+      // Los mismos que ve la gente en la app, para copiarlos a redes o al cliente.
+      ganadores: r.finalizado === true
+        ? (await clasificacionDe(r.datos.tipo, cuantosGanan(r.datos))).map((g: any) => ({ name: g.display_name, cuantos: g.cuantos }))
+        : [],
+    });
+  }
+  return reply.send({ retos });
 });
 
 /** Borra el reto, sus apuntados y los logos sin coger. Los cogidos se quedan,
@@ -7910,6 +8037,7 @@ app.post('/admin/campana', { preHandler: requireAdmin }, async (req: any, reply)
     nombre: txt(b.nombre, 80), imagen: txt(b.imagen, 500), cartel: txt(b.cartel, 60),
     fechas: txt(b.fechas, 60), titulo: txt(b.titulo, 80), texto: txt(b.texto, 600),
     premio: txt(b.premio, 300), ciudad: '', lugar: '', limites: null,
+    ganan: cuantosGanan(b),
   };
   if (!c.tipo || !c.nombre) return reply.status(400).send({ error: 'Faltan el identificador y el nombre' });
 
@@ -8007,8 +8135,11 @@ app.post('/admin/campana', { preHandler: requireAdmin }, async (req: any, reply)
 const DE_ESTE_EVENTO = (alias: string) =>
   `${alias}hasta IS NOT DISTINCT FROM (SELECT MAX(hasta) FROM objetos WHERE tipo = $1)`;
 
-app.get('/objetos/ranking', { preHandler: requireAuth }, async (req: any, reply) => {
-  const tipo = String(req.query?.tipo ?? 'calabaza');
+/** La clasificación de un evento o de un reto: quién ha cogido más. Es la tabla
+ *  de la ficha del reto mientras dura y, cuando termina, de aquí salen los
+ *  ganadores (los primeros). A igualdad de cogidos y de puntos va delante quien
+ *  llegó antes a esa cifra, que es lo que dicen las bases del reto de Navidad. */
+async function clasificacionDe(tipo: string, cuantos: number) {
   const { rows } = await db.query(
     `SELECT u.id, u.display_name, COUNT(*)::int AS cuantos, SUM(o.puntos)::int AS puntos
        FROM objetos o JOIN users u ON u.id = o.tomado_por
@@ -8017,10 +8148,22 @@ app.get('/objetos/ranking', { preHandler: requireAuth }, async (req: any, reply)
         AND (o.tipo IN ('calabaza', 'fantasma', 'zombi') OR EXISTS (
           SELECT 1 FROM campana_apuntados a WHERE a.tipo = o.tipo AND a.user_id = o.tomado_por))
       GROUP BY u.id, u.display_name
-      ORDER BY cuantos DESC, puntos DESC
-      LIMIT 20`,
-    [tipo],
+      ORDER BY cuantos DESC, puntos DESC, MAX(o.tomado_at) ASC
+      LIMIT $2`,
+    [tipo, cuantos],
   );
+  return rows as { id: string; display_name: string; cuantos: number; puntos: number }[];
+}
+
+app.get('/objetos/ranking', { preHandler: requireAuth }, async (req: any, reply) => {
+  const tipo = String(req.query?.tipo ?? 'calabaza');
+  // En las apps de hasta la 1.11.16 esta tabla se titula «QUIÉN VA GANANDO»,
+  // y en un reto terminado eso es justo lo que hacía que pareciera en marcha:
+  // a ellas no se les manda (los ganadores ya les llegan en el texto del reto,
+  // retoParaAppDeAntes). Las que saben pintarla como clasificación final la
+  // piden con `v=2`.
+  const sinTabla = !(Number(req.query?.v) >= 2) && await retoTerminado(tipo);
+  const rows = sinTabla ? [] : await clasificacionDe(tipo, 20);
   // Las mías van aparte del ranking: el ranking son los 20 primeros, y quien
   // va el 25.º también necesita saber cuántas lleva — con ellas se desbloquean
   // los mensajes de Halloween.
