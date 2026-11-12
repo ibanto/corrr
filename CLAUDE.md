@@ -38,13 +38,27 @@ AUTO-PAUSA y «Sin señal GPS» con vibración). Las dos, después de Halloween.
 1.11.10 **más de doce horas** después de publicar. No sirve para decidir cuándo
 anunciar; la ficha web sí (ahí sale "Versión 1.11.11" como actual con su fecha).
 
+**12-nov, 11:55 — 1.11.17 MONTADA (Android vc94, iPhone build 41), pedida por Iban («y las nuevas builds… súbelos a sus respectivos»).**
+Lleva SOLO la pantalla de Retos nueva (reto terminado con su sello, sus ganadores, la clasificación final y sin botón; cada reto dice
+su ciudad): `RetosScreen.tsx` y `services/api.ts`. **No se tocó el mapa ni el GPS: no pide prueba en la calle.** Es el paso de app de lo
+de abajo (el servidor ya lo sirve a todas las versiones). Notas de las dos tiendas en `store/notas-1.11.17.md`.
+- **Android**: `apps/mobile/builds/corrr-v1.11.17-vc94.aab` (95 MB; por dentro: 1.11.17, vc94, firma SHA-256 de siempre, servidor de
+  producción, sin depuración). **Falta que Iban lo arrastre a Play Console**: Claude no puede (la herramienta de Chrome no sube más de
+  10 MB, y ese día la cuenta de Play no salía en ningún perfil `/console/u/0` a `/u/4` del Chrome conectado).
+- **iPhone**: archivado como `CORRR-1.11.17-build41` y **SUBIDO a App Store Connect (TestFlight) el 12-nov a las 11:53** por terminal.
+  **Falta**: crear la versión 1.11.17 en App Store Connect («+»), elegir la build 41, pegar las novedades y enviarla a revisión, con el
+  OK de Iban. La cuenta de revisión existe (`GET /admin/cuenta-revision?email=applereview@corrr.es` → `puedeEntrar: true`, mirado el 12-nov).
+- **Después**: publicar en cada tienda (las dos con publicación manual) y anunciarlas (Android `LATEST_APP_VERSION` 1.11.17 /
+  `LATEST_APP_VC` 94; iPhone `LATEST_IOS_VERSION` 1.11.17 / `LATEST_IOS_BUILD` 41). El commit de la versión está **sin subir a GitHub**
+  (no cambia el servidor; se sube con el OK de Iban).
+
 **12-nov, mediodía — RETOS TERMINADOS Y RETOS DE TODAS LAS CIUDADES: commit `ccf489d`, SUBIDO el 12-nov a las 11:30 con el OK de Iban («Sí, súbelo»).**
 Detalle en §9-quinquies («Un reto terminado se ve terminado»). En corto:
 - **Servidor (ya en producción: llega a todo el mundo, sin build)**: un reto cuyos logos han caducado sale como **FINALIZADO** con su lista de
   **ganadores** (los primeros de la clasificación; cuántos, casilla nueva **«Cuántos ganan»** del panel, 3 si no se pone nada), va al final
   de la lista y ya no admite apuntarse ni borrarse. Y **los retos encendidos los ve y se apunta cualquiera, sea de la ciudad que sea**
   (antes solo los de la ciudad de su perfil). A las apps ya instaladas (1.11.15 / 1.11.16) les llega metido en los textos del reto.
-- **App (para la versión siguiente a la 1.11.16; en el repo, SIN build ni número nuevo)**: la ficha de un reto terminado con su sello, su tabla
+- **App (va en la 1.11.17, montada el mismo día, ver arriba)**: la ficha de un reto terminado con su sello, su tabla
   de ganadores y la clasificación final, y sin botón. Hasta entonces las apps instaladas siguen enseñando el botón ME APUNTO /
   DESAPUNTARME en un reto terminado (el servidor lo rechaza y la app dice «No ha salido. Prueba otra vez.»).
 - **El reto de prueba de producción** (`la-tienda-prueba`, en prueba para Ibanto): sus logos caducaron el 10-nov a las 17:33. Sale
