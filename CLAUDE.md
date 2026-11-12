@@ -40,9 +40,8 @@ anunciar; la ficha web sí (ahí sale "Versión 1.11.11" como actual con su fech
 
 **12-nov, ~08:30 — PUBLICADAS LAS DOS (con el OK de Iban, «sustitúyelas y publicamos»), por Claude con el Chrome de Iban:** iPhone **1.11.16 (build 40)**
 (App Store Connect → «Publicar esta versión», España; queda «Listo para distribución») y Android **93 (1.11.15)** (Play Console → «Publicar 1 cambio»,
-«Última publicación el 12 de noviembre»; Google tarda hasta 1 h en enseñarla). **Falta**: cuando cada ficha pública enseñe su versión, anunciarlas
-(Android `LATEST_APP_VERSION` 1.11.15 / `LATEST_APP_VC` 93; iPhone `LATEST_IOS_VERSION` 1.11.16 / `LATEST_IOS_BUILD` 40, por defecto en `routes/index.ts`, con push
-y el OK de Iban) y encender las pestañas de vaciles desde el panel: **hoy están Tótems «en prueba para Ibanto», Aura «no» y Navidad «no»**.
+«Última publicación el 12 de noviembre»; Google tarda hasta 1 h en enseñarla). **ANUNCIADAS el 12-nov a las 09:40** (las dos fichas ya enseñaban su versión; commit `042bd94`; `/app/version` → Android 1.11.15 vc93, iPhone 1.11.16 build 40).
+**Falta**: encender las pestañas de vaciles desde el panel: **hoy están Tótems «en prueba para Ibanto», Aura «no» y Navidad «no»**.
 Antes de publicar se **sustituyeron dos carteles de Tótems** (la pareja 01 «lobo naranja», ahora con león y lobo nuevos, y la provocación de la 05 «soldado
 verde») con `subir-vaciles.mjs --nombre "Tótems" --modo prueba --probadores Ibanto --orden 0` (OJO: el script REESCRIBE modo, orden y probadores de la
 pestaña con lo que se le pase; hay que pasar los valores actuales, que se leen con `GET /admin/vaciles`). Mismos ids (1001-1010).
