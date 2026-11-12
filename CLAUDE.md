@@ -38,19 +38,22 @@ AUTO-PAUSA y «Sin señal GPS» con vibración). Las dos, después de Halloween.
 1.11.10 **más de doce horas** después de publicar. No sirve para decidir cuándo
 anunciar; la ficha web sí (ahí sale "Versión 1.11.11" como actual con su fecha).
 
-**12-nov, 11:55 — 1.11.17 MONTADA (Android vc94, iPhone build 41), pedida por Iban («y las nuevas builds… súbelos a sus respectivos»).**
-Lleva SOLO la pantalla de Retos nueva (reto terminado con su sello, sus ganadores, la clasificación final y sin botón; cada reto dice
-su ciudad): `RetosScreen.tsx` y `services/api.ts`. **No se tocó el mapa ni el GPS: no pide prueba en la calle.** Es el paso de app de lo
-de abajo (el servidor ya lo sirve a todas las versiones). Notas de las dos tiendas en `store/notas-1.11.17.md`.
-- **Android**: `apps/mobile/builds/corrr-v1.11.17-vc94.aab` (95 MB; por dentro: 1.11.17, vc94, firma SHA-256 de siempre, servidor de
+**12-nov, 12:05 — 1.11.17 MONTADA Y SUBIDA A TESTFLIGHT (Android vc95, iPhone build 42), pedida por Iban («y las nuevas builds… súbelos a sus respectivos»).**
+Lleva SOLO la pantalla de Retos nueva: la lista en **dos pestañas, Activos y Finalizados** (Iban, ese mismo día), y la ficha de un reto
+terminado con su sello, sus ganadores, la clasificación final y sin botón; cada reto dice su ciudad. Cambian `RetosScreen.tsx` y
+`services/api.ts`. **No se tocó el mapa ni el GPS: no pide prueba en la calle.** Es el paso de app de lo de abajo (el servidor ya lo sirve
+a todas las versiones). Notas de las dos tiendas en `store/notas-1.11.17.md`.
+- **Android**: `apps/mobile/builds/corrr-v1.11.17-vc95.aab` (95 MB; por dentro: 1.11.17, vc95, firma SHA-256 de siempre, servidor de
   producción, sin depuración). **Falta que Iban lo arrastre a Play Console**: Claude no puede (la herramienta de Chrome no sube más de
   10 MB, y ese día la cuenta de Play no salía en ningún perfil `/console/u/0` a `/u/4` del Chrome conectado).
-- **iPhone**: archivado como `CORRR-1.11.17-build41` y **SUBIDO a App Store Connect (TestFlight) el 12-nov a las 11:53** por terminal.
-  **Falta**: crear la versión 1.11.17 en App Store Connect («+»), elegir la build 41, pegar las novedades y enviarla a revisión, con el
+- **iPhone**: archivado como `CORRR-1.11.17-build42` y **SUBIDO a App Store Connect (TestFlight) el 12-nov a las 12:03** por terminal.
+  **Falta**: crear la versión 1.11.17 en App Store Connect («+»), elegir la **build 42**, pegar las novedades y enviarla a revisión, con el
   OK de Iban. La cuenta de revisión existe (`GET /admin/cuenta-revision?email=applereview@corrr.es` → `puedeEntrar: true`, mirado el 12-nov).
+- **OJO, hay una build 41 en TestFlight que NO vale** (y hubo un AAB vc94, ya borrado): se montaron a las 11:50 sin las pestañas, Iban las
+  pidió cinco minutos después y se volvió a montar todo. En App Store Connect, elegir la 42.
 - **Después**: publicar en cada tienda (las dos con publicación manual) y anunciarlas (Android `LATEST_APP_VERSION` 1.11.17 /
-  `LATEST_APP_VC` 94; iPhone `LATEST_IOS_VERSION` 1.11.17 / `LATEST_IOS_BUILD` 41). El commit de la versión está **sin subir a GitHub**
-  (no cambia el servidor; se sube con el OK de Iban).
+  `LATEST_APP_VC` 95; iPhone `LATEST_IOS_VERSION` 1.11.17 / `LATEST_IOS_BUILD` 42). Los commits de la versión (`c0eecd9`, `60fb39e` y el
+  de la vc95) están **sin subir a GitHub** (no cambian el servidor; se suben con el OK de Iban).
 
 **12-nov, mediodía — RETOS TERMINADOS Y RETOS DE TODAS LAS CIUDADES: commit `ccf489d`, SUBIDO el 12-nov a las 11:30 con el OK de Iban («Sí, súbelo»).**
 Detalle en §9-quinquies («Un reto terminado se ve terminado»). En corto:
@@ -1284,10 +1287,12 @@ servidor:
     («FINALIZADO · DEL 5 AL 7…», «GANADORES / 1.º Fulano · 42 logos»), y `/objetos/ranking` no les manda la tabla de un reto
     terminado (en ellas se titula «QUIÉN VA GANANDO»). Lo que NO se puede quitar desde el servidor: su botón ME APUNTO /
     DESAPUNTARME y la nota de debajo; si lo pulsan, «No ha salido. Prueba otra vez.».
-  - **App desde la versión siguiente a la 1.11.16** (en el repo, sin build): pide `/app/retos?v=2` y `/objetos/ranking?…&v=2` y
+  - **App desde la 1.11.17**: pide `/app/retos?v=2` y `/objetos/ranking?…&v=2` y
     recibe `finalizado`, `ganadores` y `deAqui` aparte. Ficha de un terminado: sello FINALIZADO, tabla GANADORES (con
     «¡Enhorabuena!» si estás), el premio, «CLASIFICACIÓN FINAL» y sin botón; en la lista, apagado y con su sello; cada reto
-    dice su ciudad. No se tocó `MapScreen.tsx` (no pide prueba en la calle por esto).
+    dice su ciudad. La lista va en **dos pestañas, Activos y Finalizados** (Iban, 12-nov), con cuántos hay en cada una; sin
+    ninguno en marcha, Activos enseña el anuncio de «Próximamente». No se tocó `MapScreen.tsx` (no pide prueba en la calle por
+    esto). **Va en la 1.11.17 (vc95 / build 42).**
   - **Probado**: `npm run test:campanas` (24 casos nuevos, con las funciones del servidor tal cual sobre PGlite) y el emulador
     contra el **servidor de verdad con una base de datos en memoria**, con la app de las tiendas y con la nueva: en marcha,
     terminado con ganadores y terminado sin ninguno. El montaje y las capturas, en `soporte/retos-finalizados-12nov/` (fuera

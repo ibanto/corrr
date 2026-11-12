@@ -1,4 +1,4 @@
-# Notas de la versión 1.11.17 (Android vc94 · iPhone build 41)
+# Notas de la versión 1.11.17 (Android vc95 · iPhone build 42)
 
 **Por qué existe** (12-nov-2026): los retos terminados. El servidor ya los manda como FINALIZADO con sus
 ganadores a todas las apps (commit `ccf489d`, §9-quinquies del CLAUDE.md), pero las de hasta la 1.11.16 siguen
@@ -7,13 +7,14 @@ enseñando el botón ME APUNTO / DESAPUNTARME en un reto que ya ha acabado. Iban
 **Lo que lleva sobre la 1.11.15 de Android (vc93) y la 1.11.16 del iPhone (build 40)**, que son el mismo código:
 - **Reto terminado**: sello FINALIZADO, tabla de GANADORES (con «¡Enhorabuena!» si estás entre ellos), el premio
   y la CLASIFICACIÓN FINAL. Sin botón de apuntarse.
-- **Lista de retos**: los terminados salen al final, apagados y con su sello; cada reto dice en qué ciudad es.
+- **Lista de retos en dos pestañas, Activos y Finalizados**; los terminados salen apagados y con su sello, y cada reto
+  dice en qué ciudad es. Sin ningún reto en marcha, Activos enseña el anuncio de «Próximamente».
 - Solo cambian `RetosScreen.tsx` y `services/api.ts`. **No se tocó el mapa ni el GPS**: no pide prueba en la calle.
 
-**Estado (12-nov, 11:55):** AAB en `apps/mobile/builds/corrr-v1.11.17-vc94.aab`, comprobado por dentro (1.11.17, vc94, firma
+**Estado (12-nov, 12:05):** AAB en `apps/mobile/builds/corrr-v1.11.17-vc95.aab`, comprobado por dentro (1.11.17, vc95, firma
 SHA-256 de siempre, servidor de producción, sin depuración); **falta que Iban lo arrastre a Play Console**. iPhone archivado como
-`CORRR-1.11.17-build41` y **subido a App Store Connect (TestFlight) el 12-nov a las 11:53**; falta crear la versión 1.11.17, elegir la
-build 41 y enviarla a revisión (con el OK de Iban).
+`CORRR-1.11.17-build42` y **subido a App Store Connect (TestFlight) el 12-nov a las 12:03**; falta crear la versión 1.11.17, elegir la
+**build 42** y enviarla a revisión (con el OK de Iban). **La build 41 de TestFlight no vale** (se montó sin las pestañas).
 
 ## App Store Connect
 
@@ -25,7 +26,9 @@ Novedades de esta versión:
 ```
 Retos, de principio a fin.
 
-Cuando un reto termina, ahora se ve claro: sale como finalizado, con la lista de ganadores y la clasificación final.
+Ahora van en dos pestañas: los que están en marcha y los que ya han terminado.
+
+Cuando un reto termina se ve claro: sale como finalizado, con la lista de ganadores y la clasificación final.
 
 Y cada reto dice en qué ciudad se juega. Apúntate al que quieras.
 ```
@@ -41,11 +44,11 @@ Vaciles nuevos para devolver los robos, mapa más rápido y, en Retos, lo que vi
 Notas de la versión (máximo 500 caracteres):
 
 ```
-Retos, de principio a fin: cuando un reto termina sale como finalizado, con la lista de ganadores y la clasificación final. Cada reto dice en qué ciudad se juega, y puedes apuntarte al que quieras.
+Retos, de principio a fin: ahora van en dos pestañas, los que están en marcha y los que ya han terminado. Cuando un reto termina sale como finalizado, con la lista de ganadores y la clasificación final. Cada reto dice en qué ciudad se juega, y puedes apuntarte al que quieras.
 ```
 
 ## Después de publicar
 
-Cuando cada ficha enseñe la 1.11.17: Android `LATEST_APP_VERSION` = 1.11.17 · `LATEST_APP_VC` = 94; iPhone
-`LATEST_IOS_VERSION` = 1.11.17 · `LATEST_IOS_BUILD` = 41 (Railway, o el valor por defecto en `routes/index.ts` y
+Cuando cada ficha enseñe la 1.11.17: Android `LATEST_APP_VERSION` = 1.11.17 · `LATEST_APP_VC` = 95; iPhone
+`LATEST_IOS_VERSION` = 1.11.17 · `LATEST_IOS_BUILD` = 42 (Railway, o el valor por defecto en `routes/index.ts` y
 push). **`MIN_APP_VERSION` NO se toca** con gente corriendo (§9).
