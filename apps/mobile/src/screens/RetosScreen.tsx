@@ -11,10 +11,12 @@ import { api, RankingObjeto, Reto, Proximamente } from '../services/api';
  *
  *  Salen los de todas las ciudades (Iban, 12-nov-2026: «todo el mundo puede
  *  ver los retos de todas las ciudades y se pueden apuntar a cualquier reto»):
- *  primero los de la mía, y cada uno dice dónde es. Los TERMINADOS van al
- *  final, con su sello de FINALIZADO, sin botón de apuntarse y con la lista de
- *  ganadores (los primeros de la clasificación; cuántos, lo dice el panel).
- *  Qué está terminado y quién gana lo decide el servidor.
+ *  primero los de la mía, y cada uno dice dónde es. La lista va en dos
+ *  pestañas, ACTIVOS y FINALIZADOS (Iban, el mismo día: «una pestaña donde
+ *  ponga los retos finalizados y los que están activos»). Los terminados
+ *  llevan su sello de FINALIZADO, no tienen botón de apuntarse y enseñan la
+ *  lista de ganadores (los primeros de la clasificación; cuántos, lo dice el
+ *  panel). Qué está terminado y quién gana lo decide el servidor.
  *
  *  Cada reto se escribe en el panel y sale entero del servidor (dibujo, fechas,
  *  título, texto, premio): un reto nuevo no pide versión nueva. Se entra en él y
@@ -58,6 +60,8 @@ export default function RetosScreen() {
   const [proximamente, setProximamente] = useState<Proximamente | null>(null);
   /** El reto en el que se ha entrado; null = la lista. */
   const [abierto, setAbierto] = useState<string | null>(null);
+  /** La pestaña de la lista: los que siguen en marcha o los terminados. */
+  const [pestana, setPestana] = useState<'activos' | 'finalizados'>('activos');
   const [enviando, setEnviando] = useState(false);
   const [fallo, setFallo] = useState(false);
 
@@ -217,6 +221,9 @@ export default function RetosScreen() {
   }
 
   if (retos.length > 0) {
+    const activos = retos.filter(r => !r.finalizado);
+    const acabados = retos.filter(r => r.finalizado);
+    const aLaVista = pestana === 'activos' ? activos : acabados;
     return (
       <ScrollView
         style={styles.fondo}
@@ -226,7 +233,45 @@ export default function RetosScreen() {
         }
       >
         <Text style={styles.tituloLista}>RETOS</Text>
-        {retos.map(r => (
+        <View style={styles.pestanas}>
+          {([['activos', 'Activos', activos.length], ['finalizados', 'Finalizados', acabados.length]] as const).map(
+            ([clave, nombre, cuantos]) => (
+              <TouchableOpacity
+                key={clave}
+                style={[styles.pestana, pestana === clave && styles.pestanaElegida]}
+                onPress={() => setPestana(clave)}
+              >
+                <Text style={[styles.pestanaTexto, pestana === clave && styles.pestanaTextoElegida]}>
+                  {cuantos > 0 ? `${nombre} · ${cuantos}` : nombre}
+                </Text>
+              </TouchableOpacity>
+            ),
+          )}
+        </View>
+        {/* Sin ninguno en marcha, en ACTIVOS sale lo que viene (lo manda el servidor). */}
+        {aLaVista.length === 0 && pestana === 'activos' && (
+          <View style={styles.sinRetos}>
+            <Text style={styles.sinRetosTexto}>Ahora mismo no hay ningún reto en marcha.</Text>
+            {proximamente && (
+              <View style={styles.anuncioEnLista}>
+                <Text style={styles.proximoRotulo}>PRÓXIMAMENTE</Text>
+                <Text style={styles.titulo}>{proximamente.titulo}</Text>
+                {!!proximamente.destacado && (
+                  <View style={styles.cinta}>
+                    <Text style={styles.cintaTexto}>{proximamente.destacado}</Text>
+                  </View>
+                )}
+                {!!proximamente.texto && <Text style={styles.parrafo}>{proximamente.texto}</Text>}
+              </View>
+            )}
+          </View>
+        )}
+        {aLaVista.length === 0 && pestana === 'finalizados' && (
+          <View style={styles.sinRetos}>
+            <Text style={styles.sinRetosTexto}>Todavía no ha terminado ningún reto.</Text>
+          </View>
+        )}
+        {aLaVista.map(r => (
           <TouchableOpacity key={r.tipo} style={styles.tarjeta} onPress={() => setAbierto(r.tipo)}>
             <LogoReto reto={r} estilo={[styles.tarjetaLogo, r.finalizado && styles.logoPasado]} />
             <View style={styles.tarjetaTextos}>
@@ -302,6 +347,19 @@ const styles = StyleSheet.create({
     color: colors.textPrimary, fontSize: 30, fontWeight: '900', letterSpacing: 1,
     marginBottom: spacing.lg,
   },
+  // Las dos pestañas de la lista, como las del ranking.
+  pestanas: {
+    flexDirection: 'row', backgroundColor: colors.bgCard, borderRadius: radius.full,
+    padding: 4, marginBottom: spacing.md, borderWidth: 1, borderColor: colors.border,
+  },
+  pestana: { flex: 1, paddingVertical: 8, borderRadius: radius.full, alignItems: 'center' },
+  pestanaElegida: { backgroundColor: colors.orange },
+  pestanaTexto: { fontSize: 13, fontWeight: '600', color: colors.textSecondary },
+  pestanaTextoElegida: { color: '#fff' },
+  sinRetos: { alignItems: 'center', paddingTop: spacing.xl },
+  sinRetosTexto: { color: colors.textSecondary, fontSize: 15, textAlign: 'center' },
+  anuncioEnLista: { alignItems: 'center', marginTop: spacing.xl },
+  proximoRotulo: { color: colors.orange, fontSize: 12, fontWeight: '800', letterSpacing: 2 },
   tarjeta: {
     flexDirection: 'row', alignItems: 'center', gap: spacing.md,
     backgroundColor: colors.bgCard, borderRadius: radius.lg,

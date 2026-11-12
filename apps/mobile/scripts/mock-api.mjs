@@ -12,6 +12,7 @@
  *   MODO=vacio node scripts/mock-api.mjs # todo a cero: cuenta recién hecha
  *   MODO=campana node scripts/mock-api.mjs # campaña de marca: logos en vez de calabazas. En Retos: uno en marcha,
  *                                          # uno de otra ciudad, uno FINALIZADO con ganadores y otro sin ninguno
+ *   SIN_ACTIVOS=1 MODO=campana node scripts/mock-api.mjs # solo los terminados: la pestaña Activos enseña el anuncio
  *   MODO=textos node scripts/mock-api.mjs # además de Tótems y Aura, dos pestañas de vaciles de TEXTO
  *   HALLOWEEN=1 node scripts/mock-api.mjs # la pestaña HALLOWEEN encendida desde el panel (con MODO=vacio sale siempre)
  *
@@ -59,6 +60,7 @@ const RETOS = [
     fechas: 'DEL 5 AL 7 DE NOVIEMBRE', premio: 'Un desayuno de campeones', ciudad: 'Madrid', deAqui: true, apuntados: 1,
     finalizado: true, ganadores: [] },
 ];
+if (process.env.SIN_ACTIVOS === '1') RETOS.splice(0, RETOS.length, ...RETOS.filter(r => r.finalizado));
 const apuntado = new Set(RETOS.filter(r => r.dentro).map(r => r.tipo));
 /** Lo mismo que hace el servidor (`retoParaAppDeAntes`) con las apps de hasta
  *  la 1.11.16, que no piden `?v=2`: el FINALIZADO y los ganadores van dentro
