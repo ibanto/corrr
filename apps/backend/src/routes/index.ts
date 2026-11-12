@@ -2378,7 +2378,7 @@ guardar en prueba (para ti y, si quiere, el cliente), sembrar y, cuando est&eacu
   <label class="campo">Cu&aacute;ntos logos (en cada ciudad)
     <input id="c_cuantos" type="number" min="1" max="500" value="30"></label>
   <label class="campo">Puntos de cada logo
-    <input id="c_puntos" type="number" min="1" max="1000" value="200"></label>
+    <input id="c_puntos" type="number" min="1" max="1000" value="1"></label>
   <label class="campo">Desde
     <input id="c_desde" type="datetime-local"></label>
   <label class="campo">Hasta
