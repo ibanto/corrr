@@ -44,9 +44,14 @@ anunciar; la ficha web sí (ahí sale "Versión 1.11.11" como actual con su fech
 **Cuando Apple la apruebe**: «Publicar esta versión» (con el OK de Iban) y, cuando la ficha enseñe la 1.11.17, anunciarla.
 **12-nov, 13:44 — ANDROID 95 (1.11.17) EN PRUEBA INTERNA** («Disponible para testers internos»). Iban arrastró el AAB vc95 a la página
 «Crear versión de prueba interna» que le abrió Claude en su Chrome, y Claude puso las notas y pulsó «Siguiente» → «Guardar y publicar»
-(«pon los textos y haz el resto»). Solo avisó de lo de siempre: sin archivo de desofuscación. **NO está en producción**: falta
-promocionarla (Prueba interna → «Promocionar versión» → Producción, con las notas de `store/notas-1.11.17.md`) y enviarla a revisión de
-Google, con el OK de Iban. En producción sigue la 93 (1.11.15).
+(«pon los textos y haz el resto»). Solo avisó de lo de siempre: sin archivo de desofuscación.
+**12-nov, 14:04 — ANDROID 95 (1.11.17) ENVIADA A REVISIÓN DE GOOGLE para producción, con el OK de Iban («Sí, mándala»).** En «Resumen de
+publicación» sale en **«Cambios en revisión»: Producción · 95 (1.11.17) · Iniciar lanzamiento completo**, al 100 % y con las notas de
+`store/notas-1.11.17.md`. **«Publicación gestionada» sigue activada**: aunque Google apruebe, se queda esperando hasta pulsar «Publicar
+cambios» (con el OK de Iban). En producción sigue la 93 (1.11.15). Otra vez «Promocionar versión → Producción» salía en gris («El canal ya
+tiene una versión en borrador»): había un borrador vacío («Versión sin nombre») en Producción → Versiones; se entró con «Editar versión»,
+«Añadir de la biblioteca» → 95, notas, «Siguiente» → «Guardar» → «Enviar 1 cambio a revisión». **Las dos tiendas están ya en revisión;
+cuando aprueben las dos, publicar a la vez y anunciar** (valores en el bloque de abajo).
 **OJO con «Claude in Chrome»**: ese día el único navegador conectado al principio era **el Chrome de un compañero de Iban**, no el suyo
 (`isLocal: true` solo dice que es un Mac). Claude abrió allí Play Console y la entrada de App Store Connect hasta que Iban avisó y conectó
 su Chrome. Antes de abrir nada de Iban: `list_connected_browsers` y usar solo el que diga **`onThisComputer: true`**.

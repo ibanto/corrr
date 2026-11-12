@@ -17,7 +17,9 @@ SHA-256 de siempre, servidor de producción, sin depuración); **falta que Iban 
 montó sin las pestañas).
 
 **Android EN PRUEBA INTERNA el 12-nov a las 13:44**: «95 (1.11.17) · Disponible para testers internos» (el AAB lo arrastró Iban; las
-notas y «Guardar y publicar», Claude). **Falta promocionarla a producción** y enviarla a revisión de Google, con el OK de Iban.
+notas y «Guardar y publicar», Claude). **ENVIADA A REVISIÓN DE GOOGLE para producción el 12-nov a las 14:04** (con el OK de Iban):
+«Cambios en revisión · Producción · 95 (1.11.17) · Iniciar lanzamiento completo», al 100 %, con «Publicación gestionada» activada
+(no sale a la tienda hasta pulsar «Publicar cambios»).
 
 **iPhone ENVIADO A REVISIÓN el 12-nov a las 13:37** (con el OK de Iban, por Claude con el Chrome de Iban): versión 1.11.17 creada con la
 **build 42**, las novedades y el texto promocional de abajo y «Publicar esta versión manualmente». Estado: «Pendiente de revisión»
