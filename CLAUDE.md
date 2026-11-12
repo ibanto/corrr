@@ -63,7 +63,9 @@ a todas las versiones). Notas de las dos tiendas en `store/notas-1.11.17.md`.
   pidió cinco minutos después y se volvió a montar todo. En App Store Connect, elegir la 42.
 - **Después**: publicar en cada tienda (las dos con publicación manual) y anunciarlas (Android `LATEST_APP_VERSION` 1.11.17 /
   `LATEST_APP_VC` 95; iPhone `LATEST_IOS_VERSION` 1.11.17 / `LATEST_IOS_BUILD` 42). Los commits de la versión (`c0eecd9`, `60fb39e` y el
-  de la vc95) están **sin subir a GitHub** (no cambian el servidor; se suben con el OK de Iban).
+  de la vc95) están **SUBIDOS a GitHub el 12-nov a las 13:40 con el OK de Iban** («Sí, súbelos»; `/health` → `0357d6f`; no cambian el
+  servidor, y `/app/version` sigue anunciando Android 1.11.15 vc93). Play Console de CORRR, prueba interna:
+  `play.google.com/console/u/2/developers/6827237561288468443/app/4972872541990548685/tracks/internal-testing` → «Crear nueva versión».
 
 **12-nov, mediodía — RETOS TERMINADOS Y RETOS DE TODAS LAS CIUDADES: commit `ccf489d`, SUBIDO el 12-nov a las 11:30 con el OK de Iban («Sí, súbelo»).**
 Detalle en §9-quinquies («Un reto terminado se ve terminado»). En corto:
