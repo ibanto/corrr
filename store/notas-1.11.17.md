@@ -16,6 +16,9 @@ SHA-256 de siempre, servidor de producción, sin depuración); **falta que Iban 
 `CORRR-1.11.17-build42` y **subido a App Store Connect (TestFlight) el 12-nov a las 12:03**. **La build 41 de TestFlight no vale** (se
 montó sin las pestañas).
 
+**Android EN PRUEBA INTERNA el 12-nov a las 13:44**: «95 (1.11.17) · Disponible para testers internos» (el AAB lo arrastró Iban; las
+notas y «Guardar y publicar», Claude). **Falta promocionarla a producción** y enviarla a revisión de Google, con el OK de Iban.
+
 **iPhone ENVIADO A REVISIÓN el 12-nov a las 13:37** (con el OK de Iban, por Claude con el Chrome de Iban): versión 1.11.17 creada con la
 **build 42**, las novedades y el texto promocional de abajo y «Publicar esta versión manualmente». Estado: «Pendiente de revisión»
 (hasta 48 h). Cuando Apple apruebe: «Publicar esta versión», con el OK de Iban.
