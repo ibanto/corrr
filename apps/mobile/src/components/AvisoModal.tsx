@@ -109,6 +109,38 @@ export default function AvisoModal({ visible, aviso, onClose }: Props) {
     onClose();
   };
 
+  // Aviso con GIF a cartel completo (desde la 1.11.18): el GIF llena el cartel
+  // de arriba abajo, con una X arriba para cerrarlo y el botón encima. Se
+  // activa solo cuando la imagen viene de los GIF que sube el panel
+  // (/aviso/gif/…): los avisos de siempre se pintan como antes.
+  const cartelCompleto = !!aviso.imagen && aviso.imagen.includes('/aviso/gif/');
+  if (cartelCompleto) {
+    return (
+      <Modal transparent visible={visible} animationType="fade" statusBarTranslucent onRequestClose={onClose}>
+        <View style={styles.fondo}>
+          <View style={styles.cartel}>
+            <Image source={{ uri: aviso.imagen as string }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+            <TouchableOpacity
+              style={styles.cerrar} onPress={onClose} accessibilityRole="button"
+              accessibilityLabel="Cerrar" hitSlop={{ top: 8, left: 8, right: 8, bottom: 8 }}
+            >
+              <Text style={styles.cerrarX}>✕</Text>
+            </TouchableOpacity>
+            <View style={styles.cartelPie}>
+              <TouchableOpacity style={styles.boton} onPress={pulsar} accessibilityRole="button" activeOpacity={0.85}>
+                <View style={styles.botonDentro}>
+                  <View style={styles.triangulo} />
+                  <Text style={styles.botonTexto}>{boton}</Text>
+                </View>
+              </TouchableOpacity>
+            </View>
+            <Marco />
+          </View>
+        </View>
+      </Modal>
+    );
+  }
+
   return (
     <Modal transparent visible={visible} animationType="fade" statusBarTranslucent onRequestClose={onClose}>
       <View style={styles.fondo}>
@@ -185,6 +217,19 @@ const styles = StyleSheet.create({
     shadowColor: colors.orange, shadowOpacity: 0.45, shadowRadius: 22,
     shadowOffset: { width: 0, height: 0 }, elevation: 12,
   },
+  // Cartel completo con GIF: proporción 2:3, como el GIF que sube el panel (600×900).
+  cartel: {
+    width: '100%', maxWidth: 380, aspectRatio: 2 / 3, backgroundColor: NEGRO, overflow: 'hidden',
+    shadowColor: colors.orange, shadowOpacity: 0.45, shadowRadius: 22,
+    shadowOffset: { width: 0, height: 0 }, elevation: 12,
+  },
+  cerrar: {
+    position: 'absolute', top: 14, right: 14, width: 40, height: 40, borderRadius: 20,
+    backgroundColor: 'rgba(0,0,0,0.65)', borderWidth: 2, borderColor: colors.orange,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  cerrarX: { color: '#fff', fontSize: 20, fontWeight: '900', lineHeight: 22 },
+  cartelPie: { position: 'absolute', left: 20, right: 20, bottom: 24, flexDirection: 'row' },
   lado: { position: 'absolute', backgroundColor: colors.orange },
   diagonal: { width: DIAGONAL, height: 2, transform: [{ rotate: '-45deg' }] },
   trazos: { ...StyleSheet.absoluteFillObject },
