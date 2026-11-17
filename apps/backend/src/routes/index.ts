@@ -529,6 +529,14 @@ async function initDB() {
       subido_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `).catch(() => {});
+  // GIF animados para el pop-up de avisos (el panel los sube como archivo).
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS aviso_gifs (
+      id SERIAL PRIMARY KEY,
+      gif BYTEA NOT NULL,
+      subido_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `).catch(() => {});
   await db.query(`
     CREATE TABLE IF NOT EXISTS campanas (
       tipo TEXT PRIMARY KEY,
@@ -2148,6 +2156,9 @@ Sale UNA vez por persona; para repetirlo, se crea otro. Solo lo ven las apps 1.1
   <input id="a_boton" placeholder="Texto del botón (si lo dejas vacío: VALE)" maxlength="24">
   <input id="a_enlace" placeholder="Enlace que abre el botón (opcional)">
   <input id="a_imagen" placeholder="Imagen, dirección https (opcional)">
+  <label class="casilla" style="display:block">…o sube un GIF animado (máx. 5 MB; el pop-up enseña una franja de 340×120):
+    <input id="a_gif" type="file" accept="image/gif"></label>
+  <div id="a_gif_msg" style="font-size:13px;"></div>
   <input id="a_etiqueta" placeholder="Línea pequeña de arriba, p. ej. MAPA ACTUALIZADO (opcional)" maxlength="30">
   <input id="a_sello" placeholder="Sello de la esquina, p. ej. TERRITORIO LIBRE (opcional)" maxlength="24">
   <input id="a_nota" placeholder="Nota junto al botón, p. ej. AHORA / SIN CORTES (opcional)" maxlength="40">
@@ -2601,6 +2612,22 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
     } else if (bor && confirm('¿Borrar este aviso? Deja de salir y se pierde el recuento de quién lo vio.')) {
       api('/admin/avisos/' + bor, { method: 'DELETE' }).then(cargar);
     }
+  });
+  document.getElementById('a_gif').addEventListener('change', function (ev) {
+    var f = ev.target.files && ev.target.files[0];
+    var msg = document.getElementById('a_gif_msg');
+    if (!f) return;
+    msg.style.color = '#aaa'; msg.textContent = 'Subiendo el GIF...';
+    var lector = new FileReader();
+    lector.onload = function () {
+      api('/admin/aviso/gif', { method: 'POST', body: JSON.stringify({ imagen: lector.result }) })
+        .then(function (r) {
+          document.getElementById('a_imagen').value = r.url;
+          msg.style.color = '#4caf50';
+          msg.textContent = '✓ GIF subido (' + r.kb + ' KB). Ya está puesto en «Imagen»; rellena el resto y publica.';
+        }).catch(function (e) { msg.style.color = '#f44336'; msg.textContent = '✗ ' + e.message; });
+    };
+    lector.readAsDataURL(f);
   });
   document.getElementById('fa').addEventListener('submit', function (ev) {
     ev.preventDefault();
@@ -7930,6 +7957,36 @@ app.post('/admin/campana/logo', { preHandler: requireAdmin }, async (req: any, r
   const version = createHash('sha1').update(png).digest('hex').slice(0, 10);
   const url = `https://${req.headers.host}/campana/logo/${tipo}.png?v=${version}`;
   return reply.send({ ok: true, url, kb: Math.round(png.length / 1024) });
+});
+
+/** GIF de los avisos: se sube desde el panel y la app lo pinta como la imagen de siempre
+ *  (el pop-up no lleva reproductor de vídeo, así que un GIF es lo que se puede animar sin
+ *  versión nueva). Se guarda tal cual, sin recomprimir: sharp lo aplanaría a un fotograma. */
+app.get('/aviso/gif/:archivo', async (req: any, reply) => {
+  const id = parseInt(String(req.params.archivo).replace(/\.gif$/, ''), 10);
+  if (!Number.isInteger(id)) return reply.status(404).send({ error: 'No hay gif' });
+  const { rows } = await db.query('SELECT gif FROM aviso_gifs WHERE id = $1', [id]);
+  if (!rows[0]) return reply.status(404).send({ error: 'No hay gif' });
+  return reply
+    .header('Content-Type', 'image/gif')
+    .header('Cache-Control', 'public, max-age=31536000, immutable')
+    .send(rows[0].gif as Buffer);
+});
+
+app.post('/admin/aviso/gif', { preHandler: requireAdmin }, async (req: any, reply) => {
+  const dataUri = String(req.body?.imagen ?? '');
+  const coma = dataUri.indexOf(',');
+  if (coma < 0) return reply.status(400).send({ error: 'No llega ningún archivo' });
+  const gif = Buffer.from(dataUri.slice(coma + 1), 'base64');
+  if (gif.length < 10 || gif.subarray(0, 4).toString('latin1') !== 'GIF8') {
+    return reply.status(400).send({ error: 'Eso no es un GIF' });
+  }
+  if (gif.length > 5 * 1024 * 1024) {
+    return reply.status(400).send({ error: 'Pesa más de 5 MB: en el móvil tardaría en salir. Hazlo más corto o más pequeño' });
+  }
+  const { rows } = await db.query('INSERT INTO aviso_gifs (gif) VALUES ($1) RETURNING id', [gif]);
+  const url = `https://${req.headers.host}/aviso/gif/${rows[0].id}.gif`;
+  return reply.send({ ok: true, url, kb: Math.round(gif.length / 1024) });
 });
 
 /** Lo que anuncia Retos cuando no hay campaña (app 1.11.13 en adelante). Va
