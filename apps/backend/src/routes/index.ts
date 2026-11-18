@@ -2369,6 +2369,9 @@ guardar en prueba (para ti y, si quiere, el cliente), sembrar y, cuando est&eacu
   <label class="campo">Ciudades, una o varias separadas por comas, hasta 16 (ah&iacute; se plantan los logos; el reto lo ve todo el mundo, y a los de ah&iacute; les sale el primero)
     <input id="c_ciudad" placeholder="Barcelona, Badalona"></label>
   <p class="nota" id="c_lugar"></p>
+  <label class="campo">Logos fijos (si quieres): siempre en el mismo sitio, como delante de la tienda. Una direcci&oacute;n por l&iacute;nea (calle, n&uacute;mero y ciudad) o el punto de Google Maps (clic derecho en la acera &rarr; copiar las coordenadas), hasta 10. Cuando alguien lo coge, desaparece para todos y a los 5 minutos vuelve a salir en el mismo sitio (los dem&aacute;s logos salen cerca, en otro)
+    <textarea id="c_fijos" rows="2" placeholder="Calle Mayor 1, Madrid"></textarea></label>
+  <p class="nota" id="c_fijos_donde"></p>
   <label class="campo">Cartel al pisarlo ({puntos} se cambia por los puntos)
     <input id="c_cartel" placeholder="¡TIENDA PEPE! +{puntos}"></label>
   <label class="campo">Retos &middot; fechas
@@ -2887,6 +2890,14 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
     var zonas = c.zonas && c.zonas.length ? c.zonas : (c.lugar ? [{ lugar: c.lugar }] : []);
     document.getElementById('c_lugar').innerHTML = zonas.length
       ? 'Se planta en:' + zonas.map(function (z) { return '<br>&middot; ' + esc(z.lugar); }).join('') : '';
+    // Los fijos, con su punto en Google Maps para mirar que cae en la acera buena.
+    var fijos = c.fijos || [];
+    document.getElementById('c_fijos').value = fijos.map(function (f) { return f.direccion; }).join('\\n');
+    document.getElementById('c_fijos_donde').innerHTML = fijos.length
+      ? 'Logos fijos (pulsa para verlo en el mapa):' + fijos.map(function (f) {
+          return '<br>&middot; <a href="https://www.google.com/maps?q=' + Number(f.lat) + ',' + Number(f.lon)
+            + '" target="_blank" rel="noopener" style="color:var(--naranja)">' + esc(f.lugar) + '</a>';
+        }).join('') : '';
     verLogo(c.imagen);
     document.getElementById('c_modo').value = r.modo || 'apagado';
     document.getElementById('c_probadores').value = r.corredor || 'Ibanto';
@@ -2977,6 +2988,7 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
     var cuerpo = { modo: document.getElementById('c_modo').value, corredores: val('c_probadores') };
     CAMPOS_CAMPANA.forEach(function (k) { cuerpo[k] = val('c_' + k); });
     cuerpo.ganan = val('c_ganan');
+    cuerpo.fijos = document.getElementById('c_fijos').value;
     if (cuerpo.modo === 'todos' && !confirm('¿Encender la campaña? La verá todo el mundo en Retos. Los logos se plantan en ' + cuerpo.ciudad + '.')) return null;
     return api('/admin/campana', { method: 'POST', body: JSON.stringify(cuerpo) });
   }
@@ -3025,12 +3037,13 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
       }) }).then(function (r) {
         return cargarCampanasPanel(g.campana.tipo).then(function () {
           b.disabled = false;
-          if (!r.puestas) { msgCampana('✗ No ha cabido ningún logo' + (r.donde || '') + '. Allí no hay calles cargadas ni nadie ha corrido.', false); return; }
+          if (!r.puestas && !r.fijos) { msgCampana('✗ No ha cabido ningún logo' + (r.donde || '') + '. Allí no hay calles cargadas ni nadie ha corrido.', false); return; }
           // Los de la ciudad anterior no se tocan solos: los quita el botón.
           var cambio = antes && antes.libres > 0 && antes.campana.ciudad !== g.campana.ciudad;
           var vacias = r.vacias && r.vacias.length
             ? '. En ' + r.vacias.join(', ') + ' no ha cabido ninguno: no hay calles cargadas ni nadie ha corrido. Hay que cargar sus calles.' : '';
-          msgCampana('✓ Sembrados ' + r.puestas + ' logos de ' + r.puntos + ' puntos' + (r.donde || '') + vacias
+          msgCampana('✓ Sembrados ' + r.puestas + ' logos de ' + r.puntos + ' puntos' + (r.donde || '')
+            + (r.fijos ? ', y ' + r.fijos + (r.fijos === 1 ? ' fijo en su sitio' : ' fijos en su sitio') : '') + vacias
             + (cambio ? '. Ojo: siguen los ' + antes.libres + ' de ' + antes.campana.ciudad + '.' : ''), true);
         });
       });
@@ -4848,7 +4861,13 @@ app.post('/runs', {
       // estaba: si no, a fuerza de cogerlos acabarían fuera del barrio. Y
       // primero se intenta CERCA de donde estaba (RADIO_RENACER_LOGO), para
       // que el reto no se vaya moviendo de barrio a fuerza de cogerlos.
-      const zona = cajaDeCampana(await campanaDe(o.tipo).catch(() => null), o.x, o.y);
+      const campana = esLogo ? await campanaDe(o.tipo).catch(() => null) : null;
+      // Un logo fijo (delante de la tienda) vuelve a SU casilla, no a otra.
+      if (esLogo && esLogoFijo(campana, o.x, o.y)) {
+        await renacerLogoFijo(client, o, hasta, ESPERA_REAPARICION_LOGO_MS);
+        continue;
+      }
+      const zona = cajaDeCampana(campana, o.x, o.y);
       const cajaEntera = zona ?? { x0: o.x - radio, x1: o.x + radio, y0: o.y - radio, y1: o.y + radio };
       let nuevas: { x: number; y: number }[] = [];
       if (esLogo) {
@@ -7772,7 +7791,62 @@ type Campana = {
   /** Cuántos ganan cuando el reto termina: los primeros de la clasificación
    *  (Iban, 12-nov: «lo elijo en cada reto»). Las de antes no lo llevan: 3. */
   ganan?: number;
+  /** Logos que están siempre en el mismo sitio, p. ej. delante de la tienda
+   *  (Iban, 18-nov-2026). `lat`/`lon`, el punto de la dirección; `x`/`y`, su
+   *  casilla. Se cogen como cualquier logo (sin tope por persona: Iban, 18-nov,
+   *  «cada persona puede coger tantos logos como quiera al día»); solo cambia
+   *  dónde renacen, ver renacerLogoFijo. */
+  fijos?: { direccion: string; lugar: string; lat: number; lon: number; x: number; y: number }[];
 };
+
+const MAX_LOGOS_FIJOS = 10;
+
+/** ¿Es la casilla de uno de los logos fijos de la campaña? */
+function esLogoFijo(c: Campana | null, x: number, y: number): boolean {
+  return !!c?.fijos?.some(f => f.x === x && f.y === y);
+}
+
+/** Planta los logos fijos de una campaña en sus casillas. Al sembrar
+ *  (`reemplazar`), el que estuviera libre se cambia por uno con las fechas y
+ *  los puntos de la tanda nueva: el ranking del reto solo cuenta la tanda de
+ *  fin más alta (DE_ESTE_EVENTO), y uno con otra fecha no contaría. Al guardar
+ *  la campaña solo se pone el que falte. Devuelve cuántos ha puesto. */
+async function plantarFijos(
+  client: { query: (sql: string, params?: any[]) => Promise<{ rows: any[]; rowCount: number | null }> },
+  tipo: string, fijos: NonNullable<Campana['fijos']>,
+  desde: Date, hasta: Date, puntos: number, reemplazar: boolean,
+): Promise<number> {
+  let puestos = 0;
+  for (const f of fijos) {
+    if (reemplazar) {
+      await client.query(
+        'DELETE FROM objetos WHERE tipo = $1 AND cell_x = $2 AND cell_y = $3 AND tomado_por IS NULL', [tipo, f.x, f.y]);
+    }
+    const { rows } = await client.query(
+      `INSERT INTO objetos (tipo, cell_x, cell_y, puntos, desde, hasta)
+       SELECT $1, $2, $3, $4, $5, $6
+        WHERE NOT EXISTS (SELECT 1 FROM objetos WHERE tipo = $1 AND cell_x = $2 AND cell_y = $3
+                             AND tomado_por IS NULL AND (hasta IS NULL OR hasta > NOW()))
+       RETURNING id`,
+      [tipo, f.x, f.y, puntos, desde.toISOString(), hasta.toISOString()],
+    );
+    puestos += rows.length;
+  }
+  return puestos;
+}
+
+/** Cuando alguien coge un logo fijo, vuelve a salir en SU casilla a los
+ *  `esperaMs` (5 min, como los demás logos), con sus puntos y su fecha de fin.
+ *  Mientras tanto no lo ve nadie. */
+async function renacerLogoFijo(
+  client: { query: (sql: string, params?: any[]) => Promise<any> },
+  o: { tipo: string; x: number; y: number; puntos: number }, hasta: Date, esperaMs: number,
+): Promise<void> {
+  await client.query(
+    `INSERT INTO objetos (tipo, cell_x, cell_y, puntos, desde, hasta) VALUES ($1, $2, $3, $4, $5, $6)`,
+    [o.tipo, o.x, o.y, o.puntos, new Date(Date.now() + esperaMs).toISOString(), hasta.toISOString()],
+  );
+}
 
 /** Un reto con tres premios tiene tres ganadores y uno con un desayuno, uno:
  *  se escribe en el panel. Sin nada escrito, el podio. */
@@ -7818,6 +7892,33 @@ async function limitesDeCiudad(ciudad: string): Promise<{ lugar: string; limites
   if (!r?.boundingbox) return null;
   const [sur, norte, oeste, este] = r.boundingbox.map(Number);
   return { lugar: r.display_name, limites: { sur, norte, oeste, este } };
+}
+
+/** Dónde está una dirección (para los logos fijos). Vale también el punto de
+ *  Google Maps tal cual se copia («41.39169, 2.16478»): es lo más exacto para
+ *  ponerlo justo en la acera de la tienda, porque OpenStreetMap a veces da el
+ *  centro del edificio. Las coordenadas no se le preguntan a nadie. */
+async function sitioDeDireccion(texto: string): Promise<{ lugar: string; lat: number; lon: number; impreciso?: boolean } | null> {
+  const m = texto.match(/^\s*(-?\d{1,2}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)\s*$/);
+  if (m) {
+    const lat = Number(m[1]), lon = Number(m[2]);
+    // España con Canarias, con margen. Al revés (lon, lat) caería fuera.
+    if (lat < 27 || lat > 44.5 || lon < -19 || lon > 5) return null;
+    return { lugar: `${lat}, ${lon}`, lat, lon };
+  }
+  const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(texto)}`
+    + '&countrycodes=es&format=jsonv2&addressdetails=1&limit=1';
+  const res = await fetch(url, { headers: { 'User-Agent': 'CORRR/1.0 (hola@corrr.es)' } });
+  if (!res.ok) return null;
+  const [r] = await res.json() as any[];
+  const lat = Number(r?.lat), lon = Number(r?.lon);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  // Si OpenStreetMap no tiene ESE portal, no avisa: devuelve la calle entera
+  // (su punto medio) o el barrio. Medido el 18-nov: «Rambla del Celler 50, Sant
+  // Cugat» daba el centro de una rambla de más de un kilómetro. Solo vale un
+  // portal con número o un sitio concreto (una tienda, un bar, un edificio).
+  const impreciso = !r.address?.house_number && ['highway', 'place', 'boundary', 'landuse'].includes(r.category);
+  return { lugar: r.display_name, lat, lon, impreciso };
 }
 
 /** El logo subido desde el panel. Se guarda en la base de datos (son unos
@@ -8150,6 +8251,36 @@ app.post('/admin/campana', { preHandler: requireAdmin }, async (req: any, reply)
   c.ciudad = zonas.map(z => z.ciudad).join(', ');
   c.lugar = zonas[0].lugar;
   c.limites = zonas[0].limites;
+
+  // Logos fijos: una dirección (o un punto de Google Maps) por línea. Las ya
+  // guardadas no se vuelven a buscar, como las ciudades.
+  const fijosPedidos = [...new Map(String(b.fijos ?? '').split('\n')
+    .map(s => s.trim().slice(0, 160)).filter(Boolean)
+    .map(s => [s.toLowerCase(), s] as const)).values()];
+  if (fijosPedidos.length > MAX_LOGOS_FIJOS) {
+    return reply.status(400).send({ error: `Como mucho ${MAX_LOGOS_FIJOS} logos fijos por campaña` });
+  }
+  const cajas = cajasDeCampana(c).map(z => z.caja);
+  const fijos: NonNullable<Campana['fijos']> = [];
+  for (const direccion of fijosPedidos) {
+    const ya = antes?.fijos?.find(f => f.direccion.toLowerCase() === direccion.toLowerCase());
+    if (ya) { fijos.push({ ...ya, direccion }); continue; }
+    if (preguntadas++ > 0) await new Promise(r => setTimeout(r, 1100));
+    const sitio = await sitioDeDireccion(direccion).catch(() => null);
+    if (!sitio) {
+      return reply.status(400).send({ error: `No encuentro "${direccion}" en el mapa. Pon calle, número y ciudad, o el punto de Google Maps (clic derecho en la acera → copiar las coordenadas)` });
+    }
+    if (sitio.impreciso) {
+      return reply.status(400).send({ error: `De "${direccion}" el mapa solo conoce la calle o la zona, no el portal: el logo podría caer lejos de la tienda. Pon el punto de Google Maps (clic derecho en la acera → copiar las coordenadas)` });
+    }
+    const { x, y } = coordToCell(sitio.lat, sitio.lon);
+    // Si OpenStreetMap ha entendido otra calle de otra ciudad, se nota aquí.
+    if (!cajas.some(k => x >= k.x0 && x <= k.x1 && y >= k.y0 && y <= k.y1)) {
+      return reply.status(400).send({ error: `"${direccion}" sale en ${sitio.lugar}, fuera de las ciudades del reto. Añade la ciudad o pon el punto de Google Maps` });
+    }
+    fijos.push({ direccion, lugar: sitio.lugar, lat: sitio.lat, lon: sitio.lon, x, y });
+  }
+  if (fijos.length > 0) c.fijos = fijos;
   // Los tipos de Halloween tienen reglas propias (fantasmas, mensajes): una
   // campaña que se llamara así las heredaría sin querer.
   if (['calabaza', 'fantasma', 'zombi'].includes(c.tipo)) {
@@ -8191,6 +8322,20 @@ app.post('/admin/campana', { preHandler: requireAdmin }, async (req: any, reply)
      ON CONFLICT (tipo) DO UPDATE SET datos = EXCLUDED.datos, modo = EXCLUDED.modo`,
     [c.tipo, JSON.stringify(c), modo],
   );
+  // El logo fijo que se ha quitado de la lista, fuera del mapa (si está libre).
+  for (const f of antes?.fijos ?? []) {
+    if (!esLogoFijo(c, f.x, f.y)) {
+      await db.query('DELETE FROM objetos WHERE tipo = $1 AND cell_x = $2 AND cell_y = $3 AND tomado_por IS NULL',
+        [c.tipo, f.x, f.y]);
+    }
+  }
+  // Y si el reto ya tiene logos en marcha, los fijos nuevos salen ya, con la
+  // fecha de fin y los puntos de esa tanda. Si no, saldrán al sembrar.
+  if (c.fijos?.length) {
+    const { rows: tanda } = await db.query(
+      `SELECT hasta, puntos FROM objetos WHERE tipo = $1 AND hasta > NOW() ORDER BY hasta DESC, id DESC LIMIT 1`, [c.tipo]);
+    if (tanda[0]) await plantarFijos(db, c.tipo, c.fijos, new Date(), new Date(tanda[0].hasta), tanda[0].puntos, false);
+  }
   return reply.send({
     ok: true, campana: c,
     modo: modo === 'si' ? 'todos' : (modo === 'no' ? 'apagado' : 'prueba'),
@@ -8450,6 +8595,7 @@ app.post('/admin/objetos', { preHandler: requireAdmin }, async (req: any, reply)
 
   let caja;
   let donde = '';
+  let fijosPuestos = 0;
   if (req.body?.enCampana === true) {
     // Por toda la ciudad del reto, y si tiene varias, `cuantos` en CADA una:
     // es lo que se entiende al leer el panel, y Barcelona y un pueblo de al
@@ -8459,6 +8605,8 @@ app.post('/admin/objetos', { preHandler: requireAdmin }, async (req: any, reply)
     if (!c || zonas.length === 0) {
       return reply.status(400).send({ error: 'Guarda antes la campaña con su ciudad' });
     }
+    // Los fijos, primero: así los demás guardan sus 300 m con ellos.
+    if (c.fijos?.length) fijosPuestos = await plantarFijos(db, elTipo, c.fijos, d, h, losPuntos, true);
     if (zonas.length > 1) {
       let puestas = 0;
       const partes: string[] = [];
@@ -8471,7 +8619,7 @@ app.post('/admin/objetos', { preHandler: requireAdmin }, async (req: any, reply)
       }
       return reply.send({
         ok: true, puestas, fantasmas: 0, pedidas: n * zonas.length, fuente: deDonde, puntos: losPuntos,
-        donde: ` (${partes.join(', ')})`, vacias,
+        donde: ` (${partes.join(', ')})`, vacias, fijos: fijosPuestos,
       });
     }
     caja = zonas[0].caja;
@@ -8489,7 +8637,7 @@ app.post('/admin/objetos', { preHandler: requireAdmin }, async (req: any, reply)
   }
 
   const { puestas, fantasmas } = await sembrarAqui(caja);
-  return reply.send({ ok: true, puestas, fantasmas, pedidas: n, donde, fuente: deDonde, puntos: losPuntos });
+  return reply.send({ ok: true, puestas, fantasmas, pedidas: n, donde, fuente: deDonde, puntos: losPuntos, fijos: fijosPuestos });
 });
 
 /** Quitar del mapa las que queden libres (para cerrar un evento a mano). */

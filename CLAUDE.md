@@ -54,8 +54,12 @@ Para que quepan las 16 se subió el tope de ciudades por reto de 10 a 16 (§9-qu
 de Iban («Sí, súbelo»)**, solo ese cambio: el «puente entre carreras», que va en el mismo archivo, sigue SIN subir.
 **18-nov — UN RETO TERMINADO SALE 7 DÍAS EN «FINALIZADOS» Y LUEGO DESAPARECE DE LA APP** (Iban). Servidor, sin build
 (§9-quinquies). `npm run test:campanas` y `test:panel` en orden. **Subido a GitHub el 18-nov con el OK de Iban («Sí,
-súbelo»)**, solo ese cambio; el reto de prueba `la-tienda-prueba` (terminó el 10-nov) deja de salir en la app. El «puente
-entre carreras» sigue aparte, sin subir.
+súbelo»)**, solo ese cambio (commit `465c78f`, desplegado: `/health` → `465c78f`); el reto de prueba `la-tienda-prueba`
+(terminó el 10-nov) deja de salir en la app. El «puente entre carreras» sigue aparte, sin subir.
+**18-nov — LOGOS FIJOS (delante de la tienda), SUBIDO a GitHub el 18-nov con el OK de Iban («Sí, súbelo»).** Servidor y panel, sin build (§9-quinquies,
+«Logos fijos»; sin tope por persona, lo pidió así). `test:campanas`, `test:panel`, `test:vaciles`, `test:territorio` en orden, y el panel probado en el
+navegador con el servidor local (`soporte/retos-finalizados-12nov/servidor-local`, entrada `corrr-local` de la vista previa).
+Va en el mismo `routes/index.ts` que el puente: al subirlo, solo esto.
 **12-nov, 13:44 — ANDROID 95 (1.11.17) EN PRUEBA INTERNA** («Disponible para testers internos»). Iban arrastró el AAB vc95 a la página
 «Crear versión de prueba interna» que le abrió Claude en su Chrome, y Claude puso las notas y pulsó «Siguiente» → «Guardar y publicar»
 («pon los textos y haz el resto»). Solo avisó de lo de siempre: sin archivo de desofuscación.
@@ -1338,6 +1342,29 @@ servidor:
     de git; su `LEEME.txt` dice cómo arrancarlo). `MODO=campana npm run mock` enseña también los cuatro casos.
   - **Pendiente, sin hacer**: avisar a los apuntados cuando el reto termina (hoy, un aviso a mano desde el panel) y poder
     quitar a un tramposo de los ganadores (las bases dicen que se revisa el top 3).
+- **Logos fijos, delante de la tienda (18-nov-2026, Iban: «que en un reto uno o dos logos aparezcan siempre en el mismo
+  sitio, como delante de la propia tienda»; y «el logo desaparece y aparece a los 5 minutos»).** Campo «Logos fijos» de la
+  campaña: una dirección por línea o el punto de Google Maps («41.47402, 2.08520»), hasta 10 (`MAX_LOGOS_FIJOS`); se guarda en
+  `datos.fijos[]` {direccion, lugar, lat, lon, x, y} y el panel enseña cada uno con su enlace a Google Maps para comprobarlo.
+  - **Cómo se porta**: está siempre en SU casilla. Quien lo coge se lo lleva, desaparece para todos y a los 5 minutos vuelve a
+    salir ahí mismo (`renacerLogoFijo`, en el bucle de renacer de `POST /runs`; `esLogoFijo` mira si la casilla es de un fijo).
+    Los demás logos siguen igual: desaparecen para todos y renacen a los 5 minutos CERCA, en otro sitio. **Sin tope por
+    persona** (Iban, 18-nov: «cada persona puede coger tantos logos como quiera al día»): se probó un tope de uno por casilla y
+    día y lo quitó. Quien diera vueltas delante de la tienda se llevaría uno cada 5 minutos: por eso **lo de los 5 minutos
+    solo lo sabe el cliente** (Iban, 18-nov). No se cuenta a los corredores: ni en la app, ni en los textos del reto, ni en
+    redes. Hoy solo sale en el panel.
+  - **Cuándo se planta** (`plantarFijos`): al **Sembrar**, con las fechas y los puntos de esa tanda, cambiando el libre que
+    hubiera (el ranking solo cuenta la tanda de fin más alta, `DE_ESTE_EVENTO`); y al **Guardar** la campaña si ya tiene logos en
+    marcha (solo el que falte). Si se quita una dirección de la lista, su logo libre se quita del mapa. «Quitar logos» se los lleva
+    también; vuelven al sembrar.
+  - **Direcciones**: Nominatim con `addressdetails`. **Solo se acepta un portal con número o un sitio concreto** (tienda, bar,
+    edificio): si OpenStreetMap no tiene ese portal, NO avisa y devuelve el centro de la calle entera (medido el 18-nov: «Rambla
+    del Celler 50, Sant Cugat» daba el medio de una rambla de más de 1 km), y eso se rechaza pidiendo el punto de Google Maps.
+    También se rechaza la dirección que cae fuera de las ciudades del reto (otra calle con el mismo nombre en otra ciudad) y unas
+    coordenadas al revés. **Lo más exacto es el punto de Google Maps**: clic derecho en la acera de la tienda → copiar.
+  - Probado: 11 casos en `test:campanas` (coordenadas, plantar sin duplicar, cambiar de tanda, cogerlo a 20 m, desaparecer para
+    todos, renacer en su casilla a los 5 min con su fecha de fin, y que quien ya lo cogió lo vuelve a coger) y el panel en el
+    navegador contra el servidor local: los tres errores, guardar, plantar al guardar (30 → 31 logos) y sembrar sin duplicar.
 - **Puntos por logo (12-nov-2026, Iban: «puntos por logo 1, no entiendo por qué hay que poner 200»)**: la casilla «Puntos de cada logo» del panel traía 200 por defecto (copiado de las calabazas); ahora trae **1** (commit `f9be519`, sin build: los puntos van en cada logo al sembrar y la app solo enseña lo que manda el servidor). Los logos que se siembren con otro valor, lo llevan. Los logos de dentro de un círculo cerrado en la MISMA carrera ya los daba `recoger` (el relleno entra como celdas de la carrera); los cercos entre días siguen sin darlos.
 - **Las apps de antes de la 1.11.13 no saben nada**: con Halloween apagado no ven los
   logos; encendido, los pintan como calabazas. Antes de lanzar una campaña de verdad,

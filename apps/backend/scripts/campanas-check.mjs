@@ -242,5 +242,49 @@ comprueba('y la app de antes tampoco lo recibe', !(deAna.map(retoParaAppDeAntes)
 comprueba('pero sigue terminado (nadie se borra de él)', await retoTerminado('hace8') === true);
 comprueba('un reto sin logos sembrados sigue saliendo', !!el(deAna, 'vieja') && !!el(deAna, 'tienda'));
 
+// ── Logos fijos, delante de la tienda (Iban, 18-nov-2026) ──
+const { esLogoFijo, plantarFijos, renacerLogoFijo, sitioDeDireccion } = new Function(
+  sacar('esLogoFijo') + sacarAsync('plantarFijos') + sacarAsync('renacerLogoFijo') + sacarAsync('sitioDeDireccion')
+  + '; return { esLogoFijo, plantarFijos, renacerLogoFijo, sitioDeDireccion };')();
+const pto = await sitioDeDireccion('41.39169, 2.16478');
+comprueba('un punto de Google Maps vale tal cual', pto?.lat === 41.39169 && pto?.lon === 2.16478, JSON.stringify(pto));
+comprueba('y uno al revés (fuera de España), no', await sitioDeDireccion('2.16478, 41.39169') === null);
+const fijo = { direccion: 'Calle Mayor 1', lugar: 'x', lat: 0, lon: 0, x: 5000, y: 5000 };
+comprueba('esLogoFijo: su casilla sí, la de al lado no',
+  esLogoFijo({ fijos: [fijo] }, 5000, 5000) && !esLogoFijo({ fijos: [fijo] }, 5000, 5001) && !esLogoFijo(null, 5000, 5000));
+const enUnaSemana = new Date(Date.now() + 7 * 86400000);
+const haceUnMinuto = new Date(Date.now() - 60000);
+comprueba('se planta en su casilla', await plantarFijos(db, 'tienda', [fijo], haceUnMinuto, enUnaSemana, 1, false) === 1);
+comprueba('guardar otra vez la campaña no lo repite', await plantarFijos(db, 'tienda', [fijo], haceUnMinuto, enUnaSemana, 1, false) === 0);
+const otraTanda = new Date(Date.now() + 9 * 86400000);
+await plantarFijos(db, 'tienda', [fijo], haceUnMinuto, otraTanda, 1, true);
+const libresAhi = async () => (await db.query(
+  `SELECT hasta FROM objetos WHERE tipo = 'tienda' AND cell_x = 5000 AND cell_y = 5000 AND tomado_por IS NULL`)).rows;
+const ahi = await libresAhi();
+comprueba('al sembrar otra tanda, el fijo pasa a su fecha y no se duplica',
+  ahi.length === 1 && new Date(ahi[0].hasta).getTime() === otraTanda.getTime(), `${ahi.length} libres`);
+
+// Se coge como cualquier logo: desaparece para todos y a los 5 minutos vuelve
+// a SU casilla. Sin tope por persona (Iban: «cada persona puede coger tantos
+// logos como quiera al día»).
+let cogidos = await recoger(db, karol, [{ x: 5000, y: 5002 }], new Date(), [], false);
+comprueba('el fijo se coge pasando por delante (a 20 m)', cogidos.some(o => o.x === 5000 && o.y === 5000));
+const aLaVista = async () => (await db.query(
+  `SELECT 1 FROM objetos WHERE tipo = 'tienda' AND cell_x = 5000 AND cell_y = 5000 AND tomado_por IS NULL
+      AND desde <= NOW()`)).rows.length;
+comprueba('una vez cogido, desaparece para todos', await aLaVista() === 0);
+await renacerLogoFijo(db, { tipo: 'tienda', x: 5000, y: 5000, puntos: 1 }, otraTanda, 5 * 60000);
+const { rows: [vuelve] } = await db.query(
+  `SELECT cell_x, cell_y, desde, hasta FROM objetos WHERE tipo = 'tienda' AND tomado_por IS NULL AND desde > NOW()`);
+const minutos = (new Date(vuelve.desde).getTime() - Date.now()) / 60000;
+comprueba('renace en SU casilla, a los 5 minutos y con la fecha de fin de su tanda',
+  vuelve.cell_x === 5000 && vuelve.cell_y === 5000 && minutos > 4.9 && minutos <= 5
+  && new Date(vuelve.hasta).getTime() === otraTanda.getTime(), `${vuelve.cell_x},${vuelve.cell_y} en ${minutos.toFixed(2)} min`);
+comprueba('y mientras tanto no lo ve nadie', await aLaVista() === 0);
+await db.query(`UPDATE objetos SET desde = NOW() - INTERVAL '1 second'
+                 WHERE tipo = 'tienda' AND cell_x = 5000 AND cell_y = 5000 AND tomado_por IS NULL`);
+cogidos = await recoger(db, karol, [{ x: 5000, y: 5000 }], new Date(), [], false);
+comprueba('pasados los 5 minutos, quien ya lo cogió lo puede volver a coger', cogidos.length === 1);
+
 console.log(fallos ? `\n${fallos} fallo(s) en las campañas.` : '\nCampañas en orden.');
 process.exit(fallos ? 1 : 0);
