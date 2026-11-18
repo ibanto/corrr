@@ -56,10 +56,13 @@ de Iban («Sí, súbelo»)**, solo ese cambio: el «puente entre carreras», que
 (§9-quinquies). `npm run test:campanas` y `test:panel` en orden. **Subido a GitHub el 18-nov con el OK de Iban («Sí,
 súbelo»)**, solo ese cambio (commit `465c78f`, desplegado: `/health` → `465c78f`); el reto de prueba `la-tienda-prueba`
 (terminó el 10-nov) deja de salir en la app. El «puente entre carreras» sigue aparte, sin subir.
-**18-nov — LOGOS FIJOS (delante de la tienda), SUBIDO a GitHub el 18-nov con el OK de Iban («Sí, súbelo»).** Servidor y panel, sin build (§9-quinquies,
+**18-nov — LOGOS FIJOS (delante de la tienda), SUBIDO a GitHub el 18-nov con el OK de Iban («Sí, súbelo»), commit `30ce4d0`,
+desplegado (`/health` → `30ce4d0`).** Servidor y panel, sin build (§9-quinquies,
 «Logos fijos»; sin tope por persona, lo pidió así). `test:campanas`, `test:panel`, `test:vaciles`, `test:territorio` en orden, y el panel probado en el
 navegador con el servidor local (`soporte/retos-finalizados-12nov/servidor-local`, entrada `corrr-local` de la vista previa).
 Va en el mismo `routes/index.ts` que el puente: al subirlo, solo esto.
+**18-nov — PUENTE ENTRE CARRERAS SEGUIDAS, SUBIDO a GitHub el 18-nov con el OK de Iban («Sí, súbelo»).** Servidor, sin build
+(§9-quater, «Puente entre carreras seguidas»). Probado de punta a punta con el servidor local antes de subirlo.
 **12-nov, 13:44 — ANDROID 95 (1.11.17) EN PRUEBA INTERNA** («Disponible para testers internos»). Iban arrastró el AAB vc95 a la página
 «Crear versión de prueba interna» que le abrió Claude en su Chrome, y Claude puso las notas y pulsó «Siguiente» → «Guardar y publicar»
 («pon los textos y haz el resto»). Solo avisó de lo de siempre: sin archivo de desofuscación.
@@ -1208,6 +1211,17 @@ tope de la caja no es por velocidad sino por memoria. La cola va en
 `Int32Array` justo por eso.
 
 Tras tocar esto: `npm run test:territorio`.
+
+**Puente entre carreras seguidas (16-nov-2026, servidor, sin build; subido el 18-nov con el OK de Iban).** Caso de KarolK: la app
+cerró su carrera a los 60 min y ella empezó otra 19 s después; el círculo no cerraba porque entre las dos queda un hueco y el
+cerco solo mira lo que ya es tuyo. En `POST /runs`, justo tras crear la fila de la carrera: si es de la app, hay otra carrera
+suya de la app que acabó ≤ 5 min antes de empezar esta, y su celda más cercana al principio de esta está a ≤ 30 celdas (300 m),
+se añaden a `celdas` las que unen las dos (`cellLine`), antes del upsert y del cerco. Va dentro de un `SAVEPOINT puente`: un
+fallo no cuesta la carrera. Probado el 18-nov de punta a punta con el servidor local (`corrr-local`) y parejas de carreras por
+`POST /runs`: con 19 s de parada y 70 m de hueco une y el cerco rellena las 361 casillas de dentro; NO une con 6 min de parada,
+con 350 m de hueco ni si una de las dos es del reloj. Límite conocido: si la app reenvía una copia grande (> 500.000 caracteres,
+`celdasATiras` las ordena por y,x), `celdas[0]` ya no es la salida y no une (queda como antes, sin daño). Las casillas del puente
+cuentan como corridas (como mucho 30).
 
 ## 9-quinquies. Campañas de marca sin sacar versión (preparado el 1-nov-2026, sale con la 1.11.13)
 

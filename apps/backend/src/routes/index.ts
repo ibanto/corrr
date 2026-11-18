@@ -4352,6 +4352,56 @@ app.post('/runs', {
     );
     const runId = rows[0].id;
 
+    // ── Puente entre carreras seguidas ───────────────────────────────────────
+    // Si esta carrera empieza pocos minutos después de acabar otra de la
+    // misma persona (la app se cerró, o pulsó PARAR sin querer, y volvió a
+    // darle), las celdas que faltan entre el final de una y el principio de
+    // la otra se unen con una línea, para que el círculo pueda cerrarse a
+    // través de las dos. Sin esto el hueco deja el perímetro abierto y el
+    // cerco (que mira lo que ya es tuyo) no se cierra nunca.
+    // Reglas cortas a propósito: solo carreras de la app, hueco de ≤ 5 min y
+    // ≤ 30 celdas (300 m). Un fallo aquí no puede costar la carrera.
+    if (!isImport && celdas.length > 0) {
+      await client.query('SAVEPOINT puente');
+      try {
+        const primera = celdas[0];
+        const { rows: previa } = await client.query(
+          `SELECT id FROM runs
+            WHERE user_id = $1 AND id <> $2 AND source = 'app' AND ended_at IS NOT NULL
+              AND ended_at BETWEEN $3::timestamptz - interval '5 minutes' AND $3::timestamptz
+            ORDER BY ended_at DESC LIMIT 1`,
+          [userId, runId, new Date(runStartMs).toISOString()],
+        );
+        if (previa.length > 0) {
+          // Lo último que pisó la carrera anterior: su celda más cercana al
+          // principio de esta (el orden de las celdas no dice cuál fue la última).
+          const { rows: cercanas } = await client.query(
+            `SELECT cell_x, cell_y FROM cells
+              WHERE owner_id = $1 AND run_id = $2
+                AND cell_x BETWEEN $3 AND $4 AND cell_y BETWEEN $5 AND $6
+              ORDER BY ABS(cell_x - $7) + ABS(cell_y - $8) LIMIT 1`,
+            [userId, previa[0].id, primera.x - 30, primera.x + 30, primera.y - 30, primera.y + 30,
+             primera.x, primera.y],
+          );
+          if (cercanas.length > 0) {
+            const a = cercanas[0];
+            const distancia = Math.abs(a.cell_x - primera.x) + Math.abs(a.cell_y - primera.y);
+            if (distancia > 1 && distancia <= 30) {
+              const ya = new Set(celdas.map((c: Celda) => `${c.x},${c.y}`));
+              let puestas = 0;
+              for (const c of cellLine(a.cell_x, a.cell_y, primera.x, primera.y)) {
+                if (!ya.has(`${c.x},${c.y}`)) { celdas.push({ x: c.x, y: c.y }); puestas++; }
+              }
+              req.log.info({ userId, runId, previa: previa[0].id, puestas }, '[puente] carreras seguidas unidas');
+            }
+          }
+        }
+      } catch (err) {
+        await client.query('ROLLBACK TO SAVEPOINT puente');
+        req.log.warn({ err }, '[puente] no se pudo calcular; se sigue sin él');
+      }
+    }
+
     // ── Grid (v2) — process claimedCells if present ──────────────────────────
     // Coexists with the polygon logic below. v1.5.x clients send only `zones`,
     // v1.6+ clients send `claimedCells`. Server handles whichever arrives.
