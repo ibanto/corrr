@@ -54,6 +54,10 @@ function secureToken(): string {
  *
  *  Devuelve null si la imagen no se puede leer; quien llama decide qué hacer. */
 const AVATAR_THUMB_PX = 128;
+
+/** Cuántas ciudades puede llevar un reto de marca (campo «Ciudades» del panel). */
+const MAX_CIUDADES_CAMPANA = 16;
+
 async function makeAvatarThumb(dataUri: string | null | undefined): Promise<string | null> {
   if (!dataUri) return null;
   const comma = dataUri.indexOf(',');
@@ -2362,7 +2366,7 @@ guardar en prueba (para ti y, si quiere, el cliente), sembrar y, cuando est&eacu
   <input id="c_imagen" type="hidden">
   <div id="c_logo_previo" style="display:none;background:#333;padding:8px;border-radius:8px;width:max-content">
     <img id="c_logo_img" style="width:88px;height:88px;object-fit:contain"></div>
-  <label class="campo">Ciudades, una o varias separadas por comas (ah&iacute; se plantan los logos; el reto lo ve todo el mundo, y a los de ah&iacute; les sale el primero)
+  <label class="campo">Ciudades, una o varias separadas por comas, hasta 16 (ah&iacute; se plantan los logos; el reto lo ve todo el mundo, y a los de ah&iacute; les sale el primero)
     <input id="c_ciudad" placeholder="Barcelona, Badalona"></label>
   <p class="nota" id="c_lugar"></p>
   <label class="campo">Cartel al pisarlo ({puntos} se cambia por los puntos)
@@ -8105,7 +8109,12 @@ app.post('/admin/campana', { preHandler: requireAdmin }, async (req: any, reply)
     .map(s => s.trim().slice(0, 80)).filter(Boolean)
     .map(s => [s.toLowerCase(), s] as const)).values()];
   if (pedidas.length === 0) return reply.status(400).send({ error: 'Falta la ciudad de la tienda' });
-  if (pedidas.length > 10) return reply.status(400).send({ error: 'Como mucho diez ciudades por campaña' });
+  // 16 y no 10 (Iban, 18-nov-2026): el reto de Navidad para toda España lleva
+  // las ciudades donde ya corre alguien más las grandes. Cada ciudad nueva es
+  // una pregunta a Nominatim con 1,1 s de espera: 16 nuevas, unos 20 s al guardar.
+  if (pedidas.length > MAX_CIUDADES_CAMPANA) {
+    return reply.status(400).send({ error: `Como mucho ${MAX_CIUDADES_CAMPANA} ciudades por campaña` });
+  }
   const antes = await campanaDe(c.tipo).catch(() => null);
   const sabidas = antes?.zonas?.length ? antes.zonas
     : (antes?.limites ? [{ ciudad: antes.ciudad, lugar: antes.lugar, limites: antes.limites }] : []);

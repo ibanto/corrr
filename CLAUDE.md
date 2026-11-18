@@ -42,6 +42,16 @@ anunciar; la ficha web sí (ahí sale "Versión 1.11.11" como actual con su fech
 «1.11.17 Pendiente de revisión» (hasta 48 h), con «Publicar esta versión manualmente», las novedades y el texto promocional de
 `store/notas-1.11.17.md` y la cuenta de revisión comprobada ese mismo rato (`puedeEntrar: true`). La hizo Claude con el Chrome de Iban.
 **Cuando Apple la apruebe**: «Publicar esta versión» (con el OK de Iban) y, cuando la ficha enseñe la 1.11.17, anunciarla.
+**18-nov — RETO DE NAVIDAD PARA TODA ESPAÑA (empresa que daría códigos de descuento a todos + camiseta al ganador), propuesta de Claude a Iban:**
+mínimo **10 logos** para el código (corriendo normal te cruzas 0,6-1 logo por km con los logos al tope de 300 m; de los 18 que
+corrieron en los 30 días antes del 18-nov, 12 hicieron ≥ 10 km y 10 hicieron ≥ 17 km). Reparto: **llenar cada ciudad hasta el tope**
+(pulsar «Sembrar» con 500 varias veces hasta que ninguna admita más): así todas quedan con la misma densidad y el ranking de España
+es justo; los logos renacen, así que más gente en una ciudad no pide más logos. Ciudades: donde ya corre alguien (Barcelona,
+Valencia, Castellón, Lleida, Alcázar de San Juan, Girona, Cartagena, Donostia) + grandes (Madrid, Sevilla, Málaga, Zaragoza,
+Bilbao, Alicante, Palma, Murcia). **Sant Cugat fuera**: está lleno con los logos de Invisible Training y no cabrían. Hoy la app NO
+da un código al llegar a 10 logos: o se manda al final a la lista, o se enseña en la ficha del reto (servidor, sin build).
+Para que quepan las 16 se subió el tope de ciudades por reto de 10 a 16 (§9-quinquies), **subido a GitHub el 18-nov con el OK
+de Iban («Sí, súbelo»)**, solo ese cambio: el «puente entre carreras», que va en el mismo archivo, sigue SIN subir.
 **12-nov, 13:44 — ANDROID 95 (1.11.17) EN PRUEBA INTERNA** («Disponible para testers internos»). Iban arrastró el AAB vc95 a la página
 «Crear versión de prueba interna» que le abrió Claude en su Chrome, y Claude puso las notas y pulsó «Siguiente» → «Guardar y publicar»
 («pon los textos y haz el resto»). Solo avisó de lo de siempre: sin archivo de desofuscación.
@@ -1254,7 +1264,8 @@ servidor:
     calabazas, fantasmas y zombis siguen yendo por el interruptor, y los logos por su reto
     (`LOGO_ES_SUYO`). Se puede apagar Halloween sin tocar las campañas.
   - **Ciudades**: el campo del panel admite varias separadas por comas («Barcelona, Badalona»,
-    diez como mucho). Cada una se busca en Nominatim al guardar (las que ya estaban guardadas no
+    **16 como mucho** desde el 18-nov-2026, antes 10: `MAX_CIUDADES_CAMPANA`; el texto del panel lleva el
+    16 escrito a mano, porque `test:panel` evalúa la plantilla sin las constantes del archivo). Cada una se busca en Nominatim al guardar (las que ya estaban guardadas no
     se vuelven a pedir; entre peticiones nuevas, 1,1 s) y va a `datos.zonas[]` {ciudad, lugar,
     limites}; `ciudad`, `lugar` y `limites` se quedan con la primera por compatibilidad, y las
     campañas guardadas antes (sin `zonas`) siguen valiendo (`cajasDeCampana`). El reto lo ve en
