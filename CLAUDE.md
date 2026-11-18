@@ -52,6 +52,10 @@ Bilbao, Alicante, Palma, Murcia). **Sant Cugat fuera**: está lleno con los logo
 da un código al llegar a 10 logos: o se manda al final a la lista, o se enseña en la ficha del reto (servidor, sin build).
 Para que quepan las 16 se subió el tope de ciudades por reto de 10 a 16 (§9-quinquies), **subido a GitHub el 18-nov con el OK
 de Iban («Sí, súbelo»)**, solo ese cambio: el «puente entre carreras», que va en el mismo archivo, sigue SIN subir.
+**18-nov — UN RETO TERMINADO SALE 7 DÍAS EN «FINALIZADOS» Y LUEGO DESAPARECE DE LA APP** (Iban). Servidor, sin build
+(§9-quinquies). `npm run test:campanas` y `test:panel` en orden. **Subido a GitHub el 18-nov con el OK de Iban («Sí,
+súbelo»)**, solo ese cambio; el reto de prueba `la-tienda-prueba` (terminó el 10-nov) deja de salir en la app. El «puente
+entre carreras» sigue aparte, sin subir.
 **12-nov, 13:44 — ANDROID 95 (1.11.17) EN PRUEBA INTERNA** («Disponible para testers internos»). Iban arrastró el AAB vc95 a la página
 «Crear versión de prueba interna» que le abrió Claude en su Chrome, y Claude puso las notas y pulsó «Siguiente» → «Guardar y publicar»
 («pon los textos y haz el resto»). Solo avisó de lo de siempre: sin archivo de desofuscación.
@@ -1307,7 +1311,10 @@ servidor:
     **«Cuántos ganan»** de la campaña (`datos.ganan`, 1 a 20; sin nada, 3; `cuantosGanan`). La clasificación es la de siempre
     (`clasificacionDe`: logos cogidos de ESTA tanda por los apuntados) y **a igualdad va delante quien llegó antes** a esa cifra,
     como dicen las bases del reto de Navidad. No hay forma de descalificar a nadie desde el panel (ver «pendiente» abajo).
-  - **Terminado**: sigue saliendo en Retos, al final de la lista, hasta que se apague o se elimine en el panel; **nadie se
+  - **Terminado**: sigue saliendo en Retos, en «Finalizados», **7 días** desde que caducan sus logos, y luego deja de salir
+    en la app (Iban, 18-nov-2026: «cuando han pasado 7 días de un reto desaparece de finalizados»; filtro en la consulta de
+    `retosPara`, vale para todas las versiones de la app; el panel lo sigue enseñando con «ya no sale en la app»). Antes de
+    eso, también desaparece si se apaga o se elimina en el panel. **Nadie se
     apunta ni se borra** (`409`): en la clasificación solo salen los apuntados y un ganador que se borrara desaparecería. El
     panel lo marca «FINALIZADO el…» y, al abrirlo, dice quién ha ganado (los mismos que ve la gente).
   - **Todas las ciudades** (Iban, el mismo día: «todo el mundo puede ver los retos de todas las ciudades y se pueden apuntar a

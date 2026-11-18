@@ -229,5 +229,18 @@ comprueba('si se vuelve a sembrar con otra fecha, vuelve a estar en marcha y de 
   el(await retosPara(iban, true), 'acabado').finalizado === false && await retoTerminado('acabado') === false
   && (await clasificacionDe('acabado', 20)).length === 0);
 
+// A los 7 días de terminar, el reto deja de salir en la app (Iban, 18-nov-2026).
+await db.query(`INSERT INTO campanas (tipo, datos, modo) VALUES ('hace6', $1, 'si'), ('hace8', $2, 'si')`,
+  [JSON.stringify({ tipo: 'hace6', nombre: 'Hace 6 días', ciudad: 'Sevilla' }),
+   JSON.stringify({ tipo: 'hace8', nombre: 'Hace 8 días', ciudad: 'Sevilla' })]);
+await db.query(`INSERT INTO objetos (tipo, cell_x, cell_y, puntos, desde, hasta) VALUES
+  ('hace6', 8, 8, 1, $1, $2), ('hace8', 9, 9, 1, $1, $3)`, [hace(24 * 30), hace(24 * 6), hace(24 * 8)]);
+const deAna = await retosPara(ana, true);
+comprueba('terminado hace 6 días: sigue en Finalizados', el(deAna, 'hace6')?.finalizado === true);
+comprueba('terminado hace 8 días: ya no sale', !el(deAna, 'hace8'), deAna.map(x => x.tipo).join(','));
+comprueba('y la app de antes tampoco lo recibe', !(deAna.map(retoParaAppDeAntes).some(x => x.tipo === 'hace8')));
+comprueba('pero sigue terminado (nadie se borra de él)', await retoTerminado('hace8') === true);
+comprueba('un reto sin logos sembrados sigue saliendo', !!el(deAna, 'vieja') && !!el(deAna, 'tienda'));
+
 console.log(fallos ? `\n${fallos} fallo(s) en las campañas.` : '\nCampañas en orden.');
 process.exit(fallos ? 1 : 0);

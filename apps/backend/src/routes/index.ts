@@ -2350,7 +2350,7 @@ y se apunta quien quiera; los logos se plantan en <b>sus ciudades</b>.
 Los logos solo los ve y los coge quien pulsa <b>Me apunto</b>, y se cogen pasando <b>a 20 metros</b>. Orden: subir el logo,
 guardar en prueba (para ti y, si quiere, el cliente), sembrar y, cuando est&eacute; bien, encender. El logo, mejor un PNG con el fondo transparente.</p>
 <p class="nota">Un reto <b>termina cuando caducan sus logos</b> (el &laquo;Hasta&raquo; de la siembra). Desde ese momento sale en la app como
-<b>FINALIZADO</b>, con la lista de ganadores, y ya no se apunta ni se borra nadie. Se queda a la vista hasta que lo apagues o lo elimines.</p>
+<b>FINALIZADO</b>, con la lista de ganadores, y ya no se apunta ni se borra nadie. Se queda en &laquo;Finalizados&raquo; <b>7 d&iacute;as</b> y luego deja de salir en la app (aqu&iacute; sigue).</p>
 <button class="btn" id="c_nueva" type="button">Nueva campa&ntilde;a</button>
 </div>
 <div id="c_lista"></div>
@@ -2853,6 +2853,11 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
   function cuandoAcabo(iso) {
     return new Date(iso).toLocaleString('es-ES', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' });
   }
+  // Un reto terminado sale en «Finalizados» de la app 7 días (retosPara).
+  var SIETE_DIAS_MS = 7 * 24 * 3600 * 1000;
+  function yaNoSale(iso) {
+    return Date.now() - new Date(iso).getTime() > SIETE_DIAS_MS;
+  }
   function fechaLocal(d) {
     var dos = function (n) { return (n < 10 ? '0' : '') + n; };
     return d.getFullYear() + '-' + dos(d.getMonth() + 1) + '-' + dos(d.getDate()) + 'T' + dos(d.getHours()) + ':' + dos(d.getMinutes());
@@ -2874,7 +2879,10 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
           ? (gana.length === 1 ? 'Ganador: ' : 'Ganadores: ') + gana.map(function (g, i) {
               return (i + 1) + '.º ' + g.name + ' (' + g.cuantos + ')'; }).join(' · ') + '.'
           : 'Sin ganadores: nadie cogió ningún logo.')
-        + ' En la app sale como FINALIZADO hasta que lo apagues o lo elimines. Si siembras más logos con otra fecha, vuelve a empezar de cero.';
+        + (yaNoSale(r.fin)
+          ? ' Ya no sale en la app: han pasado 7 días desde que terminó.'
+          : ' En la app sale en Finalizados hasta el ' + cuandoAcabo(new Date(new Date(r.fin).getTime() + SIETE_DIAS_MS).toISOString()) + '.')
+        + ' Si siembras más logos con otra fecha, vuelve a empezar de cero.';
     }
     var zonas = c.zonas && c.zonas.length ? c.zonas : (c.lugar ? [{ lugar: c.lugar }] : []);
     document.getElementById('c_lugar').innerHTML = zonas.length
@@ -2921,7 +2929,8 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
       + '<span><b>' + esc(c.nombre || 'Nueva campaña') + '</b>'
       + (c.tipo ? '<br><span class="c_cifras">' + esc(c.ciudad) + ' · ' + r.apuntados + (r.apuntados === 1 ? ' apuntado · ' : ' apuntados · ')
         + r.libres + ' logos en el mapa · ' + r.cogidos + ' cogidos'
-        + (r.finalizado ? ' · <b>FINALIZADO</b> el ' + esc(cuandoAcabo(r.fin)) : '') + '</span>' : '') + '</span>'
+        + (r.finalizado ? ' · <b>FINALIZADO</b> el ' + esc(cuandoAcabo(r.fin))
+          + (yaNoSale(r.fin) ? ' · ya no sale en la app' : '') : '') + '</span>' : '') + '</span>'
       + (c.tipo ? '<span class="c_estado ' + r.modo + '">' + TEXTO_MODO[r.modo] + '</span>' : '')
       + '</summary>';
     // El aviso se escribe nada más repintar y el toggle llega después: sin esta
@@ -7829,7 +7838,10 @@ async function campanaDe(tipo: string): Promise<Campana | null> {
  *  del reto ya solo dicen dónde se plantan los logos; `deAqui` dice si alguna
  *  es la suya, para ponerle esos retos los primeros. La comparación va por
  *  corrr_ciudad, como toda comparación de ciudad (§9, Valencia partida).
- *  `conGanadores` añade a los terminados su lista de ganadores. */
+ *  `conGanadores` añade a los terminados su lista de ganadores. Un reto
+ *  terminado sale en «Finalizados» 7 días y luego desaparece de la app (Iban,
+ *  18-nov-2026); en el panel sigue, y quien tenga la ficha abierta ya no puede
+ *  apuntarse (no está en la lista → 404). */
 async function retosPara(userId: string, conGanadores = false) {
   const { rows: yo } = await db.query('SELECT display_name, city FROM users WHERE id = $1', [userId]);
   const { rows } = await db.query(
@@ -7845,7 +7857,11 @@ async function retosPara(userId: string, conGanadores = false) {
             -- sembrados no hay fecha y el reto no ha terminado.
             (SELECT MAX(o.hasta) FROM objetos o WHERE o.tipo = c.tipo) AS fin,
             COALESCE((SELECT MAX(o.hasta) FROM objetos o WHERE o.tipo = c.tipo) <= NOW(), FALSE) AS finalizado
-       FROM campanas c WHERE c.modo <> 'no' ORDER BY c.creada_at DESC`,
+       FROM campanas c WHERE c.modo <> 'no'
+        -- A los 7 días de terminar deja de salir (Iban, 18-nov-2026). Sin logos
+        -- sembrados no ha terminado, así que sigue saliendo.
+        AND COALESCE((SELECT MAX(o.hasta) FROM objetos o WHERE o.tipo = c.tipo) > NOW() - INTERVAL '7 days', TRUE)
+      ORDER BY c.creada_at DESC`,
     [userId, yo[0]?.city ?? null],
   );
   const retos: any[] = rows
@@ -7885,8 +7901,8 @@ async function retosPara(userId: string, conGanadores = false) {
  *  Un reto termina cuando caducan sus logos (`fin`, arriba). Entonces:
  *   - ganan los `ganan` primeros de la clasificación (panel: «Cuántos ganan»),
  *   - nadie se apunta ni se borra ya: la clasificación final no se mueve,
- *   - y sigue saliendo en Retos, al final de la lista, hasta que se apague o
- *     se elimine en el panel. Si se siembran más logos con otra fecha de fin,
+ *   - y sigue saliendo en Retos, en «Finalizados», durante 7 días (o hasta que
+ *     se apague o se elimine en el panel); luego deja de salir. Si se siembran más logos con otra fecha de fin,
  *     vuelve a estar en marcha y empieza de cero (DE_ESTE_EVENTO). */
 async function retoTerminado(tipo: string): Promise<boolean> {
   const { rows } = await db.query(
