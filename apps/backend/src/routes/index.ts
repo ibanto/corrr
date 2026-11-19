@@ -557,6 +557,17 @@ async function initDB() {
       PRIMARY KEY (tipo, user_id)
     )
   `).catch(() => {});
+  // Grupos de corredores (Iban, 19-nov-2026): se hacen en la pestaña Gente del
+  // panel y un reto de prueba se abre a un grupo con solo escribir su nombre.
+  // Un grupo existe mientras tenga a alguien dentro.
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS grupos_corredores (
+      grupo TEXT NOT NULL,
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      metido_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (grupo, user_id)
+    )
+  `).catch(() => {});
   await db.query(`
     CREATE TABLE IF NOT EXISTS ajustes_juego (
       clave TEXT PRIMARY KEY,
@@ -1900,17 +1911,21 @@ app.get('/admin/panel', {
     db.query(`SELECT DATE(created_at AT TIME ZONE 'Europe/Madrid') AS d, COUNT(*)::int AS n
               FROM users WHERE created_at >= NOW() - INTERVAL '14 days'
               GROUP BY d ORDER BY d DESC`),
-    db.query(`SELECT u.display_name, u.email, u.city, u.email_verified, u.created_at,
+    db.query(`SELECT u.id, u.display_name, u.email, u.city, u.email_verified, u.created_at,
                      COALESCE(s.total_runs, 0) AS total_runs,
                      COALESCE(s.total_km, 0)   AS total_km,
                      COALESCE(s.total_cells, 0) AS total_cells
               FROM users u LEFT JOIN user_stats s ON s.user_id = u.id
-              ORDER BY u.created_at DESC NULLS LAST LIMIT 50`),
+              ORDER BY u.created_at DESC NULLS LAST LIMIT 3000`),
     db.query(`SELECT u.display_name, r.distance_km, r.duration_secs, r.points, r.created_at
               FROM runs r JOIN users u ON u.id = r.user_id
               ORDER BY r.created_at DESC LIMIT 20`),
   ]);
   const t = totals.rows[0];
+  // Buscador de la pestaña Gente: se busca sin mayúsculas ni tildes («Vallès» = «valles»).
+  const plano = (s: any) => String(s ?? '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const ciudades = [...new Set(lastUsers.rows.map((u: any) => String(u.city ?? '').trim()).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, 'es'));
   const maxSignups = Math.max(1, ...signups.rows.map((r: any) => r.n));
 
   const kpi = (label: string, value: any, sub = '') =>
@@ -2034,6 +2049,24 @@ app.get('/admin/panel', {
   .form textarea{min-height:84px;resize:vertical;}
   .form .btn{justify-self:start;}
 
+  /* Gente: buscador, casillas y grupos (19-nov-2026). */
+  .g_barra{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:0 0 12px;}
+  .g_barra input{background:#0C0C0C;border:1px solid var(--borde);border-radius:10px;padding:9px 12px;
+    color:var(--texto);font:inherit;font-size:14px;flex:1 1 200px;max-width:320px;min-width:0;}
+  .g_barra input::placeholder{color:#6A6A6A;}
+  .g_barra input:focus{outline:none;border-color:var(--naranja);box-shadow:0 0 0 3px var(--naranja-flojo);}
+  .g_sel,#g_todos{width:18px;height:18px;accent-color:var(--naranja);cursor:pointer;vertical-align:middle;}
+  #g_marcados,#g_cuantos{color:var(--apagado);font-size:13px;}
+  .g_de{color:var(--naranja);}
+  .g_grupo{background:var(--tarjeta-alt);border:1px solid var(--borde);border-radius:12px;
+    padding:12px 14px;margin-top:10px;max-width:760px;}
+  .g_grupo h3{margin:0 0 8px;font-size:15px;color:#fff;}
+  .g_chip{display:inline-flex;gap:4px;align-items:center;border:1px solid var(--borde);border-radius:999px;
+    padding:3px 4px 3px 10px;margin:0 6px 6px 0;font-size:13px;}
+  .g_chip button{background:none;border:none;color:var(--apagado);cursor:pointer;font-size:15px;
+    line-height:1;padding:2px 6px;}
+  .g_chip button:hover{color:var(--rojo);}
+
   /* Respuesta de un botón que no navega: si no se ve, parece que no hace nada. */
   .resultado{margin-top:4px;max-width:560px;background:var(--tarjeta-alt);
     border:1px solid var(--borde);border-left-width:4px;border-radius:10px;
@@ -2137,14 +2170,35 @@ ${lastRuns.rows.length === 0 ? '<tr><td colspan="5" style="color:#666">Sin carre
 
 <section id="p-gente" role="tabpanel" hidden>
 <div class="caja">
-<h2>Últimos usuarios (50)</h2>
+<h2>Corredores (${lastUsers.rows.length})</h2>
+<div class="g_barra">
+  <input id="g_buscar_nombre" placeholder="Buscar por nombre o correo" autocomplete="off">
+  <input id="g_buscar_ciudad" placeholder="Ciudad" list="g_ciudades" autocomplete="off">
+  <datalist id="g_ciudades">${ciudades.map(c => `<option value="${esc(c)}">`).join('')}</datalist>
+  <span id="g_cuantos"></span>
+</div>
+<div class="g_barra">
+  <span id="g_marcados"></span>
+  <input id="g_nombre" placeholder="Nombre del grupo" list="g_grupos_lista" autocomplete="off">
+  <datalist id="g_grupos_lista"></datalist>
+  <button class="btn" id="g_meter">Meter en el grupo</button>
+</div>
+<div id="g_msg" class="resultado" style="display:none;margin-bottom:12px"></div>
 <div class="wrap"><table>
-<tr><th>Nombre</th><th>Email</th><th>Ciudad</th><th>Verif.</th><th>Alta</th><th>Carreras</th><th>Km</th><th>Celdas</th></tr>
+<tr><th><input type="checkbox" id="g_todos" title="Marcar todos los que se ven"></th><th>Nombre</th><th>Email</th><th>Ciudad</th><th>Grupos</th><th>Verif.</th><th>Alta</th><th>Carreras</th><th>Km</th><th>Celdas</th></tr>
 ${lastUsers.rows.map((u: any) =>
-  `<tr><td><b>${esc(u.display_name)}</b></td><td>${esc(u.email)}</td><td>${esc(u.city)}</td>
+  `<tr class="g_fila" data-id="${esc(u.id)}" data-busca="${esc(plano(`${u.display_name ?? ''} ${u.email ?? ''}`))}" data-ciudad="${esc(plano(u.city))}">
+   <td><input type="checkbox" class="g_sel" aria-label="Marcar a ${esc(u.display_name)}"></td>
+   <td><b>${esc(u.display_name)}</b></td><td>${esc(u.email)}</td><td>${esc(u.city)}</td><td class="g_de"></td>
    <td class="${u.email_verified ? 'ok' : 'no'}">${u.email_verified ? '✓' : '✗'}</td>
    <td>${fmtDate(u.created_at)}</td><td>${u.total_runs}</td><td>${Number(u.total_km).toFixed(1)}</td><td>${u.total_cells}</td></tr>`).join('')}
 </table></div>
+</div>
+<div class="caja">
+<h2>Grupos</h2>
+<p class="nota">Para que un grupo pruebe un reto, escribe el nombre del grupo en «Quién la prueba» (pestaña Campañas).
+Quien metas después en el grupo ve el reto sin tocar nada más, aunque ya esté empezado.</p>
+<div id="g_grupos"></div>
 </div>
 </section>
 
@@ -2389,7 +2443,7 @@ guardar en prueba (para ti y, si quiere, el cliente), sembrar y, cuando est&eacu
     <option value="prueba">En prueba &mdash; solo la ven los de abajo</option>
     <option value="todos">Encendida &mdash; la ve todo el mundo</option>
   </select>
-  <label class="campo" id="c_probadores_campo">Qui&eacute;n la prueba: su nombre en la app o su correo, separados por comas (la ven aunque sean de otra ciudad)
+  <label class="campo" id="c_probadores_campo">Qui&eacute;n la prueba: su nombre en la app, su correo o un grupo de la pesta&ntilde;a Gente, separados por comas (la ven aunque sean de otra ciudad)
     <input id="c_probadores" placeholder="Ibanto, nombre_del_cliente"></label>
   <button class="btn" id="c_guardar" type="button">Guardar la campa&ntilde;a</button>
   <div id="c_msg" class="resultado" style="display:none"></div>
@@ -3582,6 +3636,99 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
         m.textContent = '✗ ' + e.message;
       });
   });
+  // ── Gente: buscador, casillas y grupos (Iban, 19-nov-2026) ──
+  (function () {
+    var filas = [].slice.call(document.querySelectorAll('.g_fila'));
+    var plano = function (t) {
+      return String(t || '').toLowerCase().normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').trim();
+    };
+    var marcado = function (f) { return f.querySelector('.g_sel').checked; };
+    function msg(t, ok) {
+      var m = document.getElementById('g_msg');
+      m.style.display = 'block';
+      m.style.color = ok ? '#4caf50' : '#f44336';
+      m.style.borderLeftColor = ok ? '#4caf50' : '#f44336';
+      m.textContent = (ok ? '✓ ' : '✗ ') + t;
+    }
+    function filtrar() {
+      var n = plano(val('g_buscar_nombre')), c = plano(val('g_buscar_ciudad')), vistos = 0;
+      filas.forEach(function (f) {
+        var se = (!n || f.dataset.busca.indexOf(n) >= 0) && (!c || f.dataset.ciudad.indexOf(c) >= 0);
+        f.hidden = !se;
+        if (se) vistos++;
+      });
+      document.getElementById('g_cuantos').textContent = n || c ? 'Salen ' + vistos + ' de ' + filas.length : '';
+      contar();
+    }
+    function contar() {
+      var m = filas.filter(marcado).length;
+      document.getElementById('g_marcados').textContent = m
+        ? m + (m === 1 ? ' corredor marcado' : ' corredores marcados')
+        : 'Marca corredores en la lista para meterlos en un grupo.';
+      var visibles = filas.filter(function (f) { return !f.hidden; });
+      document.getElementById('g_todos').checked = visibles.length > 0 && visibles.every(marcado);
+    }
+    function pintarGrupos(grupos) {
+      var de = {};
+      grupos.forEach(function (g) {
+        g.miembros.forEach(function (m) { (de[m.id] = de[m.id] || []).push(g.grupo); });
+      });
+      filas.forEach(function (f) { f.querySelector('.g_de').textContent = (de[f.dataset.id] || []).join(', '); });
+      document.getElementById('g_grupos_lista').innerHTML = grupos.map(function (g) {
+        return '<option value="' + esc(g.grupo) + '">';
+      }).join('');
+      document.getElementById('g_grupos').innerHTML = grupos.length === 0
+        ? '<p class="nota">Todavía no hay ningún grupo.</p>'
+        : grupos.map(function (g) {
+          return '<div class="g_grupo"><h3>' + esc(g.grupo) + ' · ' + g.miembros.length
+            + (g.miembros.length === 1 ? ' corredor' : ' corredores') + '</h3>'
+            + g.miembros.map(function (m) {
+              return '<span class="g_chip">' + esc(m.nombre) + '<button title="Sacar del grupo" data-sacar="'
+                + esc(m.id) + '" data-grupo="' + esc(g.grupo) + '" data-nombre="' + esc(m.nombre) + '">✕</button></span>';
+            }).join('') + '</div>';
+        }).join('');
+    }
+    function cargarGrupos() {
+      return api('/admin/grupos').then(function (r) { pintarGrupos(r.grupos || []); })
+        .catch(function (e) { msg('No se han podido cargar los grupos: ' + e.message, false); });
+    }
+    document.getElementById('g_buscar_nombre').addEventListener('input', filtrar);
+    document.getElementById('g_buscar_ciudad').addEventListener('input', filtrar);
+    document.getElementById('g_todos').addEventListener('change', function (ev) {
+      filas.forEach(function (f) { if (!f.hidden) f.querySelector('.g_sel').checked = ev.target.checked; });
+      contar();
+    });
+    filas.forEach(function (f) { f.querySelector('.g_sel').addEventListener('change', contar); });
+    document.getElementById('g_meter').addEventListener('click', function () {
+      var ids = filas.filter(marcado).map(function (f) { return f.dataset.id; });
+      var grupo = val('g_nombre');
+      if (ids.length === 0) return msg('Marca antes a alguien en la lista.', false);
+      if (!grupo) return msg('Escribe el nombre del grupo.', false);
+      var b = document.getElementById('g_meter');
+      b.disabled = true;
+      api('/admin/grupos/meter', { method: 'POST', body: JSON.stringify({ grupo: grupo, ids: ids }) })
+        .then(function (r) {
+          var ya = ids.length - r.metidos;
+          msg((r.metidos === 1 ? '1 corredor metido' : r.metidos + ' corredores metidos') + ' en el grupo «' + r.grupo + '»'
+            + (ya > 0 ? ' (' + ya + (ya === 1 ? ' ya estaba' : ' ya estaban') + ')' : '') + '.', true);
+          filas.forEach(function (f) { f.querySelector('.g_sel').checked = false; });
+          contar();
+          return cargarGrupos();
+        })
+        .catch(function (e) { msg(e.message, false); })
+        .then(function () { b.disabled = false; });
+    });
+    document.getElementById('g_grupos').addEventListener('click', function (ev) {
+      var b = ev.target.closest('[data-sacar]');
+      if (!b) return;
+      if (!confirm('¿Sacar a ' + b.dataset.nombre + ' del grupo «' + b.dataset.grupo + '»? Dejará de ver los retos de prueba de ese grupo.')) return;
+      api('/admin/grupos/sacar', { method: 'POST', body: JSON.stringify({ grupo: b.dataset.grupo, id: b.dataset.sacar }) })
+        .then(function () { msg(b.dataset.nombre + ' ya no está en «' + b.dataset.grupo + '».', true); return cargarGrupos(); })
+        .catch(function (e) { msg(e.message, false); });
+    });
+    filtrar();
+    cargarGrupos();
+  })();
   cargarObjetos();
   cargarCampanas();
   cargar();
@@ -7750,14 +7897,25 @@ async function valorAjuste(clave: string): Promise<string> {
 }
 
 /** ¿Le toca a ESTE corredor? */
-function ajusteLeToca(valor: string, nombre: string | null): boolean {
+function ajusteLeToca(valor: string, nombre: string | null, grupos: string[] = []): boolean {
   if (valor === 'si') return true;
   if (!valor.startsWith('prueba:')) return false;
   // Puede ser una lista separada por comas: las campañas se prueban entre
   // varios (Iban y el cliente). El alta no prohíbe una coma en el nombre;
   // quien la llevara no podría entrar en una prueba, y ya está.
   const soloPara = valor.slice('prueba:'.length).split(',').map(s => s.trim().toLowerCase());
-  return !!nombre && soloPara.includes(nombre.trim().toLowerCase());
+  if (nombre && soloPara.includes(nombre.trim().toLowerCase())) return true;
+  // Y grupos (`grupo:Probadores`, 19-nov-2026): se mira quién está en el grupo
+  // AHORA, así que meter a alguien en el grupo basta para que entre.
+  return grupos.some(g => soloPara.includes('grupo:' + g.trim().toLowerCase()));
+}
+
+/** «prueba:Ibanto,grupo:Probadores» → «Ibanto, grupo Probadores»: como se lee
+ *  en el panel y como se puede volver a escribir en «Quién la prueba». */
+function quienesPrueban(modo: string): string {
+  if (!modo.startsWith('prueba:')) return '';
+  return modo.slice('prueba:'.length).split(',')
+    .map(s => (s.startsWith('grupo:') ? 'grupo ' + s.slice('grupo:'.length) : s)).join(', ');
 }
 
 app.get('/app/ajustes', { preHandler: requireAuth }, async (req: any, reply) => {
@@ -8015,8 +8173,11 @@ async function retosPara(userId: string, conGanadores = false) {
       ORDER BY c.creada_at DESC`,
     [userId, yo[0]?.city ?? null],
   );
+  // Sus grupos, para los retos de prueba abiertos a un grupo.
+  const { rows: misGrupos } = await db.query('SELECT grupo FROM grupos_corredores WHERE user_id = $1', [userId]);
+  const grupos = misGrupos.map((g: any) => String(g.grupo));
   const retos: any[] = rows
-    .filter((r: any) => ajusteLeToca(r.modo, yo[0]?.display_name ?? null))
+    .filter((r: any) => ajusteLeToca(r.modo, yo[0]?.display_name ?? null, grupos))
     .map((r: any) => {
       const { limites: _limites, lugar: _lugar, zonas: _zonas, ...c } = r.datos;
       return {
@@ -8210,6 +8371,57 @@ app.delete('/app/retos/:tipo/apuntarme', { preHandler: requireAuth }, async (req
   return reply.send({ ok: true });
 });
 
+// ── Grupos de corredores (pestaña Gente del panel, Iban 19-nov-2026) ─────────
+// Se marcan corredores en la lista y se meten en un grupo. Un reto de prueba se
+// abre a un grupo escribiendo su nombre en «Quién la prueba», y como
+// ajusteLeToca mira quién está en el grupo cada vez, meter a alguien basta para
+// que vea el reto, aunque ya esté empezado.
+
+/** Sin comas ni punto y coma: el modo de una prueba es una lista separada por comas. */
+function nombreDeGrupo(v: any): string {
+  return String(v ?? '').replace(/[,;:\n]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 40);
+}
+const ES_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+app.get('/admin/grupos', { preHandler: requireAdmin }, async (_req, reply) => {
+  const { rows } = await db.query(
+    `SELECT g.grupo, u.id, u.display_name FROM grupos_corredores g JOIN users u ON u.id = g.user_id
+      ORDER BY LOWER(g.grupo), LOWER(u.display_name)`);
+  const grupos: { grupo: string; miembros: { id: string; nombre: string }[] }[] = [];
+  for (const r of rows as any[]) {
+    let g = grupos.find(x => x.grupo === r.grupo);
+    if (!g) grupos.push(g = { grupo: r.grupo, miembros: [] });
+    g.miembros.push({ id: r.id, nombre: r.display_name });
+  }
+  return reply.send({ grupos });
+});
+
+app.post('/admin/grupos/meter', { preHandler: requireAdmin }, async (req: any, reply) => {
+  let grupo = nombreDeGrupo(req.body?.grupo);
+  if (!grupo) return reply.status(400).send({ error: 'Pon el nombre del grupo' });
+  const ids = (Array.isArray(req.body?.ids) ? req.body.ids : [])
+    .map((s: any) => String(s)).filter((s: string) => ES_UUID.test(s)).slice(0, 1000);
+  if (ids.length === 0) return reply.status(400).send({ error: 'Marca antes a alguien en la lista' });
+  // «probadores» y «Probadores» son el mismo grupo: se queda como se escribió la primera vez.
+  const { rows: ya } = await db.query(
+    'SELECT grupo FROM grupos_corredores WHERE LOWER(grupo) = LOWER($1) LIMIT 1', [grupo]);
+  if (ya[0]) grupo = ya[0].grupo;
+  const { rows } = await db.query(
+    `INSERT INTO grupos_corredores (grupo, user_id)
+     SELECT $1, u.id FROM users u WHERE u.id = ANY($2::uuid[])
+     ON CONFLICT DO NOTHING RETURNING user_id`, [grupo, ids]);
+  return reply.send({ ok: true, grupo, metidos: rows.length });
+});
+
+app.post('/admin/grupos/sacar', { preHandler: requireAdmin }, async (req: any, reply) => {
+  const grupo = String(req.body?.grupo ?? '');
+  const id = String(req.body?.id ?? '');
+  if (!grupo || !ES_UUID.test(id)) return reply.status(400).send({ error: 'Falta el grupo o quién' });
+  const { rows } = await db.query(
+    'DELETE FROM grupos_corredores WHERE grupo = $1 AND user_id = $2 RETURNING user_id', [grupo, id]);
+  return reply.send({ ok: true, sacados: rows.length });
+});
+
 app.get('/admin/campanas', { preHandler: requireAdmin }, async (_req, reply) => {
   const { rows } = await db.query(
     `SELECT c.datos, c.modo,
@@ -8233,7 +8445,7 @@ app.get('/admin/campanas', { preHandler: requireAdmin }, async (_req, reply) => 
     retos.push({
       campana: r.datos,
       modo: r.modo === 'si' ? 'todos' : (r.modo.startsWith('prueba:') ? 'prueba' : 'apagado'),
-      corredor: r.modo.startsWith('prueba:') ? r.modo.slice('prueba:'.length).split(',').join(', ') : '',
+      corredor: quienesPrueban(r.modo),
       apuntados: r.apuntados, libres: r.libres, cogidos: r.cogidos, hasta: r.hasta,
       fin: r.fin, finalizado: r.finalizado === true, ganan: cuantosGanan(r.datos),
       // Los mismos que ve la gente en la app, para copiarlos a redes o al cliente.
@@ -8354,6 +8566,20 @@ app.post('/admin/campana', { preHandler: requireAdmin }, async (req: any, reply)
     const nombres: string[] = [];
     const faltan: string[] = [];
     for (const quien of pedidos) {
+      // Un grupo de la pestaña Gente (19-nov-2026): «Probadores», «grupo
+      // Probadores» o «grupo:Probadores». Se guarda el grupo, no sus nombres:
+      // quien se meta después en el grupo entra sin tocar el reto.
+      const prefijo = /^grupo[:\s]\s*/i.exec(quien);
+      const comoGrupo = prefijo ? quien.slice(prefijo[0].length).trim() : quien;
+      const { rows: grupo } = await db.query(
+        `SELECT grupo FROM grupos_corredores WHERE LOWER(grupo) IN (LOWER($1), LOWER($2))
+          ORDER BY LOWER(grupo) = LOWER($1) DESC LIMIT 1`, [quien, comoGrupo]);
+      if (grupo[0]) {
+        const ficha = 'grupo:' + grupo[0].grupo;
+        if (!nombres.includes(ficha)) nombres.push(ficha);
+        continue;
+      }
+      if (prefijo) { faltan.push(quien); continue; }
       const { rows } = await db.query(
         `SELECT display_name FROM users
           WHERE LOWER(display_name) = LOWER($1) OR LOWER(email) = LOWER($1) LIMIT 1`, [quien],
@@ -8362,7 +8588,7 @@ app.post('/admin/campana', { preHandler: requireAdmin }, async (req: any, reply)
       else if (!nombres.includes(rows[0].display_name)) nombres.push(rows[0].display_name);
     }
     if (faltan.length > 0) {
-      return reply.status(400).send({ error: `No encuentro en la app a: ${faltan.join(', ')}. Pon su nombre de corredor o su correo` });
+      return reply.status(400).send({ error: `No encuentro en la app a: ${faltan.join(', ')}. Pon su nombre de corredor, su correo o el nombre de un grupo (pestaña Gente)` });
     }
     modo = `prueba:${nombres.join(',')}`;
   }
@@ -8389,7 +8615,7 @@ app.post('/admin/campana', { preHandler: requireAdmin }, async (req: any, reply)
   return reply.send({
     ok: true, campana: c,
     modo: modo === 'si' ? 'todos' : (modo === 'no' ? 'apagado' : 'prueba'),
-    corredor: modo.startsWith('prueba:') ? modo.slice('prueba:'.length).split(',').join(', ') : '',
+    corredor: quienesPrueban(modo),
   });
 });
 

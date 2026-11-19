@@ -62,6 +62,16 @@ comprueba('prueba de varios: le toca al cliente', ajusteLeToca('prueba:Ibanto,Ti
 comprueba('prueba de varios: no le toca a otro', !ajusteLeToca('prueba:Ibanto,TiendaPepe', 'KarolK'));
 comprueba('encendida: le toca a todos', ajusteLeToca('si', 'KarolK'));
 comprueba('apagada: no le toca a nadie', !ajusteLeToca('no', 'Ibanto'));
+// Grupos (19-nov-2026): «prueba:Ibanto,grupo:Probadores».
+comprueba('prueba con grupo: le toca a quien está en el grupo',
+  ajusteLeToca('prueba:Ibanto,grupo:Probadores', 'KarolK', ['probadores']));
+comprueba('prueba con grupo: no le toca a quien no está', !ajusteLeToca('prueba:Ibanto,grupo:Probadores', 'KarolK', ['Otros']));
+comprueba('prueba con grupo: el nombre suelto sigue valiendo', ajusteLeToca('prueba:Ibanto,grupo:Probadores', 'Ibanto'));
+comprueba('un corredor que se llama como un grupo no entra por el grupo',
+  !ajusteLeToca('prueba:grupo:Probadores', 'Probadores'));
+const quienesPrueban = new Function(sacar('quienesPrueban') + '; return quienesPrueban;')();
+comprueba('el panel lee «Ibanto, grupo Probadores»',
+  quienesPrueban('prueba:Ibanto,grupo:Probadores') === 'Ibanto, grupo Probadores' && quienesPrueban('si') === '');
 
 // ── Las zonas de la campaña ──
 const bcn = { sur: 41.317, norte: 41.468, oeste: 2.052, este: 2.228 };
@@ -89,6 +99,8 @@ await db.exec(`
     cell_y INTEGER NOT NULL, puntos INTEGER NOT NULL DEFAULT 200, desde TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     hasta TIMESTAMPTZ, tomado_por UUID REFERENCES users(id) ON DELETE SET NULL, tomado_at TIMESTAMPTZ,
     creado_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
+  CREATE TABLE grupos_corredores (grupo TEXT NOT NULL, user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    metido_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY (grupo, user_id));
 `);
 // La función de comparar ciudades, la misma que crea el servidor al arrancar.
 const iniF = fuente.indexOf('CREATE OR REPLACE FUNCTION corrr_ciudad');
@@ -285,6 +297,20 @@ await db.query(`UPDATE objetos SET desde = NOW() - INTERVAL '1 second'
                  WHERE tipo = 'tienda' AND cell_x = 5000 AND cell_y = 5000 AND tomado_por IS NULL`);
 cogidos = await recoger(db, karol, [{ x: 5000, y: 5000 }], new Date(), [], false);
 comprueba('pasados los 5 minutos, quien ya lo cogió lo puede volver a coger', cogidos.length === 1);
+
+// ── Retos de prueba abiertos a un grupo (19-nov-2026) ──
+// Iban: «si he de meter a alguien más en el reto de prueba una vez empezado,
+// solo con meterlo en el grupo basta».
+await db.query(`INSERT INTO campanas (tipo, datos, modo) VALUES ('grupal', $1, 'prueba:Ibanto,grupo:Probadores')`,
+  [JSON.stringify({ tipo: 'grupal', nombre: 'Grupal', ciudad: 'Barcelona' })]);
+const veGrupal = async (quien) => !!el(await retosPara(quien), 'grupal');
+comprueba('reto de un grupo: quien no está en el grupo no lo ve', !(await veGrupal(karol)));
+comprueba('reto de un grupo: el nombre escrito aparte lo sigue viendo', await veGrupal(iban));
+await db.query(`INSERT INTO grupos_corredores (grupo, user_id) VALUES ('Probadores', $1)`, [karol]);
+comprueba('meterla en el grupo basta: lo ve sin tocar el reto', await veGrupal(karol));
+comprueba('y los de otro grupo siguen sin verlo', !(await veGrupal(ana)));
+await db.query(`DELETE FROM grupos_corredores WHERE grupo = 'Probadores' AND user_id = $1`, [karol]);
+comprueba('al sacarla del grupo deja de verlo', !(await veGrupal(karol)));
 
 console.log(fallos ? `\n${fallos} fallo(s) en las campañas.` : '\nCampañas en orden.');
 process.exit(fallos ? 1 : 0);

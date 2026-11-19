@@ -52,7 +52,10 @@ const datos = {
   t: { users: 1, verified: 1, users_24h: 0, users_7d: 0, runs: 0, runs_24h: 0, km: 0, cells: 0 },
   signups: { rows: [{ d: '2026-09-22', n: 1 }] },
   maxSignups: 1,
-  lastUsers: { rows: [{ display_name: 'X', email: 'a@b.c', city: 'Y', email_verified: true, created_at: new Date(), total_runs: 1, total_km: 1, total_cells: 1 }] },
+  lastUsers: { rows: [{ id: '11111111-1111-1111-1111-111111111111', display_name: 'X', email: 'a@b.c', city: 'Y', email_verified: true, created_at: new Date(), total_runs: 1, total_km: 1, total_cells: 1 }] },
+  // Pestaña Gente (19-nov-2026): el buscador sin tildes y las ciudades que hay.
+  plano: (s) => String(s ?? '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, ''),
+  ciudades: ['Sant Cugat del Vallès'],
   lastRuns: { rows: [{ display_name: 'X', distance_km: 1, duration_secs: 60, points: 1, created_at: new Date() }] },
 };
 

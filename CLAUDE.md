@@ -61,7 +61,30 @@ desplegado (`/health` → `30ce4d0`).** Servidor y panel, sin build (§9-quinqui
 «Logos fijos»; sin tope por persona, lo pidió así). `test:campanas`, `test:panel`, `test:vaciles`, `test:territorio` en orden, y el panel probado en el
 navegador con el servidor local (`soporte/retos-finalizados-12nov/servidor-local`, entrada `corrr-local` de la vista previa).
 Va en el mismo `routes/index.ts` que el puente: al subirlo, solo esto.
-**18-nov — PUENTE ENTRE CARRERAS SEGUIDAS, SUBIDO a GitHub el 18-nov con el OK de Iban («Sí, súbelo»).** Servidor, sin build
+**19-nov — GRUPOS DE CORREDORES Y BUSCADOR en la pestaña Gente del panel (Iban), SUBIDO a GitHub el 19-nov con el OK de Iban («Sí, súbelo»).** Servidor y
+panel, sin build (§9-quinquies, «Grupos»). La lista enseña ya a TODOS los corredores (81), con buscador por nombre/correo y
+por ciudad, casillas y «Meter en el grupo»; un reto de prueba se abre a un grupo escribiendo su nombre en «Quién la prueba».
+`test:campanas` (10 casos nuevos), `test:panel`, `test:vaciles`, `test:territorio` en orden, y probado en el navegador con el
+servidor local.
+**18-nov — LOGOS FIJOS DE INVISIBLE TRAINING, en el reto de prueba `invisibletraining-prueba`** (solo Ibanto, 544 logos
+por Sant Cugat + los 2 fijos = 546, hasta el 29-nov 23:59). Iban: «tiene que caer en carretera» y «deberían haber por lo
+menos 500 en todo Sant Cugat». Puntos SOBRE LA CALLE (OpenStreetMap no tiene esos portales; el pin de Google cae en el
+edificio): **Monestir** (Plana de l'Hospital 10) `41.4740167, 2.0834641`, en la calle peatonal a 7 m del pin; **Volpelleres**
+(Dolors Bigas 18, local 1) `41.4831882, 2.0651896`, en el paseo Dolors Bigas delante del centro, a ~22 m del pin.
+Después Iban **borró desde el panel los dos retos** de Invisible (el de prueba y el aparte `invisibletraining-fijos`) y pidió
+uno nuevo: **rehecho el 18-nov por script** como `invisibletraining-prueba` (mismos textos que el del 16-nov, logo subido de
+`REDES/campanas/invisible-training/icono/icono-mapa-256.png`), en prueba solo para Ibanto, con los 2 fijos de arriba y
+**500 logos** sembrados por Sant Cugat (502 en total), 1 punto, hasta el 29-nov 23:59. Ibanto tiene que pulsar ME APUNTO
+(sin eso no ve los logos). Ojo: la separación de 300 m cuenta los logos libres de CUALQUIER reto, aunque esté apagado: dos
+retos llenos no caben en la misma ciudad. El texto del reto no habla de los 5 minutos (solo lo sabe el cliente).
+**17-nov — 1.11.18 COMPILADA** (commit `1316a3a`: el aviso con GIF a cartel completo y una X para cerrarlo): AAB
+`apps/mobile/builds/corrr-v1.11.18-vc96.aab` y archivo de Xcode `CORRR-1.11.18-build43`. Se hizo fuera de las sesiones de
+Claude de este Mac y no quedó apuntado si se subió a las tiendas; el 18-nov `/app/version` seguía anunciando la 1.11.17.
+**Aparcado para una versión futura (Iban, 18-nov: «Ahora no»):** coger los logos AL MOMENTO durante la carrera (hoy cuentan
+cuando llega la carrera entera: si se pierde, se pierden). Pide versión nueva + una ruta nueva en el servidor con límites
+anti-trampas; también haría que el logo lo gane quien pasa primero, no quien termina antes.
+**18-nov — PUENTE ENTRE CARRERAS SEGUIDAS, SUBIDO a GitHub el 18-nov con el OK de Iban («Sí, súbelo»), commit `d8b3cda`,
+desplegado (`/health` → `d8b3cda`).** Servidor, sin build
 (§9-quater, «Puente entre carreras seguidas»). Probado de punta a punta con el servidor local antes de subirlo.
 **12-nov, 13:44 — ANDROID 95 (1.11.17) EN PRUEBA INTERNA** («Disponible para testers internos»). Iban arrastró el AAB vc95 a la página
 «Crear versión de prueba interna» que le abrió Claude en su Chrome, y Claude puso las notas y pulsó «Siguiente» → «Guardar y publicar»
@@ -1356,6 +1379,16 @@ servidor:
     de git; su `LEEME.txt` dice cómo arrancarlo). `MODO=campana npm run mock` enseña también los cuatro casos.
   - **Pendiente, sin hacer**: avisar a los apuntados cuando el reto termina (hoy, un aviso a mano desde el panel) y poder
     quitar a un tramposo de los ganadores (las bases dicen que se revisa el top 3).
+- **Grupos de corredores (19-nov-2026, Iban: «cuando genere un reto de prueba, solo con meter el nombre del grupo entren
+  los que están en ese grupo; si he de meter a alguien más una vez empezado, solo con meterlo en el grupo basta»).** Tabla
+  `grupos_corredores (grupo, user_id)`; un grupo existe mientras tenga a alguien. Panel, pestaña Gente: todos los corredores
+  (antes solo los 50 últimos) con buscador por nombre/correo y por ciudad (sin tildes ni mayúsculas), casillas, «Meter en el
+  grupo» (`POST /admin/grupos/meter`) y la caja «Grupos» con una ✕ por persona (`/admin/grupos/sacar`). En «Quién la prueba»
+  vale `Probadores`, `grupo Probadores` o `grupo:Probadores` (un grupo gana a un corredor del mismo nombre); se guarda como
+  `prueba:Ibanto,grupo:Probadores` y el panel lo enseña como «Ibanto, grupo Probadores». `retosPara` lee los grupos del
+  corredor y `ajusteLeToca(valor, nombre, grupos)` los mira CADA VEZ: meter a alguien en el grupo basta. Solo los retos;
+  Halloween y vaciles siguen con nombres sueltos. Quien sale del grupo deja de ver el reto en la lista, pero si ya estaba
+  apuntado sigue viendo y cogiendo sus logos (`LOGO_ES_SUYO` mira el apuntado, igual que al quitar un nombre).
 - **Logos fijos, delante de la tienda (18-nov-2026, Iban: «que en un reto uno o dos logos aparezcan siempre en el mismo
   sitio, como delante de la propia tienda»; y «el logo desaparece y aparece a los 5 minutos»).** Campo «Logos fijos» de la
   campaña: una dirección por línea o el punto de Google Maps («41.47402, 2.08520»), hasta 10 (`MAX_LOGOS_FIJOS`); se guarda en
