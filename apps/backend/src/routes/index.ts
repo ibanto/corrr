@@ -2179,8 +2179,8 @@ ${lastRuns.rows.length === 0 ? '<tr><td colspan="5" style="color:#666">Sin carre
 </div>
 <div class="g_barra">
   <span id="g_marcados"></span>
-  <input id="g_nombre" placeholder="Nombre del grupo" list="g_grupos_lista" autocomplete="off">
-  <datalist id="g_grupos_lista"></datalist>
+  <select id="g_sel_grupo"></select>
+  <input id="g_nombre" placeholder="Nombre del grupo nuevo" autocomplete="off" style="display:none">
   <button class="btn" id="g_meter">Meter en el grupo</button>
 </div>
 <div id="g_msg" class="resultado" style="display:none;margin-bottom:12px"></div>
@@ -2445,6 +2445,7 @@ guardar en prueba (para ti y, si quiere, el cliente), sembrar y, cuando est&eacu
   </select>
   <label class="campo" id="c_probadores_campo">Qui&eacute;n la prueba: su nombre en la app, su correo o un grupo de la pesta&ntilde;a Gente, separados por comas (la ven aunque sean de otra ciudad)
     <input id="c_probadores" placeholder="Ibanto, nombre_del_cliente"></label>
+  <select id="c_grupo_sel" title="Añade un grupo de la pestaña Gente sin escribirlo"></select>
   <button class="btn" id="c_guardar" type="button">Guardar la campa&ntilde;a</button>
   <div id="c_msg" class="resultado" style="display:none"></div>
   <label class="campo">Cu&aacute;ntos logos (en cada ciudad)
@@ -2972,7 +2973,32 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
     document.getElementById('c_quitar').style.display = c.tipo ? '' : 'none';
     document.getElementById('c_msg').style.display = 'none';
   }
+  // Desplegable de grupos: elegir uno lo añade a «Quién la prueba» (sin escribirlo).
+  function cargarSelGrupos() {
+    api('/admin/grupos').then(function (r) {
+      var gs = r.grupos || [];
+      document.getElementById('c_grupo_sel').innerHTML = gs.length === 0
+        ? '<option value="">(todavía no hay grupos: se crean en la pestaña Gente)</option>'
+        : '<option value="">+ Añadir un grupo…</option>' + gs.map(function (g) {
+          return '<option value="' + esc(g.grupo) + '">' + esc(g.grupo) + ' (' + g.miembros.length + ')</option>';
+        }).join('');
+    }).catch(function () {});
+  }
+  document.getElementById('c_grupo_sel').addEventListener('change', function (ev) {
+    var g = ev.target.value;
+    if (!g) return;
+    var campo = document.getElementById('c_probadores');
+    var ya = campo.value.split(',').map(function (x) { return x.trim().toLowerCase(); });
+    if (ya.indexOf('grupo ' + g.toLowerCase()) < 0 && ya.indexOf('grupo:' + g.toLowerCase()) < 0) {
+      campo.value = (campo.value.trim() ? campo.value.trim().replace(/,\\s*$/, '') + ', ' : '') + 'grupo ' + g;
+    }
+    ev.target.value = '';
+  });
+  cargarSelGrupos();
+  // Al entrar en Campañas se vuelve a pedir la lista: así salen los grupos creados hace un momento en Gente.
+  document.querySelector('[data-pestana="campanas"]').addEventListener('click', cargarSelGrupos);
   function verProbadores() {
+    cargarSelGrupos();
     document.getElementById('c_probadores_campo').style.display =
       document.getElementById('c_modo').value === 'prueba' ? '' : 'none';
   }
@@ -3674,9 +3700,16 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
         g.miembros.forEach(function (m) { (de[m.id] = de[m.id] || []).push(g.grupo); });
       });
       filas.forEach(function (f) { f.querySelector('.g_de').textContent = (de[f.dataset.id] || []).join(', '); });
-      document.getElementById('g_grupos_lista').innerHTML = grupos.map(function (g) {
-        return '<option value="' + esc(g.grupo) + '">';
-      }).join('');
+      // Desplegable con todos los grupos (no hay que escribirlos); «Grupo nuevo» abre la casilla de nombre.
+      var sel = document.getElementById('g_sel_grupo');
+      var antes = sel.value;
+      sel.innerHTML = '<option value="">Elige un grupo…</option>'
+        + grupos.map(function (g) {
+          return '<option value="' + esc(g.grupo) + '">' + esc(g.grupo) + ' (' + g.miembros.length + ')</option>';
+        }).join('')
+        + '<option value="__nuevo__">+ Grupo nuevo…</option>';
+      sel.value = grupos.some(function (g) { return g.grupo === antes; }) ? antes : (antes === '__nuevo__' ? antes : '');
+      document.getElementById('g_nombre').style.display = sel.value === '__nuevo__' ? '' : 'none';
       document.getElementById('g_grupos').innerHTML = grupos.length === 0
         ? '<p class="nota">Todavía no hay ningún grupo.</p>'
         : grupos.map(function (g) {
@@ -3699,11 +3732,17 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
       contar();
     });
     filas.forEach(function (f) { f.querySelector('.g_sel').addEventListener('change', contar); });
+    document.getElementById('g_sel_grupo').addEventListener('change', function (ev) {
+      var nuevo = ev.target.value === '__nuevo__';
+      document.getElementById('g_nombre').style.display = nuevo ? '' : 'none';
+      if (nuevo) document.getElementById('g_nombre').focus();
+    });
     document.getElementById('g_meter').addEventListener('click', function () {
       var ids = filas.filter(marcado).map(function (f) { return f.dataset.id; });
-      var grupo = val('g_nombre');
+      var elegido = document.getElementById('g_sel_grupo').value;
+      var grupo = elegido === '__nuevo__' ? val('g_nombre') : elegido;
       if (ids.length === 0) return msg('Marca antes a alguien en la lista.', false);
-      if (!grupo) return msg('Escribe el nombre del grupo.', false);
+      if (!grupo) return msg(elegido === '__nuevo__' ? 'Escribe el nombre del grupo nuevo.' : 'Elige un grupo del desplegable.', false);
       var b = document.getElementById('g_meter');
       b.disabled = true;
       api('/admin/grupos/meter', { method: 'POST', body: JSON.stringify({ grupo: grupo, ids: ids }) })
