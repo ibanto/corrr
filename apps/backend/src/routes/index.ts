@@ -533,6 +533,14 @@ async function initDB() {
       subido_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `).catch(() => {});
+  // La foto del premio de cada reto (se sube desde el panel).
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS campana_fotos (
+      tipo TEXT PRIMARY KEY,
+      jpg BYTEA NOT NULL,
+      subido_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `).catch(() => {});
   // GIF animados para el pop-up de avisos (el panel los sube como archivo).
   await db.query(`
     CREATE TABLE IF NOT EXISTS aviso_gifs (
@@ -2436,6 +2444,13 @@ guardar en prueba (para ti y, si quiere, el cliente), sembrar y, cuando est&eacu
     <textarea id="c_texto" rows="3"></textarea></label>
   <label class="campo">Retos &middot; el premio y d&oacute;nde se recoge
     <textarea id="c_premio" rows="2"></textarea></label>
+  <label class="campo">Retos &middot; foto del premio (PNG o JPG)
+    <input id="c_foto_archivo" type="file" accept="image/png,image/jpeg"></label>
+  <input id="c_foto" type="hidden">
+  <div id="c_foto_previo" style="display:none"><img id="c_foto_img" style="max-width:240px;border-radius:8px">
+    <br><button class="btn" id="c_foto_quitar" type="button">Quitar la foto</button></div>
+  <label class="campo">Retos &middot; normas (una por l&iacute;nea)
+    <textarea id="c_normas" rows="4" placeholder="Un logo por persona y d&iacute;a&#10;Hay que correr de verdad"></textarea></label>
   <label class="campo">Cu&aacute;ntos ganan cuando termine (los primeros de la clasificaci&oacute;n: 1, 3, 5&hellip;)
     <input id="c_ganan" type="number" min="1" max="20" value="3"></label>
   <select id="c_modo">
@@ -2891,10 +2906,14 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
   }).catch(function () {});
   // Campaña de marca. Los campos se llaman igual que en el servidor sin el
   // "c_", así se rellenan y se leen en un bucle.
-  var CAMPOS_CAMPANA = ['tipo', 'nombre', 'imagen', 'cartel', 'fechas', 'titulo', 'texto', 'premio', 'ciudad'];
+  var CAMPOS_CAMPANA = ['tipo', 'nombre', 'imagen', 'cartel', 'fechas', 'titulo', 'texto', 'premio', 'foto', 'normas', 'ciudad'];
   function verLogo(url) {
     document.getElementById('c_logo_previo').style.display = url ? '' : 'none';
     if (url) document.getElementById('c_logo_img').src = url;
+  }
+  function verFoto(url) {
+    document.getElementById('c_foto_previo').style.display = url ? '' : 'none';
+    if (url) document.getElementById('c_foto_img').src = url;
   }
   function msgCampana(t, ok) {
     var m = document.getElementById('c_msg');
@@ -2954,6 +2973,8 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
             + '" target="_blank" rel="noopener" style="color:var(--naranja)">' + esc(f.lugar) + '</a>';
         }).join('') : '';
     verLogo(c.imagen);
+    verFoto(c.foto);
+    document.getElementById('c_foto_archivo').value = '';
     document.getElementById('c_modo').value = r.modo || 'apagado';
     document.getElementById('c_probadores').value = r.corredor || 'Ibanto';
     verProbadores();
@@ -3098,6 +3119,28 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
       }).catch(function (e) { msgCampana('✗ ' + e.message, false); });
     };
     lector.readAsDataURL(f);
+  });
+  document.getElementById('c_foto_archivo').addEventListener('change', function (ev) {
+    var f = ev.target.files && ev.target.files[0];
+    if (!f) return;
+    if (!val('c_tipo')) { msgCampana('✗ Pon primero el identificador', false); ev.target.value = ''; return; }
+    var lector = new FileReader();
+    lector.onload = function () {
+      msgCampana('Subiendo la foto...', true);
+      api('/admin/campana/foto', { method: 'POST', body: JSON.stringify({
+        tipo: val('c_tipo'), imagen: lector.result,
+      }) }).then(function (r) {
+        document.getElementById('c_foto').value = r.url;
+        verFoto(r.url);
+        msgCampana('✓ Foto subida (' + r.kb + ' KB). Ahora pulsa «Guardar la campaña».', true);
+      }).catch(function (e) { msgCampana('✗ ' + e.message, false); });
+    };
+    lector.readAsDataURL(f);
+  });
+  document.getElementById('c_foto_quitar').addEventListener('click', function () {
+    document.getElementById('c_foto').value = '';
+    verFoto('');
+    msgCampana('Foto quitada. Pulsa «Guardar la campaña».', true);
   });
   document.getElementById('c_sembrar').addEventListener('click', function () {
     var tipo = val('c_tipo');
@@ -8039,6 +8082,8 @@ type Campana = {
   titulo: string;      // Retos: 'CAZA EL LOGO DE TIENDA PEPE'
   texto: string;       // Retos: cómo va
   premio: string;      // Retos: qué se gana y dónde se recoge
+  foto?: string;       // Retos: https de la foto del premio (/campana/foto/<tipo>.jpg)
+  normas?: string;     // Retos: las normas, una por línea
   ciudad: string;      // sus ciudades, separadas por comas: "Barcelona, Badalona"
   lugar: string;       // cómo las ha entendido OpenStreetMap: "Sevilla, Andalucía, España"
   /** Los límites de la PRIMERA ciudad (las campañas de antes solo tenían una). */
@@ -8341,6 +8386,44 @@ app.post('/admin/campana/logo', { preHandler: requireAdmin }, async (req: any, r
   return reply.send({ ok: true, url, kb: Math.round(png.length / 1024) });
 });
 
+app.get('/campana/foto/:archivo', async (req: any, reply) => {
+  const tipo = String(req.params.archivo).replace(/\.jpg$/, '');
+  const { rows } = await db.query('SELECT jpg FROM campana_fotos WHERE tipo = $1', [tipo]);
+  if (!rows[0]) return reply.status(404).send({ error: 'No hay foto' });
+  return reply
+    .header('Content-Type', 'image/jpeg')
+    .header('Cache-Control', 'public, max-age=31536000, immutable')
+    .send(rows[0].jpg as Buffer);
+});
+
+/** La foto del premio de un reto: se guarda a 1200 px de ancho como mucho. */
+app.post('/admin/campana/foto', { preHandler: requireAdmin }, async (req: any, reply) => {
+  const tipo = String(req.body?.tipo ?? '').trim().toLowerCase().replace(/[^a-z0-9-]/g, '-');
+  const dataUri = String(req.body?.imagen ?? '');
+  if (!tipo) return reply.status(400).send({ error: 'Pon primero el identificador' });
+  const coma = dataUri.indexOf(',');
+  if (coma < 0) return reply.status(400).send({ error: 'No llega ninguna imagen' });
+  let jpg: Buffer;
+  try {
+    jpg = await sharp(Buffer.from(dataUri.slice(coma + 1), 'base64'), { failOn: 'none' })
+      .rotate()
+      .resize({ width: 1200, withoutEnlargement: true })
+      .flatten({ background: '#ffffff' })
+      .jpeg({ quality: 82 })
+      .toBuffer();
+  } catch {
+    return reply.status(400).send({ error: 'Esa imagen no se puede leer. Prueba con un PNG o un JPG' });
+  }
+  await db.query(
+    `INSERT INTO campana_fotos (tipo, jpg) VALUES ($1, $2)
+     ON CONFLICT (tipo) DO UPDATE SET jpg = EXCLUDED.jpg, subido_at = NOW()`,
+    [tipo, jpg],
+  );
+  const version = createHash('sha1').update(jpg).digest('hex').slice(0, 10);
+  const url = `https://${req.headers.host}/campana/foto/${tipo}.jpg?v=${version}`;
+  return reply.send({ ok: true, url, kb: Math.round(jpg.length / 1024) });
+});
+
 /** GIF de los avisos: se sube desde el panel y la app lo pinta como la imagen de siempre
  *  (el pop-up no lleva reproductor de vídeo, así que un GIF es lo que se puede animar sin
  *  versión nueva). Se guarda tal cual, sin recomprimir: sharp lo aplanaría a un fotograma. */
@@ -8513,6 +8596,7 @@ app.delete('/admin/campana', { preHandler: requireAdmin }, async (req: any, repl
   const tipo = String(req.query?.tipo ?? '');
   await db.query('DELETE FROM objetos WHERE tipo = $1 AND tomado_por IS NULL', [tipo]);
   await db.query('DELETE FROM campana_logos WHERE tipo = $1', [tipo]);
+  await db.query('DELETE FROM campana_fotos WHERE tipo = $1', [tipo]);
   logosEnMemoria.delete(tipo);
   const { rowCount } = await db.query('DELETE FROM campanas WHERE tipo = $1', [tipo]);
   return reply.send({ ok: true, borrados: rowCount ?? 0 });
@@ -8529,6 +8613,13 @@ app.post('/admin/campana', { preHandler: requireAdmin }, async (req: any, reply)
     premio: txt(b.premio, 300), ciudad: '', lugar: '', limites: null,
     ganan: cuantosGanan(b),
   };
+  const foto = txt(b.foto, 500);
+  if (foto) {
+    if (!/^https:\/\//.test(foto)) return reply.status(400).send({ error: 'La foto tiene que ser una dirección https' });
+    c.foto = foto;
+  }
+  const normas = String(b.normas ?? '').split('\n').map(l => l.trim()).filter(Boolean).join('\n').slice(0, 1500);
+  if (normas) c.normas = normas;
   if (!c.tipo || !c.nombre) return reply.status(400).send({ error: 'Faltan el identificador y el nombre' });
 
   // Una o varias ciudades, separadas por comas. Las que ya estaban guardadas no

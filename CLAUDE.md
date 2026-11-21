@@ -52,6 +52,10 @@ Bilbao, Alicante, Palma, Murcia). **Sant Cugat fuera**: está lleno con los logo
 da un código al llegar a 10 logos: o se manda al final a la lista, o se enseña en la ficha del reto (servidor, sin build).
 Para que quepan las 16 se subió el tope de ciudades por reto de 10 a 16 (§9-quinquies), **subido a GitHub el 18-nov con el OK
 de Iban («Sí, súbelo»)**, solo ese cambio: el «puente entre carreras», que va en el mismo archivo, sigue SIN subir.
+**18-nov, tarde — AL FINAL ES UN RETO SOLO DE BARCELONA, con una marca** (no toda España): unas tres semanas, código de descuento
+suyo para todos los que cacen 10 logos y camiseta suya para el ganador con el logo de CORRR a la espalda; sin prueba previa (no
+están en Barcelona). Fecha sin cerrar. Detalle, contacto y correo (sin enviar) en `REDES/agenda.md` (18-nov). **Antes de lanzarlo,
+resolver cómo llega el código** a los que lleguen a 10 (lista al final o en la ficha del reto) y llenar Barcelona de logos hasta el tope.
 **18-nov — UN RETO TERMINADO SALE 7 DÍAS EN «FINALIZADOS» Y LUEGO DESAPARECE DE LA APP** (Iban). Servidor, sin build
 (§9-quinquies). `npm run test:campanas` y `test:panel` en orden. **Subido a GitHub el 18-nov con el OK de Iban («Sí,
 súbelo»)**, solo ese cambio (commit `465c78f`, desplegado: `/health` → `465c78f`); el reto de prueba `la-tienda-prueba`
@@ -61,7 +65,7 @@ desplegado (`/health` → `30ce4d0`).** Servidor y panel, sin build (§9-quinqui
 «Logos fijos»; sin tope por persona, lo pidió así). `test:campanas`, `test:panel`, `test:vaciles`, `test:territorio` en orden, y el panel probado en el
 navegador con el servidor local (`soporte/retos-finalizados-12nov/servidor-local`, entrada `corrr-local` de la vista previa).
 Va en el mismo `routes/index.ts` que el puente: al subirlo, solo esto.
-**19-nov — GRUPOS DE CORREDORES Y BUSCADOR en la pestaña Gente del panel (Iban), SUBIDO a GitHub el 19-nov con el OK de Iban («Sí, súbelo»).** Servidor y
+**19-nov — GRUPOS DE CORREDORES Y BUSCADOR en la pestaña Gente del panel (Iban), SUBIDO a GitHub el 19-nov con el OK de Iban («Sí, súbelo»), commit `8a1aa96`, desplegado (`/health` → `8a1aa96`).** Servidor y
 panel, sin build (§9-quinquies, «Grupos»). La lista enseña ya a TODOS los corredores (81), con buscador por nombre/correo y
 por ciudad, casillas y «Meter en el grupo»; un reto de prueba se abre a un grupo escribiendo su nombre en «Quién la prueba».
 `test:campanas` (10 casos nuevos), `test:panel`, `test:vaciles`, `test:territorio` en orden, y probado en el navegador con el
@@ -77,6 +81,12 @@ uno nuevo: **rehecho el 18-nov por script** como `invisibletraining-prueba` (mis
 **500 logos** sembrados por Sant Cugat (502 en total), 1 punto, hasta el 29-nov 23:59. Ibanto tiene que pulsar ME APUNTO
 (sin eso no ve los logos). Ojo: la separación de 300 m cuenta los logos libres de CUALQUIER reto, aunque esté apagado: dos
 retos llenos no caben en la misma ciudad. El texto del reto no habla de los 5 minutos (solo lo sabe el cliente).
+**21-nov — PARA LA VERSIÓN NUEVA (escrito, sin probar en móvil ni commit)**: (1) franja negra «TE HAN ROBADO» con los
+nombres en carrusel y UN solo aviso (`FranjaLadrones.tsx`, `MapScreen.tsx`; el servidor ya no manda más de un push mientras no
+abras la app, `7aea7cf`, en producción); (2) «Devolver» elige a todos o a algunos (`ElegirLadrones.tsx`); (3) foto del premio
+y normas en el reto (servidor: tabla `campana_fotos`, `/campana/foto/:tipo.jpg`, `/admin/campana/foto`, campos `foto` y
+`normas` en `campanas.datos`; panel con subida; sin commit); (4) ficha del reto maquetada por bloques con ME APUNTO fijo abajo
+(`RetosScreen.tsx`). Pendiente de pedir: GIF de «cómo apuntarse a un reto».
 **17-nov — 1.11.18 COMPILADA** (commit `1316a3a`: el aviso con GIF a cartel completo y una X para cerrarlo): AAB
 `apps/mobile/builds/corrr-v1.11.18-vc96.aab` y archivo de Xcode `CORRR-1.11.18-build43`. Se hizo fuera de las sesiones de
 Claude de este Mac y no quedó apuntado si se subió a las tiendas; el 18-nov `/app/version` seguía anunciando la 1.11.17.
@@ -89,6 +99,9 @@ desplegado (`/health` → `d8b3cda`).** Servidor, sin build
 **12-nov, 13:44 — ANDROID 95 (1.11.17) EN PRUEBA INTERNA** («Disponible para testers internos»). Iban arrastró el AAB vc95 a la página
 «Crear versión de prueba interna» que le abrió Claude en su Chrome, y Claude puso las notas y pulsó «Siguiente» → «Guardar y publicar»
 («pon los textos y haz el resto»). Solo avisó de lo de siempre: sin archivo de desofuscación.
+**13-nov, ~14:45 — 1.11.17 PUBLICADA EN LAS DOS TIENDAS, con el OK de Iban («Sí, publícalas»)**, por Claude con el Chrome de Iban: App Store Connect → «Publicar esta versión» (España) → sale «iOS 1.11.17 Listo para distribución»; Play Console → «Publicar 1 cambio» → «Última publicación el 13 de noviembre de 2026». **Falta ANUNCIARLAS** cuando cada ficha enseñe la 1.11.17 (Android `LATEST_APP_VERSION` 1.11.17 / `LATEST_APP_VC` 95; iPhone `LATEST_IOS_VERSION` 1.11.17 / `LATEST_IOS_BUILD` 42; push con su OK) y entonces programar el vídeo de Retos.
+**16-nov — 1.11.17 ANUNCIADA EN LAS DOS, con el OK de Iban («Sí, anúnciala»).** Las dos fichas enseñaban ya «Versión 1.11.17». Commit `d00fba2` (valores por defecto de `routes/index.ts`), desplegado: `/app/version` → Android 1.11.17 vc95, iPhone 1.11.17 build 42. `MIN_APP_VERSION` sin tocar (1.11.11). El vídeo de Retos («Cómo apuntarte a un reto») ya estaba programado para el mar 17-nov 19:00.
+**13-nov, 14:20 — GOOGLE APROBÓ LA 95 (1.11.17)**: en «Resumen de publicación» sale en «Cambios listos para publicarse» (Producción · 95 (1.11.17) · «Publicar 1 cambio»), sin pulsar. **Apple TAMBIÉN la aprobó el 12-nov** (correo de App Store Connect a ibangarciacastrillon@gmail.com: «Review of your submission has been completed. It is now eligible for distribution», envío del 12-nov 04:37 Pacífico = 13:37 de España); queda esperando «Publicar esta versión» porque va con publicación manual. La sesión de App Store Connect en el Chrome de Iban había caducado: para publicar tiene que volver a entrar él. Plan: publicar las dos a la vez con su OK y anunciarlas.
 **12-nov, 14:04 — ANDROID 95 (1.11.17) ENVIADA A REVISIÓN DE GOOGLE para producción, con el OK de Iban («Sí, mándala»).** En «Resumen de
 publicación» sale en **«Cambios en revisión»: Producción · 95 (1.11.17) · Iniciar lanzamiento completo**, al 100 % y con las notas de
 `store/notas-1.11.17.md`. **«Publicación gestionada» sigue activada**: aunque Google apruebe, se queda esperando hasta pulsar «Publicar
@@ -976,6 +989,7 @@ verdad, compilar en **Release** (lleva el código dentro y no necesita nada):
   iPhone, quien tenga "Enviar a Salud" activado en Strava SÍ sigue trayendo sus
   carreras — lo que ya no se hace es anunciarlo.
 - **La app de Strava está INACTIVA** (comprobado el 23-sep-2026 con el botón "Comprobar Strava" del panel): `403 {"resource":"Application","field":"Status","code":"Inactive"}`. Strava exige suscripción de pago al dueño de la app y limita las nuevas a 10 atletas. `STRAVA_ENABLED = false` se queda así: reactivarlo sin resolver esto deja a la gente con un botón que no lleva a ninguna parte. **La vía gratis para las carreras de Strava es el iPhone: Strava escribe la ruta en Salud y CORRR ya la importa** (ver "Tus otras carreras" en Perfil). En Android, Strava solo manda a Health Connect tiempo/distancia/calorías, sin ruta: no hay camino gratis hoy.
+  **Mirado otra vez el 18-nov-2026** (correo de Strava): pagando la suscripción (la normal de Strava; en EE. UU. 11,99 $/mes o 79,99 $/año) solo se llega a **10 atletas** sin revisión; para más hay que pedírselo a Strava, no está garantizado y en sus foros no hay nadie a quien se lo hayan dado desde junio. **Si algún día se reactiva, antes del 1-jun-2027**: leer `id_str` en vez de `id` de atletas y actividades (los números pasan a 64 bits y en JavaScript se estropean; las columnas ya son `BIGINT`, eso vale), el webhook trae `object_id`/`owner_id` como número, el token solo en la cabecera, `/oauth/deauthorize` desaparece y la dirección base pasa a `https://api-v3.strava.com` (desde el 4-ene-2027). Hoy no se toca: el código está apagado.
 - **⚠️ `apps/mobile/ios/` NO está en git** (sí `android/`): el `Podfile` con el arreglo de Xcode 27, el permiso de HealthKit en `CORRR.entitlements` y el `Info.plist` solo existen en este Mac. Si se pierde, hay que rehacerlos. Pendiente decidir si se versiona.
 - **El mapa tardaba en salir, y cada vez más** (6-nov-2026, servidor desplegado la misma
   tarde): la app bloqueaba el mapa («ACTUALIZANDO MAPA») hasta que contestaba
