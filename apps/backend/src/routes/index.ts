@@ -533,6 +533,14 @@ async function initDB() {
       subido_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `).catch(() => {});
+  // El GIF de «cómo apuntarse a un reto»: uno solo para todos los retos (id 1).
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS retos_gif (
+      id INT PRIMARY KEY,
+      gif BYTEA NOT NULL,
+      subido_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `).catch(() => {});
   // La foto del premio de cada reto (se sube desde el panel).
   await db.query(`
     CREATE TABLE IF NOT EXISTS campana_fotos (
@@ -2413,6 +2421,9 @@ Los logos solo los ve y los coge quien pulsa <b>Me apunto</b>, y se cogen pasand
 guardar en prueba (para ti y, si quiere, el cliente), sembrar y, cuando est&eacute; bien, encender. El logo, mejor un PNG con el fondo transparente.</p>
 <p class="nota">Un reto <b>termina cuando caducan sus logos</b> (el &laquo;Hasta&raquo; de la siembra). Desde ese momento sale en la app como
 <b>FINALIZADO</b>, con la lista de ganadores, y ya no se apunta ni se borra nadie. Se queda en &laquo;Finalizados&raquo; <b>7 d&iacute;as</b> y luego deja de salir en la app (aqu&iacute; sigue).</p>
+<label class="campo">GIF de &laquo;c&oacute;mo apuntarse a un reto&raquo; (uno para todos los retos; 9:16, hasta 5 MB). Sale en la ficha de cada reto de las apps nuevas.
+  <input id="rg_archivo" type="file" accept="image/gif"></label>
+<div id="rg_msg" style="font-size:13px;margin-bottom:8px"></div>
 <button class="btn" id="c_nueva" type="button">Nueva campa&ntilde;a</button>
 </div>
 <div id="c_lista"></div>
@@ -3134,6 +3145,21 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
         verFoto(r.url);
         msgCampana('✓ Foto subida (' + r.kb + ' KB). Ahora pulsa «Guardar la campaña».', true);
       }).catch(function (e) { msgCampana('✗ ' + e.message, false); });
+    };
+    lector.readAsDataURL(f);
+  });
+  document.getElementById('rg_archivo').addEventListener('change', function (ev) {
+    var f = ev.target.files && ev.target.files[0];
+    var msg = document.getElementById('rg_msg');
+    if (!f) return;
+    msg.style.color = '#aaa'; msg.textContent = 'Subiendo el GIF...';
+    var lector = new FileReader();
+    lector.onload = function () {
+      api('/admin/retos/gif', { method: 'POST', body: JSON.stringify({ imagen: lector.result }) })
+        .then(function (r) {
+          msg.style.color = '#4caf50';
+          msg.textContent = '✓ GIF subido (' + r.kb + ' KB). Ya lo ven las apps nuevas.';
+        }).catch(function (e) { msg.style.color = '#f44336'; msg.textContent = '✗ ' + e.message; });
     };
     lector.readAsDataURL(f);
   });
@@ -8438,6 +8464,37 @@ app.get('/aviso/gif/:archivo', async (req: any, reply) => {
     .send(rows[0].gif as Buffer);
 });
 
+app.get('/retos/como-apuntarse.gif', async (_req: any, reply) => {
+  const { rows } = await db.query('SELECT gif FROM retos_gif WHERE id = 1');
+  if (!rows[0]) return reply.status(404).send({ error: 'No hay gif' });
+  return reply
+    .header('Content-Type', 'image/gif')
+    .header('Cache-Control', 'public, max-age=31536000, immutable')
+    .send(rows[0].gif as Buffer);
+});
+
+app.post('/admin/retos/gif', { preHandler: requireAdmin }, async (req: any, reply) => {
+  const dataUri = String(req.body?.imagen ?? '');
+  const coma = dataUri.indexOf(',');
+  if (coma < 0) return reply.status(400).send({ error: 'No llega ningún archivo' });
+  const gif = Buffer.from(dataUri.slice(coma + 1), 'base64');
+  if (gif.length < 10 || gif.subarray(0, 4).toString('latin1') !== 'GIF8') {
+    return reply.status(400).send({ error: 'Eso no es un GIF' });
+  }
+  if (gif.length > 5 * 1024 * 1024) {
+    return reply.status(400).send({ error: 'Pesa más de 5 MB: en el móvil tardaría en salir' });
+  }
+  await db.query(
+    `INSERT INTO retos_gif (id, gif) VALUES (1, $1)
+     ON CONFLICT (id) DO UPDATE SET gif = EXCLUDED.gif, subido_at = NOW()`, [gif]);
+  return reply.send({ ok: true, kb: Math.round(gif.length / 1024) });
+});
+
+app.delete('/admin/retos/gif', { preHandler: requireAdmin }, async (_req: any, reply) => {
+  await db.query('DELETE FROM retos_gif WHERE id = 1');
+  return reply.send({ ok: true });
+});
+
 app.post('/admin/aviso/gif', { preHandler: requireAdmin }, async (req: any, reply) => {
   const dataUri = String(req.body?.imagen ?? '');
   const coma = dataUri.indexOf(',');
@@ -8474,9 +8531,12 @@ app.get('/app/evento', { preHandler: requireAuth }, async (_req: any, reply) => 
 app.get('/app/retos', { preHandler: requireAuth }, async (req: any, reply) => {
   const retos = await retosPara(req.userId, true);
   const sabeDeTerminados = Number(req.query?.v) >= 2;
+  // El GIF de «cómo apuntarse», si se ha subido (la versión va en la URL para que no se quede el viejo).
+  const { rows: gif } = await db.query('SELECT EXTRACT(EPOCH FROM subido_at)::bigint AS v FROM retos_gif WHERE id = 1');
   return reply.send({
     retos: sabeDeTerminados ? retos : retos.map(retoParaAppDeAntes),
     proximamente: PROXIMAMENTE,
+    comoApuntarse: gif[0] ? `https://${req.headers.host}/retos/como-apuntarse.gif?v=${gif[0].v}` : null,
   });
 });
 
