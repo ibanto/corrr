@@ -4700,7 +4700,18 @@ app.post('/runs', {
             [userId, prevOwnerId, runId]
           );
         }
-        if (prev[0]?.push_token) {
+        // Un solo aviso en el móvil mientras no abra la app: si ya tiene un
+        // robo sin leer de OTRA carrera, ese aviso ya está en su móvil y este
+        // nombre irá a la franja de la app. Sin esto, tras una semana sin
+        // entrar le llegaban hasta 15 avisos seguidos.
+        const { rowCount: yaAvisado } = await client.query(
+          `SELECT 1 FROM taunts
+            WHERE to_user_id = $1 AND mode = 'robo_notif' AND read_at IS NULL
+              AND run_id IS DISTINCT FROM $2
+            LIMIT 1`,
+          [prevOwnerId, runId],
+        );
+        if (prev[0]?.push_token && !yaAvisado) {
           const { rows: thief } = await client.query(
             `SELECT display_name FROM users WHERE id = $1`, [userId]
           );
