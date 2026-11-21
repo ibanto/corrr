@@ -81,12 +81,16 @@ uno nuevo: **rehecho el 18-nov por script** como `invisibletraining-prueba` (mis
 **500 logos** sembrados por Sant Cugat (502 en total), 1 punto, hasta el 29-nov 23:59. Ibanto tiene que pulsar ME APUNTO
 (sin eso no ve los logos). Ojo: la separación de 300 m cuenta los logos libres de CUALQUIER reto, aunque esté apagado: dos
 retos llenos no caben en la misma ciudad. El texto del reto no habla de los 5 minutos (solo lo sabe el cliente).
-**21-nov — PARA LA VERSIÓN NUEVA (escrito, sin probar en móvil ni commit)**: (1) franja negra «TE HAN ROBADO» con los
-nombres en carrusel y UN solo aviso (`FranjaLadrones.tsx`, `MapScreen.tsx`; el servidor ya no manda más de un push mientras no
-abras la app, `7aea7cf`, en producción); (2) «Devolver» elige a todos o a algunos (`ElegirLadrones.tsx`); (3) foto del premio
-y normas en el reto (servidor: tabla `campana_fotos`, `/campana/foto/:tipo.jpg`, `/admin/campana/foto`, campos `foto` y
-`normas` en `campanas.datos`; panel con subida; sin commit); (4) ficha del reto maquetada por bloques con ME APUNTO fijo abajo
-(`RetosScreen.tsx`). Pendiente de pedir: GIF de «cómo apuntarse a un reto».
+**21-nov — 1.11.19 COMPILADA Y SUBIDA (iPhone a TestFlight, build 44; commit `e777231`)**: lleva (1) franja negra «TE HAN ROBADO»
+con UN solo aviso y todos los nombres en carrusel (`FranjaLadrones.tsx`; el servidor ya limita el push, `7aea7cf`), (2) «Devolver» a
+todos o a algunos (`ElegirLadrones.tsx`), (3) ficha de reto por bloques con foto del premio, normas y ME APUNTO fijo abajo
+(`RetosScreen.tsx`; servidor `b8c7972`: tabla `campana_fotos`, campos `foto` y `normas`), (4) GIF «¿Cómo me apunto?» en marco 9:16
+centrado (`GifComoApuntarse.tsx`; servidor `20ccb16`: tabla `retos_gif`, `/admin/retos/gif`; **el GIF está en
+`REDES/remotion/out/gif/como-apuntarse-v2.gif` y falta subirlo desde el panel**), y lo de la 1.11.18 (aviso con GIF a cartel
+completo). Probado en el simulador iOS 27 contra `scripts/mock-api.mjs` (franja, lista, envío a 2, ficha, GIF). AAB en
+`apps/mobile/builds/corrr-v1.11.19-vc97.aab` (lo sube Iban a Play Console). **Sin publicar ni avisar todavía.** Para probar en el
+simulador sin firma hace falta parchear `SecureStore` en `handleAuthenticated` (el Llavero falla sin firmar): solo para la
+prueba, deshacer.
 **17-nov — 1.11.18 COMPILADA** (commit `1316a3a`: el aviso con GIF a cartel completo y una X para cerrarlo): AAB
 `apps/mobile/builds/corrr-v1.11.18-vc96.aab` y archivo de Xcode `CORRR-1.11.18-build43`. Se hizo fuera de las sesiones de
 Claude de este Mac y no quedó apuntado si se subió a las tiendas; el 18-nov `/app/version` seguía anunciando la 1.11.17.
