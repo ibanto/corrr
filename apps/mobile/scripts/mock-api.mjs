@@ -42,6 +42,9 @@ const EVENTO = {
   titulo: 'CAZA EL LOGO DE TIENDA PRUEBA',
   texto: 'Hay logos escondidos por tu barrio. Pisa uno corriendo y son 200 puntos.',
   premio: 'Unas zapatillas para quien más coja. Se recogen en la tienda.',
+  // La ficha nueva (1.11.19): foto del premio y normas.
+  foto: 'http://localhost:8787/vaciles/imagen/2003.png?v=1',
+  normas: 'Un logo por persona y día\nHay que correr de verdad\nGana quien más logos coja',
 };
 // Cuatro retos para ver la lista: uno en marcha de mi ciudad, uno de otra, y
 // dos TERMINADOS (con ganadores y sin ninguno). Los apuntados se guardan
@@ -181,13 +184,15 @@ const RUTAS = {
       { userId: RIVAL, name: 'Lucía M.', cuantos: 14, puntos: 700, mine: false },
       { userId: YO, name: 'Auditor', cuantos: 7, puntos: 350, mine: true }] };
   },
+  'GET /retos/como-apuntarse.gif': () => ({ __archivo: '/Users/iban/corrr/REDES/remotion/out/gif/como-apuntarse-v2.gif', tipo: 'image/gif' }),
   'GET /app/ajustes': () => ({ halloween: !vacio && !campana, halloween_para: null }),
   // Con MODO=vacio no hay anuncio: así se ve el «Próximamente» de siempre.
   'GET /app/retos': (_clave, url) => ({ retos: campana
     ? RETOS.map(({ dentro: _dentro, ...r }) => ({ ...r, apuntado: apuntado.has(r.tipo),
         apuntados: r.apuntados + (apuntado.has(r.tipo) && !r.finalizado ? 1 : 0) }))
       .map(r => pideV2(url) ? r : retoParaAppDeAntes(r))
-    : [], proximamente: vacio ? null : {
+    : [], comoApuntarse: campana ? 'http://localhost:8787/retos/como-apuntarse.gif?v=1' : null,
+    proximamente: vacio ? null : {
     titulo: 'GRAN RETO\nDE NAVIDAD', destacado: '¡CON PREMIO!', texto: 'Muy pronto, aquí. Ve calentando.' } }),
   'GET /app/aviso': () => (vacio || avisoVisto) ? { aviso: null } : ({ aviso: { id: 9, titulo: 'Llega Halloween',
     texto: 'Del *23 de octubre* al *1 de noviembre* salen calabazas por toda la ciudad.',
@@ -207,6 +212,10 @@ const RUTAS = {
     { id: 'r2', run_id: null, created_at: haceDias(5), ladron_id: RIVAL, ladron: 'Lucía M.', contestado: true }],
   // La app espera { taunts: [...] }, como contesta el servidor de verdad.
   'GET /taunts/unread': () => ({ taunts: vacio ? [] : [
+    // Tres ladrones distintos de la misma carrera: la app tiene que juntarlos en UN aviso y una franja.
+    { id: 'x1', mode: 'robo_notif', taunt_id: null, run_id: 'run-9', created_at: haceDias(0), from_user_id: RIVAL, from_user_name: 'Lucía M.' },
+    { id: 'x2', mode: 'robo_notif', taunt_id: null, run_id: 'run-9', created_at: haceDias(0), from_user_id: '33333333-3333-3333-3333-333333333333', from_user_name: 'carlos' },
+    { id: 'x3', mode: 'robo_notif', taunt_id: null, run_id: 'run-9', created_at: haceDias(1), from_user_id: '44444444-4444-4444-4444-444444444444', from_user_name: 'Marta R.' },
     { id: 't1', mode: 'taunt', taunt_id: 3, run_id: null, created_at: haceDias(0), from_user_id: RIVAL, from_user_name: 'Lucía M.' },
     // Un vacile de una pestaña del panel (§9-sexies): la app no lleva su
     // dibujo, le llega el texto ya con el nombre de quien lo recibe.

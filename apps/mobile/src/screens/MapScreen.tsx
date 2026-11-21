@@ -35,6 +35,8 @@ import { RETOS_CAMBIADOS_EVENT } from './RetosScreen';
 import { CHECK_TAUNTS_EVENT, RUN_TABS_EVENT } from '../services/notifications';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import FranjaLadrones from '../components/FranjaLadrones';
+import ElegirLadrones, { Ladron } from '../components/ElegirLadrones';
 import { colors, spacing, radius } from '../theme';
 import { api, RemoteZone, MapTerritory, ObjetoMapa, TauntInbox, CellRunPayload, TipoObjeto } from '../services/api';
 import { apretarCarrera, soltarCarrera } from '../tracking/copiaCarrera';
@@ -1037,7 +1039,7 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
   const [currentTaunt, setCurrentTaunt] = useState<TauntInbox | null>(null);
   // When responding to a robo_notif or a received taunt, this stores the target
   // user and run so the TauntSelector knows where to send the message.
-  const [tauntTarget, setTauntTarget] = useState<{ toUserId: string; toName: string; runId: string | null; mode: 'taunt' | 'response'; notifId?: string } | null>(null);
+  const [tauntTarget, setTauntTarget] = useState<{ toUserId: string; toName: string; runId: string | null; mode: 'taunt' | 'response'; notifId?: string; varios?: Ladron[] } | null>(null);
   const [selectedRivalZone, setSelectedRivalZone] = useState<RemoteZone | null>(null);
   // Marcador de territorio del rival cuya zona acabas de tocar. Se pide al
   // abrir la tarjeta, no junto a las celdas: es una consulta por usuario y no
@@ -1741,6 +1743,36 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
   // Un taunt leído deja de venir en getUnreadTaunts, así que el set solo crece
   // con los que están pendientes de mostrarse — tamaño acotado.
   const enqueuedTauntIdsRef = useRef<Set<string>>(new Set());
+  // La franja de «te han robado»: los nombres de quien te ha quitado cosas
+  // desde la última vez que la cerraste. Se guarda en el móvil para que siga
+  // ahí si cierras y vuelves a abrir la app.
+  const CLAVE_LADRONES = 'franja_ladrones_v1';
+  const [ladrones, setLadrones] = useState<Ladron[]>([]);
+  // Selector de «¿a quién se lo mandas?»; notifId = el aviso que lo abrió (si lo hubo).
+  const [elegirLadrones, setElegirLadrones] = useState<{ notifId?: string } | null>(null);
+  useEffect(() => {
+    AsyncStorage.getItem(CLAVE_LADRONES)
+      .then(v => { if (v) { const l = JSON.parse(v); if (Array.isArray(l)) setLadrones(l); } })
+      .catch(() => {});
+  }, []);
+  const anadirLadrones = (robos: TauntInbox[]) => {
+    setLadrones(prev => {
+      let lista = [...prev];
+      for (const t of robos) {
+        const id = t.from_user_id ?? t.id;
+        // Si ya estaba, pasa al final (el que te ha robado más reciente).
+        lista = lista.filter(l => l.id !== id);
+        lista.push({ id, nombre: t.from_user_name ?? 'Alguien', runId: t.run_id ?? null });
+      }
+      lista = lista.slice(-50);
+      AsyncStorage.setItem(CLAVE_LADRONES, JSON.stringify(lista)).catch(() => {});
+      return lista;
+    });
+  };
+  const cerrarFranjaLadrones = () => {
+    setLadrones([]);
+    AsyncStorage.removeItem(CLAVE_LADRONES).catch(() => {});
+  };
   const checkUnreadTaunts = async () => {
     try {
       const { taunts } = await api.getUnreadTaunts();
@@ -1748,7 +1780,20 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
       const fresh = taunts.filter(t => !enqueuedTauntIdsRef.current.has(t.id));
       if (fresh.length === 0) return;
       for (const t of fresh) enqueuedTauntIdsRef.current.add(t.id);
-      setTauntQueue(prev => [...prev, ...fresh]);
+      // Los robos se juntan: UN solo aviso (el del último ladrón) y todos los
+      // nombres a la franja negra de arriba. Antes salía un aviso por ladrón,
+      // uno detrás de otro, y tras una semana sin entrar eran hasta 15.
+      const robos = fresh.filter(t => t.mode === 'robo_notif');
+      const resto = fresh.filter(t => t.mode !== 'robo_notif');
+      let cola = resto;
+      if (robos.length > 0) {
+        const ultimo = robos[robos.length - 1];
+        cola = [...resto, ultimo];
+        anadirLadrones(robos);
+        const sobran = robos.slice(0, -1).map(t => t.id);
+        if (sobran.length > 0) api.markTauntsRead(sobran).catch(() => {});
+      }
+      setTauntQueue(prev => [...prev, ...cola]);
     } catch {}
   };
 
@@ -2999,7 +3044,17 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
             try { await api.markTauntsRead([currentTaunt.id]); } catch {}
             setCurrentTaunt(null);
           }}
-          onRespond={() => respondToTaunt(currentTaunt, 'taunt')}
+          onRespond={() => {
+            // Con varios ladrones se elige a quién; con uno solo, como siempre.
+            if (ladrones.length > 1) {
+              const notifId = currentTaunt.id;
+              setElegirLadrones({ notifId });
+              setTauntReady(false);
+              setTimeout(() => setCurrentTaunt(null), 60);
+            } else {
+              respondToTaunt(currentTaunt, 'taunt');
+            }
+          }}
         />
       )}
 
@@ -3089,7 +3144,34 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
           // Either the user is responding to a robo/received taunt (tauntTarget
           // is set), or responding to their OWN post-run "stolen_by_you" popup
           // (no specific target — we fall back to alerting only).
-          if (tauntTarget) {
+          if (tauntTarget?.varios) {
+            // Mismo mensaje a cada ladrón elegido, cada uno en su hilo. Un 409
+            // (hilo ya contestado) no corta a los demás.
+            const enviados: string[] = [];
+            let fallos = 0;
+            for (const l of tauntTarget.varios) {
+              try {
+                await api.sendTaunt(l.id, messageId, 'taunt', l.runId || undefined);
+                enviados.push(l.id);
+              } catch (e: any) {
+                if (e?.status === 409) enviados.push(l.id); else fallos++;
+              }
+            }
+            if (enviados.length > 0) {
+              Alert.alert('💬 Mensaje enviado',
+                enviados.length === 1 ? 'Has enviado tu mensaje.' : `Has enviado tu mensaje a ${enviados.length} personas.`);
+              // Los contestados salen de la franja; los demás se quedan.
+              setLadrones(prev => {
+                const lista = prev.filter(l => !enviados.includes(l.id));
+                if (lista.length === 0) AsyncStorage.removeItem(CLAVE_LADRONES).catch(() => {});
+                else AsyncStorage.setItem(CLAVE_LADRONES, JSON.stringify(lista)).catch(() => {});
+                return lista;
+              });
+            }
+            if (fallos > 0) Alert.alert('Error', `No se pudo enviar a ${fallos}. Inténtalo de nuevo desde la franja.`);
+            if (tauntTarget.notifId) { try { await api.markTauntsRead([tauntTarget.notifId]); } catch {} }
+            setCurrentTaunt(null);
+          } else if (tauntTarget) {
             try {
               await api.sendTaunt(tauntTarget.toUserId, messageId, tauntTarget.mode, tauntTarget.runId || undefined);
               Alert.alert('💬 Mensaje enviado', `Has enviado un mensaje a ${tauntTarget.toName}`);
@@ -3406,6 +3488,27 @@ export default function MapScreen({ user, onNavigateToShop }: Props) {
           <Text style={styles.refreshBtnText}>{refreshingMap ? 'Actualizando' : 'Refrescar'}</Text>
         </TouchableOpacity>
       </View>
+      <FranjaLadrones nombres={ladrones.map(l => l.nombre)} onCerrar={cerrarFranjaLadrones}
+        onPulsar={() => setElegirLadrones({})} />
+      <ElegirLadrones
+        visible={!!elegirLadrones}
+        ladrones={ladrones}
+        onCancelar={() => {
+          const n = elegirLadrones?.notifId;
+          setElegirLadrones(null);
+          if (n) api.markTauntsRead([n]).catch(() => {});
+        }}
+        onContinuar={(elegidos) => {
+          const notifId = elegirLadrones?.notifId;
+          setTauntTarget({
+            toUserId: elegidos[0].id, toName: elegidos.length === 1 ? elegidos[0].nombre : `${elegidos.length} personas`,
+            runId: elegidos[0].runId, mode: 'taunt', notifId, varios: elegidos,
+          });
+          setShowTaunts(true);
+          // El selector de mensajes se monta antes de retirar este (iOS).
+          setTimeout(() => setElegirLadrones(null), 60);
+        }}
+      />
 
       {/* MapView siempre montado en el árbol — durante la carrera lo tapa el
           runningScreen (overlay absoluto). Antes lo ocultábamos con display:

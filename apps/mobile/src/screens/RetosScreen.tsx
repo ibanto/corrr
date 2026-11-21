@@ -4,6 +4,8 @@ import {
   AppState, TouchableOpacity, DeviceEventEmitter,
 } from 'react-native';
 import { colors, spacing, radius } from '../theme';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import GifComoApuntarse from '../components/GifComoApuntarse';
 import { api, RankingObjeto, Reto, Proximamente } from '../services/api';
 
 /**
@@ -64,6 +66,9 @@ export default function RetosScreen() {
   const [pestana, setPestana] = useState<'activos' | 'finalizados'>('activos');
   const [enviando, setEnviando] = useState(false);
   const [fallo, setFallo] = useState(false);
+  /** El GIF de «cómo apuntarse» (lo sube Iban desde el panel) y si está abierto. */
+  const [gif, setGif] = useState<string | null>(null);
+  const [verGif, setVerGif] = useState(false);
 
   const reto = retos.find(r => r.tipo === abierto) ?? null;
 
@@ -73,6 +78,7 @@ export default function RetosScreen() {
     if (r) {
       setRetos(r.retos);
       setProximamente(r.proximamente);
+      setGif(r.comoApuntarse);
     }
     setCargando(false);
   }, []);
@@ -101,6 +107,18 @@ export default function RetosScreen() {
     cargarRanking(abierto);
   }, [abierto, cargarRanking]);
 
+  // La primera vez que se entra en un reto, el GIF se abre solo (una vez por móvil).
+  useEffect(() => {
+    if (!abierto || !gif) return;
+    let vivo = true;
+    AsyncStorage.getItem('retos_gif_visto_v1').then(v => {
+      if (!vivo || v) return;
+      setVerGif(true);
+      AsyncStorage.setItem('retos_gif_visto_v1', '1').catch(() => {});
+    }).catch(() => {});
+    return () => { vivo = false; };
+  }, [abierto, gif]);
+
   const cambiarApuntado = async (r: Reto) => {
     setEnviando(true);
     setFallo(false);
@@ -125,98 +143,147 @@ export default function RetosScreen() {
   if (reto) {
     const acabado = reto.finalizado === true;
     const ganadores = reto.ganadores ?? [];
+    const normas = (reto.normas ?? '').split('\n').map(l => l.trim()).filter(Boolean);
     return (
-      <ScrollView
-        style={styles.fondo}
-        contentContainerStyle={styles.contenido}
-        refreshControl={
-          <RefreshControl
-            refreshing={false}
-            onRefresh={() => { cargar(); cargarRanking(reto.tipo); }}
-            tintColor={colors.orange}
-          />
-        }
-      >
-        <TouchableOpacity style={styles.volver} onPress={() => setAbierto(null)} hitSlop={12}>
-          <Text style={styles.volverTexto}>‹ Retos</Text>
-        </TouchableOpacity>
-        <LogoReto reto={reto} estilo={styles.calabaza} />
-        {acabado && (
-          <View style={styles.finalizado}><Text style={styles.finalizadoTexto}>FINALIZADO</Text></View>
-        )}
-        {!!reto.fechas && <Text style={[styles.fechas, acabado && styles.pasado]}>{reto.fechas}</Text>}
-        {!!reto.ciudad && <Text style={styles.donde}>{reto.ciudad.toUpperCase()}</Text>}
-        <Text style={styles.titulo}>{reto.titulo || reto.nombre}</Text>
-        {reto.apuntado && (
-          <View style={styles.tuyas}>
-            <Text style={styles.tuyasNumero}>{mias}</Text>
-            <Text style={styles.tuyasTexto}>{mias === 1 ? 'cogido' : 'cogidos'}</Text>
-          </View>
-        )}
-        {/* Terminado: en vez de cómo se juega, quién ha ganado. */}
-        {!acabado && !!reto.texto && <Text style={styles.parrafo}>{reto.texto}</Text>}
-        {acabado && ganadores.length > 0 && (
-          <View style={[styles.tabla, styles.ganadores]}>
-            <Text style={styles.premioTitulo}>{ganadores.length === 1 ? 'GANADOR' : 'GANADORES'}</Text>
-            {ganadores.map((g, i) => (
-              <View key={g.userId} style={[styles.fila, g.mine && styles.filaMia]}>
-                <Text style={[styles.puesto, styles.puestoGanador]}>{i + 1}.º</Text>
-                <Text style={[styles.nombre, g.mine && styles.textoMio]} numberOfLines={1}>
-                  {g.name}
-                </Text>
-                <Text style={[styles.cuantas, g.mine && styles.textoMio]}>{g.cuantos}</Text>
+      <View style={styles.fondo}>
+        <ScrollView
+          style={styles.fondo}
+          contentContainerStyle={[styles.ficha, !acabado && styles.fichaConBoton]}
+          refreshControl={
+            <RefreshControl
+              refreshing={false}
+              onRefresh={() => { cargar(); cargarRanking(reto.tipo); }}
+              tintColor={colors.orange}
+            />
+          }
+        >
+          <TouchableOpacity style={styles.volver} onPress={() => setAbierto(null)} hitSlop={12}>
+            <Text style={styles.volverTexto}>‹ Retos</Text>
+          </TouchableOpacity>
+
+          {/* Cabecera de la ficha: logo, fechas, dónde y título. */}
+          <View style={styles.cabecera}>
+            <LogoReto reto={reto} estilo={styles.fichaLogo} />
+            {acabado && (
+              <View style={styles.finalizado}><Text style={styles.finalizadoTexto}>FINALIZADO</Text></View>
+            )}
+            {!!reto.fechas && <Text style={[styles.fechas, acabado && styles.pasado]}>{reto.fechas}</Text>}
+            {!!reto.ciudad && <Text style={styles.donde}>{reto.ciudad.toUpperCase()}</Text>}
+            <Text style={styles.titulo}>{reto.titulo || reto.nombre}</Text>
+            {reto.apuntado && !acabado && (
+              <View style={styles.tuyas}>
+                <Text style={styles.tuyasNumero}>{mias}</Text>
+                <Text style={styles.tuyasTexto}>{mias === 1 ? 'cogido' : 'cogidos'}</Text>
               </View>
-            ))}
-            {ganadores.some(g => g.mine) && (
-              <Text style={styles.enhorabuena}>¡Enhorabuena! Estás entre los ganadores.</Text>
+            )}
+          </View>
+
+          {/* Terminado: arriba, quién ha ganado. */}
+          {acabado && ganadores.length > 0 && (
+            <View style={[styles.tabla, styles.ganadores]}>
+              <Text style={styles.premioTitulo}>{ganadores.length === 1 ? 'GANADOR' : 'GANADORES'}</Text>
+              {ganadores.map((g, i) => (
+                <View key={g.userId} style={[styles.fila, g.mine && styles.filaMia]}>
+                  <Text style={[styles.puesto, styles.puestoGanador]}>{i + 1}.º</Text>
+                  <Text style={[styles.nombre, g.mine && styles.textoMio]} numberOfLines={1}>
+                    {g.name}
+                  </Text>
+                  <Text style={[styles.cuantas, g.mine && styles.textoMio]}>{g.cuantos}</Text>
+                </View>
+              ))}
+              {ganadores.some(g => g.mine) && (
+                <Text style={styles.enhorabuena}>¡Enhorabuena! Estás entre los ganadores.</Text>
+              )}
+            </View>
+          )}
+          {acabado && ganadores.length === 0 && (
+            <Text style={styles.parrafo}>Nadie cogió ningún logo: este reto se queda sin ganadores.</Text>
+          )}
+
+          {/* El premio: la foto y debajo qué es y dónde se recoge. */}
+          {(!!reto.foto || !!reto.premio) && (
+            <View style={styles.bloquePremio}>
+              {!!reto.foto && (
+                <Image source={{ uri: reto.foto }} style={styles.fotoPremio} resizeMode="cover" />
+              )}
+              {!!reto.premio && (
+                <View style={styles.bloqueTexto}>
+                  <Text style={styles.premioTitulo}>EL PREMIO</Text>
+                  <Text style={styles.fichaTexto}>{reto.premio}</Text>
+                </View>
+              )}
+            </View>
+          )}
+
+          {!acabado && !!reto.texto && (
+            <View style={styles.bloque}>
+              <Text style={styles.bloqueTitulo}>CÓMO SE JUEGA</Text>
+              <Text style={styles.fichaTexto}>{reto.texto}</Text>
+            </View>
+          )}
+
+          {!acabado && normas.length > 0 && (
+            <View style={styles.bloque}>
+              <Text style={styles.bloqueTitulo}>NORMAS</Text>
+              {normas.map((n, i) => (
+                <View key={i} style={styles.norma}>
+                  <Text style={styles.normaNumero}>{i + 1}</Text>
+                  <Text style={[styles.fichaTexto, styles.normaTexto]}>{n}</Text>
+                </View>
+              ))}
+            </View>
+          )}
+
+          {acabado && (
+            <Text style={[styles.nota, styles.notaFinal]}>Este reto ha terminado. Ya no se puede apuntar nadie.</Text>
+          )}
+
+          {/* La tabla entera solo aporta algo si hay más gente que ganadores. */}
+          {ranking.length > 0 && (!acabado || ranking.length > ganadores.length) && (
+            <View style={styles.tabla}>
+              <Text style={styles.tablaTitulo}>{acabado ? 'CLASIFICACIÓN FINAL' : 'QUIÉN VA GANANDO'}</Text>
+              {ranking.slice(0, 8).map((r, i) => (
+                <View key={r.userId} style={[styles.fila, r.mine && styles.filaMia]}>
+                  <Text style={[styles.puesto, r.mine && styles.textoMio]}>{i + 1}</Text>
+                  <Text style={[styles.nombre, r.mine && styles.textoMio]} numberOfLines={1}>
+                    {r.name}
+                  </Text>
+                  <Text style={[styles.cuantas, r.mine && styles.textoMio]}>{r.cuantos}</Text>
+                </View>
+              ))}
+            </View>
+          )}
+        </ScrollView>
+
+        {/* El botón no se va con el scroll: siempre a la vista. */}
+        {!acabado && (
+          <View style={styles.barraBoton}>
+            {(fallo || reto.apuntado) && (
+              <Text style={styles.nota}>
+                {fallo ? 'No ha salido. Prueba otra vez.' : 'Ya estás dentro: sus logos salen en tu mapa.'}
+              </Text>
+            )}
+            {!!gif && (
+              <TouchableOpacity onPress={() => setVerGif(true)} hitSlop={8} style={styles.comoLink}>
+                <Text style={styles.comoLinkTexto}>¿Cómo me apunto?</Text>
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity
+              style={[styles.boton, reto.apuntado && styles.botonSalir, enviando && styles.botonEnviando]}
+              onPress={() => cambiarApuntado(reto)}
+              disabled={enviando}
+            >
+              <Text style={[styles.botonTexto, reto.apuntado && styles.botonSalirTexto]}>
+                {reto.apuntado ? 'DESAPUNTARME' : 'ME APUNTO'}
+              </Text>
+            </TouchableOpacity>
+            {!reto.apuntado && !fallo && (
+              <Text style={styles.nota}>Sus logos solo salen en el mapa de quien se apunta.</Text>
             )}
           </View>
         )}
-        {acabado && ganadores.length === 0 && (
-          <Text style={styles.parrafo}>Nadie cogió ningún logo: este reto se queda sin ganadores.</Text>
-        )}
-        {!!reto.premio && (
-          <View style={styles.premio}>
-            <Text style={styles.premioTitulo}>EL PREMIO</Text>
-            <Text style={styles.avisoTexto}>{reto.premio}</Text>
-          </View>
-        )}
-        {!acabado && (
-          <TouchableOpacity
-            style={[styles.boton, reto.apuntado && styles.botonSalir, enviando && styles.botonEnviando]}
-            onPress={() => cambiarApuntado(reto)}
-            disabled={enviando}
-          >
-            <Text style={[styles.botonTexto, reto.apuntado && styles.botonSalirTexto]}>
-              {reto.apuntado ? 'DESAPUNTARME' : 'ME APUNTO'}
-            </Text>
-          </TouchableOpacity>
-        )}
-        <Text style={[styles.nota, acabado && styles.notaFinal]}>
-          {acabado
-            ? 'Este reto ha terminado. Ya no se puede apuntar nadie.'
-            : fallo
-              ? 'No ha salido. Prueba otra vez.'
-              : reto.apuntado
-                ? 'Ya estás dentro: sus logos salen en tu mapa.'
-                : 'Sus logos solo salen en el mapa de quien se apunta.'}
-        </Text>
-        {/* La tabla entera solo aporta algo si hay más gente que ganadores. */}
-        {ranking.length > 0 && (!acabado || ranking.length > ganadores.length) && (
-          <View style={styles.tabla}>
-            <Text style={styles.tablaTitulo}>{acabado ? 'CLASIFICACIÓN FINAL' : 'QUIÉN VA GANANDO'}</Text>
-            {ranking.slice(0, 8).map((r, i) => (
-              <View key={r.userId} style={[styles.fila, r.mine && styles.filaMia]}>
-                <Text style={[styles.puesto, r.mine && styles.textoMio]}>{i + 1}</Text>
-                <Text style={[styles.nombre, r.mine && styles.textoMio]} numberOfLines={1}>
-                  {r.name}
-                </Text>
-                <Text style={[styles.cuantas, r.mine && styles.textoMio]}>{r.cuantos}</Text>
-              </View>
-            ))}
-          </View>
-        )}
-      </ScrollView>
+        <GifComoApuntarse visible={verGif} uri={gif} onCerrar={() => setVerGif(false)} />
+      </View>
     );
   }
 
@@ -433,6 +500,36 @@ const styles = StyleSheet.create({
   cintaTexto: { color: '#000', fontSize: 20, fontWeight: '900', letterSpacing: 1 },
 
   calabaza: { width: SCREEN_W * 0.5, height: SCREEN_W * 0.5 },
+
+  // La ficha del reto.
+  ficha: { paddingHorizontal: spacing.lg, paddingTop: SCREEN_H * 0.06, paddingBottom: 40 },
+  fichaConBoton: { paddingBottom: 150 },
+  cabecera: { alignItems: 'center', marginBottom: spacing.sm },
+  fichaLogo: { width: SCREEN_W * 0.34, height: SCREEN_W * 0.34 },
+  bloquePremio: {
+    backgroundColor: colors.bgCard, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.orange,
+    overflow: 'hidden', marginBottom: spacing.md,
+  },
+  fotoPremio: { width: '100%', aspectRatio: 4 / 3, backgroundColor: '#000' },
+  bloqueTexto: { padding: spacing.md },
+  bloque: {
+    backgroundColor: colors.bgCard, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border,
+    padding: spacing.md, marginBottom: spacing.md,
+  },
+  bloqueTitulo: {
+    color: colors.textSecondary, fontSize: 12, fontWeight: '900', letterSpacing: 1.5, marginBottom: spacing.sm,
+  },
+  fichaTexto: { color: colors.textPrimary, fontSize: 15, lineHeight: 22 },
+  norma: { flexDirection: 'row', gap: spacing.sm, marginBottom: 8 },
+  normaNumero: { color: colors.orange, fontSize: 15, fontWeight: '900', width: 18 },
+  normaTexto: { flex: 1 },
+  comoLink: { alignSelf: 'center', marginBottom: spacing.sm },
+  comoLinkTexto: { color: colors.orange, fontSize: 14, fontWeight: '800' },
+  barraBoton: {
+    position: 'absolute', left: 0, right: 0, bottom: 0,
+    backgroundColor: colors.bg, borderTopWidth: 1, borderTopColor: colors.border,
+    paddingHorizontal: spacing.lg, paddingTop: spacing.sm, paddingBottom: 14,
+  },
 
   premio: {
     backgroundColor: colors.bgCard, borderRadius: radius.lg,

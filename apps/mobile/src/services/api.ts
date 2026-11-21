@@ -183,6 +183,9 @@ export interface Reto {
   titulo: string;
   texto: string;
   premio: string;
+  /** Foto del premio y normas (una por línea); solo salen si se han puesto en el panel. */
+  foto?: string;
+  normas?: string;
   ciudad: string;
   /** Sus logos solo los ve y los coge quien se apunta. */
   apuntado: boolean;
@@ -693,13 +696,13 @@ class ApiService {
    *  undefined = no se ha podido preguntar (no es lo mismo que "no hay"). */
   /** Los retos de mi ciudad y lo que anuncia "Próximamente". undefined = no se
    *  ha podido preguntar. */
-  async getRetos(): Promise<{ retos: Reto[]; proximamente: Proximamente | null } | undefined> {
+  async getRetos(): Promise<{ retos: Reto[]; proximamente: Proximamente | null; comoApuntarse: string | null } | undefined> {
     try {
       // v=2: «sé pintar un reto terminado». Sin él, el servidor mete el FINALIZADO
       // y los ganadores dentro de los textos, que es lo que entienden las apps
       // de hasta la 1.11.16.
-      const res = await this.request<{ retos?: Reto[]; proximamente?: Proximamente | null }>('/app/retos?v=2');
-      return { retos: res?.retos ?? [], proximamente: res?.proximamente ?? null };
+      const res = await this.request<{ retos?: Reto[]; proximamente?: Proximamente | null; comoApuntarse?: string | null }>('/app/retos?v=2');
+      return { retos: res?.retos ?? [], proximamente: res?.proximamente ?? null, comoApuntarse: res?.comoApuntarse ?? null };
     } catch {
       return undefined;
     }
