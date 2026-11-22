@@ -2442,7 +2442,7 @@ guardar en prueba (para ti y, si quiere, el cliente), sembrar y, cuando est&eacu
   <label class="campo">Ciudades, una o varias separadas por comas, hasta 16 (ah&iacute; se plantan los logos; el reto lo ve todo el mundo, y a los de ah&iacute; les sale el primero)
     <input id="c_ciudad" placeholder="Barcelona, Badalona"></label>
   <p class="nota" id="c_lugar"></p>
-  <label class="campo">Logos fijos (si quieres): siempre en el mismo sitio, como delante de la tienda. Una direcci&oacute;n por l&iacute;nea (calle, n&uacute;mero y ciudad) o el punto de Google Maps (clic derecho en la acera &rarr; copiar las coordenadas), hasta 10. Cuando alguien lo coge, desaparece para todos y a los 5 minutos vuelve a salir en el mismo sitio (los dem&aacute;s logos salen cerca, en otro)
+  <label class="campo">Logos fijos (si quieres): siempre en el mismo sitio, como delante de la tienda. Una direcci&oacute;n por l&iacute;nea (calle, n&uacute;mero y ciudad) o el punto de Google Maps (clic derecho en la acera &rarr; copiar las coordenadas), hasta 20. Cuando alguien lo coge, desaparece para todos y a los 5 minutos vuelve a salir en el mismo sitio (los dem&aacute;s logos salen cerca, en otro)
     <textarea id="c_fijos" rows="2" placeholder="Calle Mayor 1, Madrid"></textarea></label>
   <p class="nota" id="c_fijos_donde"></p>
   <label class="campo">Cartel al pisarlo ({puntos} se cambia por los puntos)
@@ -8128,7 +8128,7 @@ type Campana = {
   fijos?: { direccion: string; lugar: string; lat: number; lon: number; x: number; y: number }[];
 };
 
-const MAX_LOGOS_FIJOS = 10;
+const MAX_LOGOS_FIJOS = 20; // 10 hasta el 22-nov-2026: Desseo tiene 15 tiendas
 
 /** ¿Es la casilla de uno de los logos fijos de la campaña? */
 function esLogoFijo(c: Campana | null, x: number, y: number): boolean {
