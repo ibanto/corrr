@@ -91,6 +91,9 @@ completo). Probado en el simulador iOS 27 contra `scripts/mock-api.mjs` (franja,
 `apps/mobile/builds/corrr-v1.11.19-vc97.aab` (lo sube Iban a Play Console). **Sin publicar ni avisar todavía.** Para probar en el
 simulador sin firma hace falta parchear `SecureStore` en `handleAuthenticated` (el Llavero falla sin firmar): solo para la
 prueba, deshacer.
+**27-nov — LOGOS DOBLES (servidor, SIN SUBIR; sin versión nueva de la app)**: al sembrar una campaña (`enCampana`), el 10 % al azar (mín. 1 si caben ≥2) sale con el doble de puntos y `objetos.doble = TRUE` (columna nueva, `ALTER … IF NOT EXISTS` al arrancar). Se configura en la pestaña **Dobles** del panel (`POST /admin/campana/dobles`: porcentaje, dibujo, cartel; la ficha `Campana.dobles` se conserva al guardar la campaña). El dibujo distinto va SIN versión: `/objetos/viewport` manda el doble con tipo `<tipo>#x2` y su entrada en `tipos` (la app pinta y habla por tipo). Fijos y Halloween, nunca dobles. Probado: tsc, reparto con BD falsa y sintaxis del JS; **NO probado contra Postgres real**. Falta el OK de Iban para subir (push a main = deploy). Sonidos para la 1.11.20 (pillar logo: simple y doble) en `apps/mobile/assets/sounds/`, sin enchufar (el .mp3 dura 5,3 s: recortar; falta saber cuál es cuál).
+
+**21-nov, tarde — iPHONE 1.11.19 (build 44) ENVIADA A REVISIÓN DE APPLE** (OK de Iban, «Sí, envíala»): «1.11.19 Pendiente de revisión», publicación manual, novedades pegadas (el texto promocional es el de la 1.11.17). Cuenta de revisión comprobada antes (`puedeEntrar: true`). **El GIF «¿Cómo me apunto?» YA ESTÁ SUBIDO al panel** (840 KB). Falta: que Iban arrastre el AAB vc97 a Play Console (yo pego notas y guardo), y publicar/anunciar con su OK.
 **17-nov — 1.11.18 COMPILADA** (commit `1316a3a`: el aviso con GIF a cartel completo y una X para cerrarlo): AAB
 `apps/mobile/builds/corrr-v1.11.18-vc96.aab` y archivo de Xcode `CORRR-1.11.18-build43`. Se hizo fuera de las sesiones de
 Claude de este Mac y no quedó apuntado si se subió a las tiendas; el 18-nov `/app/version` seguía anunciando la 1.11.17.
@@ -1409,7 +1412,7 @@ servidor:
   apuntado sigue viendo y cogiendo sus logos (`LOGO_ES_SUYO` mira el apuntado, igual que al quitar un nombre).
 - **Logos fijos, delante de la tienda (18-nov-2026, Iban: «que en un reto uno o dos logos aparezcan siempre en el mismo
   sitio, como delante de la propia tienda»; y «el logo desaparece y aparece a los 5 minutos»).** Campo «Logos fijos» de la
-  campaña: una dirección por línea o el punto de Google Maps («41.47402, 2.08520»), hasta 10 (`MAX_LOGOS_FIJOS`); se guarda en
+  campaña: una dirección por línea o el punto de Google Maps («41.47402, 2.08520»), hasta 20 (`MAX_LOGOS_FIJOS`; eran 10 hasta el 22-nov-2026, se subió para las 15 tiendas de Desseo, commit `9cf17d6`); se guarda en
   `datos.fijos[]` {direccion, lugar, lat, lon, x, y} y el panel enseña cada uno con su enlace a Google Maps para comprobarlo.
   - **Cómo se porta**: está siempre en SU casilla. Quien lo coge se lo lleva, desaparece para todos y a los 5 minutos vuelve a
     salir ahí mismo (`renacerLogoFijo`, en el bucle de renacer de `POST /runs`; `esLogoFijo` mira si la casilla es de un fijo).

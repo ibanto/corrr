@@ -64,9 +64,14 @@ export async function sembrar(
      *  NO cupo ni un zombi: con 300 m contra todo, las calabazas habían llenado
      *  la zona y los zombis, que van detrás, se quedaron sin sitio. Cero. */
     separacionAjena?: number;
+    /** Qué porcentaje (0-100) de los sembrados vale el doble de puntos y queda
+     *  marcado como `doble`. Se eligen al azar entre los que caben; con un
+     *  porcentaje mayor que cero sale como mínimo uno si caben dos o más. */
+    dobles?: number;
   },
-): Promise<{ x: number; y: number }[]> {
+): Promise<{ x: number; y: number; doble: boolean }[]> {
   const { cuantos, tipo, puntos, desde, hasta, caja, fuente = 'calles' } = opciones;
+  const pctDobles = Math.min(100, Math.max(0, Number(opciones.dobles) || 0));
   const sepAjena = opciones.separacionAjena ?? SEPARACION_CELDAS;
   if (cuantos <= 0) return [];
 
@@ -119,13 +124,26 @@ export async function sembrar(
   }
   if (nuevas.length === 0) return [];
 
+  // Los dobles, al azar entre los que han cabido (barajado de Fisher-Yates
+  // sobre los índices, no un sort con random, que sale sesgado).
+  const cuantosDobles = pctDobles > 0 && nuevas.length >= 2
+    ? Math.max(1, Math.round(nuevas.length * pctDobles / 100)) : 0;
+  const indices = nuevas.map((_, i) => i);
+  for (let i = indices.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [indices[i], indices[j]] = [indices[j], indices[i]];
+  }
+  const sonDobles = new Set(indices.slice(0, cuantosDobles));
+  const conMarca = nuevas.map((n, i) => ({ ...n, doble: sonDobles.has(i) }));
+
   await db.query(
-    `INSERT INTO objetos (tipo, cell_x, cell_y, puntos, desde, hasta)
-     SELECT $1, x, y, $2, $3, $4 FROM unnest($5::int[], $6::int[]) AS t(x, y)`,
+    `INSERT INTO objetos (tipo, cell_x, cell_y, puntos, doble, desde, hasta)
+     SELECT $1, x, y, CASE WHEN d THEN $2::int * 2 ELSE $2::int END, d, $3, $4
+       FROM unnest($5::int[], $6::int[], $7::bool[]) AS t(x, y, d)`,
     [tipo, puntos, desde.toISOString(), hasta.toISOString(),
-     nuevas.map(n => n.x), nuevas.map(n => n.y)],
+     conMarca.map(n => n.x), conMarca.map(n => n.y), conMarca.map(n => n.doble)],
   );
-  return nuevas;
+  return conMarca;
 }
 
 /** Un logo solo existe para quien se ha apuntado a su reto, y mientras el reto

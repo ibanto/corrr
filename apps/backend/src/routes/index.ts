@@ -616,6 +616,9 @@ async function initDB() {
       creado_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `).catch(() => {});
+  // Logos dobles (Iban, 27-nov-2026): algunos de cada siembra valen el doble.
+  // Se marcan aparte para poder dibujarlos distinto desde el servidor.
+  await db.query(`ALTER TABLE objetos ADD COLUMN IF NOT EXISTS doble BOOLEAN NOT NULL DEFAULT FALSE`).catch(() => {});
   // Los libres se buscan por posición en cada refresco del mapa y al guardar
   // cada carrera: sin este índice, eso es un repaso a la tabla entera.
   await db.query(`CREATE INDEX IF NOT EXISTS objetos_libres_idx
@@ -2154,6 +2157,7 @@ app.get('/admin/panel', {
     <button class="pestana" role="tab" aria-selected="false" data-pestana="avisos">Avisos</button>
     <button class="pestana" role="tab" aria-selected="false" data-pestana="juego">Juego</button>
     <button class="pestana" role="tab" aria-selected="false" data-pestana="campanas">Campa&ntilde;as</button>
+    <button class="pestana" role="tab" aria-selected="false" data-pestana="dobles">Dobles</button>
     <button class="pestana" role="tab" aria-selected="false" data-pestana="correos">Correos</button>
     <button class="pestana" role="tab" aria-selected="false" data-pestana="herramientas">Herramientas</button>
   </nav>
@@ -2489,6 +2493,31 @@ guardar en prueba (para ti y, si quiere, el cliente), sembrar y, cuando est&eacu
     <button class="mini" id="c_eliminar" type="button">Eliminar campa&ntilde;a</button>
   </div>
 </form>
+</div>
+</section>
+
+<section id="p-dobles" role="tabpanel" hidden>
+<div class="caja">
+<h2>Logos dobles</h2>
+<p class="nota">Al <b>sembrar</b> una campa&ntilde;a, un porcentaje de los logos, elegidos al azar, <b>vale el doble de puntos</b>. Aqu&iacute; eliges el porcentaje y, si quieres,
+un <b>dibujo distinto</b> y un <b>cartel distinto</b> al pisarlos. Esto <b>no necesita versi&oacute;n nueva</b> de la app. El porcentaje solo cuenta para lo que siembres <b>despu&eacute;s</b>;
+el dibujo y el cartel se aplican ya a los dobles que haya en el mapa. Sin dibujo, los dobles se ven igual que los dem&aacute;s y solo lo nota quien los pisa (el cartel). Sin tocar nada, el 10&nbsp;%.
+Los logos fijos de las tiendas no son nunca dobles.</p>
+<label class="campo">Campa&ntilde;a
+  <select id="d_tipo"></select></label>
+<label class="campo">Porcentaje de dobles en cada siembra (0 = ninguno)
+  <input id="d_pct" type="number" min="0" max="100" value="10"></label>
+<label class="campo">El dibujo del logo doble (PNG o JPG; mejor con el fondo transparente)
+  <input id="d_archivo" type="file" accept="image/png,image/jpeg"></label>
+<input id="d_imagen" type="hidden">
+<div id="d_previo" style="display:none;background:#333;padding:8px;border-radius:8px;width:max-content">
+  <img id="d_img" style="width:88px;height:88px;object-fit:contain">
+  <br><button class="btn" id="d_quitar" type="button">Quitar el dibujo (se ven como los dem&aacute;s)</button></div>
+<label class="campo">Cartel al pisarlo ({puntos} se cambia por los puntos)
+  <input id="d_cartel" placeholder="&iexcl;DOBLE! +{puntos}"></label>
+<button class="btn" id="d_guardar" type="button">Guardar los dobles</button>
+<div id="d_msg" class="resultado" style="display:none"></div>
+<p class="nota" id="d_cuenta"></p>
 </div>
 </section>
 
@@ -3147,6 +3176,87 @@ La suscripción de pago la exigen para <b>crear</b> apps nuevas; la nuestra es a
       }).catch(function (e) { msgCampana('✗ ' + e.message, false); });
     };
     lector.readAsDataURL(f);
+  });
+  // ── Pestaña Dobles ──
+  function msgDobles(t, ok) {
+    var m = document.getElementById('d_msg');
+    m.style.display = 'block';
+    m.style.color = ok ? '#4caf50' : '#f44336';
+    m.style.borderLeftColor = ok ? '#4caf50' : '#f44336';
+    m.textContent = t;
+  }
+  function verDoble(url) {
+    document.getElementById('d_previo').style.display = url ? '' : 'none';
+    if (url) document.getElementById('d_img').src = url;
+  }
+  function campanaDobles() {
+    var tipo = document.getElementById('d_tipo').value;
+    return retosPanel.filter(function (x) { return x.campana.tipo === tipo; })[0];
+  }
+  // Rellena el formulario con lo guardado de la campaña elegida.
+  function cargarDobles() {
+    var r = campanaDobles();
+    var d = r && r.campana.dobles;
+    document.getElementById('d_pct').value = d ? d.porcentaje : 10;
+    document.getElementById('d_imagen').value = d && d.imagen ? d.imagen : '';
+    verDoble(d && d.imagen ? d.imagen : '');
+    document.getElementById('d_cartel').value = d && d.cartel ? d.cartel : '';
+    document.getElementById('d_cuenta').textContent = '';
+  }
+  function pintarDobles() {
+    var sel = document.getElementById('d_tipo');
+    var antes = sel.value;
+    sel.innerHTML = '';
+    retosPanel.forEach(function (r) {
+      var o = document.createElement('option');
+      o.value = r.campana.tipo;
+      o.textContent = r.campana.nombre + ' (' + r.campana.tipo + ')';
+      sel.appendChild(o);
+    });
+    if (antes) sel.value = antes;
+    cargarDobles();
+  }
+  document.querySelector('[data-pestana="dobles"]').addEventListener('click', function () {
+    cargarCampanasPanel().then(pintarDobles).catch(function () {});
+  });
+  document.getElementById('d_tipo').addEventListener('change', cargarDobles);
+  document.getElementById('d_quitar').addEventListener('click', function () {
+    document.getElementById('d_imagen').value = '';
+    verDoble('');
+  });
+  document.getElementById('d_archivo').addEventListener('change', function (ev) {
+    var f = ev.target.files && ev.target.files[0];
+    if (!f) return;
+    var tipo = document.getElementById('d_tipo').value;
+    if (!tipo) { msgDobles('✗ No hay ninguna campaña', false); ev.target.value = ''; return; }
+    var lector = new FileReader();
+    lector.onload = function () {
+      msgDobles('Subiendo el dibujo...', true);
+      // Se guarda como el logo normal, con el identificador acabado en -x2.
+      api('/admin/campana/logo', { method: 'POST', body: JSON.stringify({
+        tipo: tipo + '-x2', imagen: lector.result,
+      }) }).then(function (r) {
+        document.getElementById('d_imagen').value = r.url;
+        verDoble(r.url);
+        msgDobles('✓ Dibujo subido (' + r.kb + ' KB). Ahora pulsa «Guardar los dobles».', true);
+      }).catch(function (e) { msgDobles('✗ ' + e.message, false); });
+    };
+    lector.readAsDataURL(f);
+  });
+  document.getElementById('d_guardar').addEventListener('click', function () {
+    var tipo = document.getElementById('d_tipo').value;
+    if (!tipo) { msgDobles('✗ No hay ninguna campaña', false); return; }
+    api('/admin/campana/dobles', { method: 'POST', body: JSON.stringify({
+      tipo: tipo, porcentaje: val('d_pct'), imagen: document.getElementById('d_imagen').value,
+      cartel: val('d_cartel'),
+    }) }).then(function (r) {
+      document.getElementById('d_cuenta').textContent = 'Ahora mismo hay ' + r.enElMapa
+        + ' logos dobles sin coger en el mapa y ' + r.cogidos + ' cogidos.';
+      return cargarCampanasPanel().then(function () {
+        msgDobles('✓ Guardado: ' + r.dobles.porcentaje + ' % de dobles'
+          + (r.dobles.imagen ? ', con dibujo propio.' : ', sin dibujo propio (se ven como los demás).'), true);
+      });
+    }).catch(function (e) { msgDobles('✗ ' + e.message, false); });
   });
   document.getElementById('rg_archivo').addEventListener('change', function (ev) {
     var f = ev.target.files && ev.target.files[0];
@@ -7966,7 +8076,7 @@ app.get('/objetos/viewport', { preHandler: requireAuth }, async (req: any, reply
   const ne = coordToCell(n, e);
   const caja = { x0: sw.x, x1: ne.x, y0: sw.y, y1: ne.y };
   const mirar = () => db.query(
-    `SELECT id, cell_x, cell_y, puntos, tipo FROM objetos
+    `SELECT id, cell_x, cell_y, puntos, tipo, doble FROM objetos
       WHERE tomado_por IS NULL AND desde <= NOW() AND (hasta IS NULL OR hasta > NOW())
         AND cell_x BETWEEN $1 AND $2 AND cell_y BETWEEN $3 AND $4
         AND (tipo IN ('calabaza', 'fantasma', 'zombi') OR ${LOGO_ES_SUYO('objetos.', '$5')})
@@ -7988,10 +8098,23 @@ app.get('/objetos/viewport', { preHandler: requireAuth }, async (req: any, reply
     const { rows: suyas } = await db.query('SELECT datos FROM campanas WHERE tipo = ANY($1)', [deMarca]);
     for (const { datos: c } of suyas) {
       tipos[c.tipo] = { imagen: c.imagen, cartel: c.cartel, nombre: c.nombre };
+      // Los dobles se dibujan distinto SIN versión nueva de la app: ella pinta
+      // y habla según el `tipo` que le llega, así que a un doble se le da un
+      // tipo propio («tienda-pepe#x2») con su dibujo y su cartel. Es solo un
+      // nombre para la respuesta: en la base de datos sigue siendo del reto.
+      if (c.dobles?.imagen) {
+        tipos[tipoDoble(c.tipo)] = {
+          imagen: c.dobles.imagen, cartel: c.dobles.cartel || CARTEL_DOBLE, nombre: c.nombre,
+        };
+      }
     }
   }
+  const conDibujoDoble = (t: string) => !!tipos[tipoDoble(t)];
   return reply.send({
-    objetos: rows.map((r: any) => ({ id: r.id, x: r.cell_x, y: r.cell_y, puntos: r.puntos, tipo: r.tipo })),
+    objetos: rows.map((r: any) => ({
+      id: r.id, x: r.cell_x, y: r.cell_y, puntos: r.puntos,
+      tipo: r.doble && conDibujoDoble(r.tipo) ? tipoDoble(r.tipo) : r.tipo,
+    })),
     tipos,
   });
 });
@@ -8126,7 +8249,17 @@ type Campana = {
    *  «cada persona puede coger tantos logos como quiera al día»); solo cambia
    *  dónde renacen, ver renacerLogoFijo. */
   fijos?: { direccion: string; lugar: string; lat: number; lon: number; x: number; y: number }[];
+  /** Los logos dobles (Iban, 27-nov-2026): al sembrar, un `porcentaje` al azar
+   *  vale el doble. Con `imagen` (https) se dibujan distintos y con `cartel` dicen
+   *  otra cosa al pisarlos; sin ella se ven como los demás. Sin esta ficha, el
+   *  10 % y nada distinto. Se edita en la pestaña Dobles del panel. */
+  dobles?: { porcentaje: number; imagen: string; cartel: string };
 };
+
+const PORCENTAJE_DOBLES = 10;
+const CARTEL_DOBLE = '¡DOBLE! +{puntos}';
+/** El tipo con el que ve la app a un logo doble (solo en lo que se le manda). */
+const tipoDoble = (tipo: string) => `${tipo}#x2`;
 
 const MAX_LOGOS_FIJOS = 20; // 10 hasta el 22-nov-2026: Desseo tiene 15 tiendas
 
@@ -8696,6 +8829,9 @@ app.post('/admin/campana', { preHandler: requireAdmin }, async (req: any, reply)
     return reply.status(400).send({ error: `Como mucho ${MAX_CIUDADES_CAMPANA} ciudades por campaña` });
   }
   const antes = await campanaDe(c.tipo).catch(() => null);
+  // Esta ficha se construye de cero en cada guardado: los dobles tienen su
+  // propia pestaña y hay que llevárselos puestos, o cada «Guardar» los borraría.
+  if (antes?.dobles) c.dobles = antes.dobles;
   const sabidas = antes?.zonas?.length ? antes.zonas
     : (antes?.limites ? [{ ciudad: antes.ciudad, lugar: antes.lugar, limites: antes.limites }] : []);
   const zonas: NonNullable<Campana['zonas']> = [];
@@ -8818,6 +8954,29 @@ app.post('/admin/campana', { preHandler: requireAdmin }, async (req: any, reply)
     modo: modo === 'si' ? 'todos' : (modo === 'no' ? 'apagado' : 'prueba'),
     corredor: quienesPrueban(modo),
   });
+});
+
+/** Los logos dobles de un reto (pestaña Dobles del panel): qué porcentaje de
+ *  cada siembra vale el doble, con qué dibujo y qué cartel. Va aparte del
+ *  guardado de la campaña para no tocar lo que ya está en marcha. Solo cambia
+ *  lo que se siembre DESPUÉS; el dibujo y el cartel, en cambio, se aplican ya
+ *  a los dobles que haya en el mapa. */
+app.post('/admin/campana/dobles', { preHandler: requireAdmin }, async (req: any, reply) => {
+  const tipo = String(req.body?.tipo ?? '').trim().toLowerCase().replace(/[^a-z0-9-]/g, '-');
+  const c = await campanaDe(tipo);
+  if (!c) return reply.status(404).send({ error: 'No hay ninguna campaña con ese identificador' });
+  const porcentaje = Math.min(100, Math.max(0, Math.round(Number(req.body?.porcentaje))));
+  if (!Number.isFinite(porcentaje)) return reply.status(400).send({ error: 'El porcentaje tiene que ser un número de 0 a 100' });
+  const imagen = String(req.body?.imagen ?? '').trim().slice(0, 500);
+  if (imagen && !/^https:\/\//.test(imagen)) return reply.status(400).send({ error: 'La imagen tiene que ser una dirección https' });
+  const cartel = String(req.body?.cartel ?? '').trim().slice(0, 60) || CARTEL_DOBLE;
+  c.dobles = { porcentaje, imagen, cartel };
+  await db.query('UPDATE campanas SET datos = $2 WHERE tipo = $1', [tipo, JSON.stringify(c)]);
+  const { rows } = await db.query(
+    `SELECT COUNT(*) FILTER (WHERE tomado_por IS NULL AND (hasta IS NULL OR hasta > NOW()))::int AS libres,
+            COUNT(*) FILTER (WHERE tomado_por IS NOT NULL)::int AS cogidos
+       FROM objetos WHERE tipo = $1 AND doble`, [tipo]);
+  return reply.send({ ok: true, dobles: c.dobles, enElMapa: rows[0]?.libres ?? 0, cogidos: rows[0]?.cogidos ?? 0 });
 });
 
 /** Lo cogido en ESTE evento y no en todos los que ha habido nunca.
@@ -9019,6 +9178,7 @@ app.post('/admin/objetos', { preHandler: requireAdmin }, async (req: any, reply)
   const deDonde = fuente === 'pisadas' ? 'pisadas' : 'calles';
   const elTipo = String(tipo || 'calabaza');
   const losPuntos = Number(puntos) || 200;
+  let doblesPuestos = 0;
 
   /** Siembra en una caja, y detrás los zombis que le tocan.
    *
@@ -9027,10 +9187,15 @@ app.post('/admin/objetos', { preHandler: requireAdmin }, async (req: any, reply)
    *  sin calabazas, ni al revés, ni que el 15% se desajuste a base de siembras
    *  sueltas. Si lo que se siembra ya resta puntos, no se le añaden zombis:
    *  no tendría sentido. */
+  // Los dobles solo van en los retos de marca (`enCampana`): lo de Halloween
+  // y las siembras sueltas no se tocan.
+  let pctDobles = 0;
   async function sembrarAqui(caja: any) {
     const celdas = await sembrar(db, {
       cuantos: n, tipo: elTipo, puntos: losPuntos, desde: d, hasta: h, caja, fuente: deDonde,
+      dobles: pctDobles,
     });
+    doblesPuestos += celdas.filter(c => c.doble).length;
     // Los fantasmas van SIEMPRE con las calabazas, nunca sueltos: se siembran
     // en las calles de alrededor de cada una, dos o tres. No se pueden sembrar
     // aparte a propósito — un fantasma en mitad de la ciudad no significa nada.
@@ -9084,6 +9249,7 @@ app.post('/admin/objetos', { preHandler: requireAdmin }, async (req: any, reply)
     }
     // Los fijos, primero: así los demás guardan sus 300 m con ellos.
     if (c.fijos?.length) fijosPuestos = await plantarFijos(db, elTipo, c.fijos, d, h, losPuntos, true);
+    pctDobles = c.dobles ? c.dobles.porcentaje : PORCENTAJE_DOBLES;
     if (zonas.length > 1) {
       let puestas = 0;
       const partes: string[] = [];
@@ -9096,7 +9262,7 @@ app.post('/admin/objetos', { preHandler: requireAdmin }, async (req: any, reply)
       }
       return reply.send({
         ok: true, puestas, fantasmas: 0, pedidas: n * zonas.length, fuente: deDonde, puntos: losPuntos,
-        donde: ` (${partes.join(', ')})`, vacias, fijos: fijosPuestos,
+        donde: ` (${partes.join(', ')})`, vacias, fijos: fijosPuestos, dobles: doblesPuestos,
       });
     }
     caja = zonas[0].caja;
@@ -9114,7 +9280,7 @@ app.post('/admin/objetos', { preHandler: requireAdmin }, async (req: any, reply)
   }
 
   const { puestas, fantasmas } = await sembrarAqui(caja);
-  return reply.send({ ok: true, puestas, fantasmas, pedidas: n, donde, fuente: deDonde, puntos: losPuntos, fijos: fijosPuestos });
+  return reply.send({ ok: true, puestas, fantasmas, pedidas: n, donde, fuente: deDonde, puntos: losPuntos, fijos: fijosPuestos, dobles: doblesPuestos });
 });
 
 /** Quitar del mapa las que queden libres (para cerrar un evento a mano). */
