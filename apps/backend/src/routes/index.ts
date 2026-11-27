@@ -8102,18 +8102,19 @@ app.get('/objetos/viewport', { preHandler: requireAuth }, async (req: any, reply
       // y habla según el `tipo` que le llega, así que a un doble se le da un
       // tipo propio («tienda-pepe#x2») con su dibujo y su cartel. Es solo un
       // nombre para la respuesta: en la base de datos sigue siendo del reto.
-      if (c.dobles?.imagen) {
+      // Sin dibujo propio, el mismo del logo normal: así la 1.11.20 puede
+      // sonar distinto (el tipo acaba en «#x2») aunque se vea igual.
+      if (rows.some((r: any) => r.doble && r.tipo === c.tipo)) {
         tipos[tipoDoble(c.tipo)] = {
-          imagen: c.dobles.imagen, cartel: c.dobles.cartel || CARTEL_DOBLE, nombre: c.nombre,
+          imagen: c.dobles?.imagen || c.imagen, cartel: c.dobles?.cartel || CARTEL_DOBLE, nombre: c.nombre,
         };
       }
     }
   }
-  const conDibujoDoble = (t: string) => !!tipos[tipoDoble(t)];
   return reply.send({
     objetos: rows.map((r: any) => ({
       id: r.id, x: r.cell_x, y: r.cell_y, puntos: r.puntos,
-      tipo: r.doble && conDibujoDoble(r.tipo) ? tipoDoble(r.tipo) : r.tipo,
+      tipo: r.doble && tipos[tipoDoble(r.tipo)] ? tipoDoble(r.tipo) : r.tipo,
     })),
     tipos,
   });
